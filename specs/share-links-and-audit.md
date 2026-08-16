@@ -1,6 +1,6 @@
 # Share links, request-access, and the access log
 
-*(RW + session, 2026-08-15. Extends [`sherry.md`](./sherry.md), which specced the session/grant substrate but left the share-link **configuration surface**, the **request-access** flow, and the **audit/analytics** story unwritten.)*
+*(RW + session, 2026-08-15. Extends [`overview.md`](./overview.md), which specced the session/grant substrate but left the share-link **configuration surface**, the **request-access** flow, and the **audit/analytics** story unwritten.)*
 
 Framing: the product is *"share a sensitive dashboard view with a named person via a link, and know what happened."* That's the differentiated thing — sessions/SSO are table stakes.
 
@@ -11,7 +11,7 @@ The kernel here — HMAC sessions, hashed grant tokens, scopes, redemption accou
 - **IdP**: `verifyAccessJwt` (CF Access RS256 vs team certs). Peers: Google/GitHub OIDC, WorkOS, plain magic-link-only (no IdP).
 - **Store**: D1. Peers: any SQLite (Turso/better-sqlite3), Postgres.
 
-So the honest structure is `core/` + `adapters/{cf-access,d1}` — and the old name (`cf-gate`) undersold it. **Renamed to `sherry`** (2026-08-15) while it was still free to do so: a silly diminutive of "share-y", in the `watchy` cadence, and a ready-made fount of iconography (the drink) for logo/favicon/og. No extended metaphor — the cellar vocabulary stays out of the API.
+So the honest structure is `core/` + `adapters/{cf-access,d1}` — and the original name (`cf-gate`) undersold it. Settled 2026-08-16 on **`@open-athena/auth`** (repo `Open-Athena/auth`), after a detour through product-y names: the scope already namespaces it, so the bare word is unambiguous and needs no explaining. The scope mismatch to watch is the opposite one — "auth" reads broader than this is — so the README leads with what it actually does (share links + SSO + audit) and disclaims the rest (no password store, no OAuth server, no RBAC engine).
 
 The CF coupling is real but small; build the adapters as a *file boundary*, not an abstraction layer — no plugin registry, no DI container, just `core` importing an interface that `adapters/d1` satisfies in ~40 lines. Every current consumer (watchy, marin-gcs-usage, mortgage-viz, applitrack) is on CF, so CF adapters stay the only ones that exist until a non-CF consumer appears.
 
@@ -43,7 +43,7 @@ grants (
 
 **Redemptions ≠ requests.** `max_redeems` counts *sessions minted* (≈ distinct browsers), not HTTP requests. This is what makes "one-use link" mean something a human would predict. Note in the admin UI that `max_redeems: 1` is **hostile UX in practice** — the recipient opens it on their phone, then their laptop, and is locked out; prefer unlimited-redeem + named + logged + revocable, and reach for 1 only for genuinely single-shot flows (password-reset-shaped).
 
-**Redemption flow** (already sketched in `sherry.md`): `?key=<token>` → `POST /auth/exchange` → validate (not revoked, not expired, redeems < max) → mint session cookie → `history.replaceState` strips the param. Additions:
+**Redemption flow** (already sketched in `overview.md`): `?key=<token>` → `POST /auth/exchange` → validate (not revoked, not expired, redeems < max) → mint session cookie → `history.replaceState` strips the param. Additions:
 
 - **Session ≠ grant lifetime**, but sessions re-join their grant on *every* request (mortgage-viz's design, already adopted) — so revoking the grant kills every session it minted, instantly. Keep this; it's what makes the whole social story workable.
 - **Cookie, not localStorage.** The parent spec's session is an HttpOnly/SameSite=Lax/Secure cookie, and that should stay: an LS-held token is readable by any XSS on the page, can't be HttpOnly, and doesn't auto-attach to `fetch` of gated APIs. "Indefinitely" is a *TTL* choice (`session_ttl` → cookie `Max-Age` of months) not a *storage* choice. Only use LS if a non-cookie consumer genuinely needs the token in JS (cross-origin script, native app), and then treat it as a `Bearer` credential.
@@ -132,7 +132,7 @@ That split — *security-critical logic packaged, presentation vendored* — is 
 
 ## Open questions
 
-- **Publish identity.** GH home starts at `runsascoded/sherry` (free; transfers preserve redirects, so moving to `Open-Athena` later is cheap — the npm name is the sticky one). Bare `sherry` on npm is claimed by a dead 2022 alpha ("A Well-Brewed Scaffolding Tool", ~31 dl/wk), so publish scoped: `@open-athena/sherry` if OA is the primary consumer/funder, else `@rdub/sherry` (or unscoped `sherry-auth`). Decide at first publish, not before.
+- **Publish identity** (settled): GH `Open-Athena/auth`, npm `@open-athena/auth`. Pending: register the `open-athena` npm org (free tier, self-serve at npmjs.com/org/create — unlike the PyPI org, which needed an application) and create the GH repo. Personal consumers (mortgage-viz, watchy's `rw` instance) consume the OA-scoped package; that's fine and needs no second package. If ownership ever has to move, GH transfers preserve redirects while a published npm name can only be deprecated-and-republished — so the scope is the decision to be sure about, and it's now made.
 - Notification transport for request-access (Slack webhook vs email) — package concern or app concern? (Same shape as the parent spec's magic-link-delivery question; probably one pluggable `notify(event)` hook answers both.)
 - Does `view`-event logging default **on** or **off**? (Privacy-forward default is off, with disclosure copy shipped alongside the on switch.)
 - Admin UI: extend watchy's `/access` page, or ship the vendored-in admin as part of Layer B?
