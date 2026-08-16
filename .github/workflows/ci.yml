@@ -47,3 +47,18 @@ jobs:
           # output, so they have to be carried over explicitly.
           extra_files: >-
             migrations/0001_grants.sql,migrations/0002_access_log.sql,migrations/0003_access_requests.sql,migrations/0004_access_log_daily.sql,README.md
+
+  # Install the published branch exactly as a consumer would, and use it.
+  # The `test` job runs against `src/`, which says nothing about whether the
+  # *published artifact* resolves — a stale exports path, a dropped peer dep or
+  # a missing migration would pass every test and break every consumer.
+  verify-dist:
+    needs: dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/verify-dist.mjs "$GITHUB_REPOSITORY" dist

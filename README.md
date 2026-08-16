@@ -53,7 +53,7 @@ SHA=$(gh api repos/Open-Athena/auth/commits/dist --jq .sha)
 pnpm add "@open-athena/auth@github:Open-Athena/auth#$SHA"
 ```
 
-The `dist` branch only advances on a commit whose tests passed, so any SHA you can pin is green. It carries built JS + `.d.ts`, the migrations, and the peer-dep declarations; versions read `0.1.0-dist.<sha>`.
+The `dist` branch only advances on a commit whose tests passed, and CI then installs the published branch and exercises it (`scripts/verify-dist.mjs`) — so any SHA you can pin is green *as an artifact*, not just as source. It carries built JS + `.d.ts`, the migrations, and the peer-dep declarations; versions read `0.1.0-dist.<sha>`.
 
 Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), and `react` + `@tanstack/react-query` for the `/react` subpath.
 
