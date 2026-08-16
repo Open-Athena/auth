@@ -33,7 +33,7 @@ Lift watchy's Tier-2 core, which is already written app-agnostic (Env deps: `DB`
 
 Env contract to formalize: `{ DB: D1Database, SESSION_SECRET: string, ADMIN_EMAILS: string[], ACCESS_TEAM_DOMAIN: string, ACCESS_AUD?: string }`. Scope vocabulary is per-app (watchy uses one: `internal`).
 
-Open question — **allowlist**: watchy hardcodes "`@openathena.ai` OR admin". applitrack's DB-backed `allowed_users` (live-checked, bulk-paste admin, per-domain roles) is more flexible for externals-as-first-class. Decide whether the package bakes in domain-match only, or an optional `allowlist` table + hook.
+~~Open question — **allowlist**~~ **(resolved, 2026-08-16)**: neither option is baked in. A policy is just `EmailPolicy = (email) => scopes | null`, so watchy's domain match (`domainPolicy`), applitrack's DB-backed `allowed_users` table, and any composition of them (`firstMatch`) all satisfy the same one-line contract. `adminPolicy(adminEmails)` is always checked first and grants the wildcard scope `*`. Default with no policy supplied: admins only. Policy is re-evaluated on *every* request, not just at sign-in, so narrowing it kills live SSO sessions the same way revoking a grant kills grant sessions.
 
 ## Layer B — shared FE auth primitives (React)
 
@@ -54,24 +54,40 @@ Styling stays per-app (className hooks, not bundled CSS). `use-prms`/`@tanstack/
 
 ## Rollout / sequencing
 
+**Revised 2026-08-16.** The original plan put FE primitives first ("lower risk, both apps benefit immediately") and deferred the backend to the 2nd Tier-2 consumer. [`share-links-and-audit.md`](./share-links-and-audit.md) §6 then argued the opposite emphasis — *security-critical logic packaged, presentation vendored* — which makes the FE the part that should **not** become a package, and the kernel the part that should exist before consumers accumulate divergent copies of it. So the backend went first, and it went in before the 2nd Tier-2 consumer rather than after: the marginal cost of extracting it now was one session, versus re-unifying N drifted forks later.
+
 1. **marin** ships Tier 1 as-is (done: `AuthGate` + `/login`; pending the CF dashboard narrowing to `/data*` `/v1*` `/login`). No `@open-athena/auth` dependency yet.
-2. **FE primitives** extracted first (lower risk, both apps benefit immediately): refactor marin's `AuthGate` and watchy's `auth.tsx` onto `useWhoami(source)`/`<AuthGate>`/`<SignInPanel>`/`<WhoamiChip>`. marin passes `kind:'edge'`; watchy passes `kind:'app'`.
-3. **`@open-athena/auth` backend** extracted when a 2nd Tier-2 consumer lands (marin's own Tier-2 upgrade, or mortgage-viz's split). At that point: lift `gate.ts` + `0007_grants.sql` + `auth/sso.ts` into the package (Pages-Functions-hosted default), and re-point watchy + the new consumer at it.
-4. If/when **marin → Tier 2**: add a D1 binding + `SESSION_SECRET`, host `gate.ts` in a Pages Function, add `/auth/sso`, swap `AuthGate` source to `kind:'app'`, and re-narrow the CF Access app from `/data*`+`/v1*`+`/login` down to just `/auth/sso`. Drop the per-person CF whitelist in favor of grant links for Stanford collaborators.
+2. ✅ **`@open-athena/auth` kernel** — `core/` + `adapters/{d1,cf-access}` + migrations, extracted from watchy's `gate.ts`/`0007_grants.sql`/`auth/sso.ts` and mortgage-viz's grant substrate.
+3. **Re-point watchy** at the package (Pages-Functions-hosted, dropping the worker + `/api/[[path]]` proxy hop if convenient). Needs a data migration — see "Schema changes" below.
+4. **FE primitives** — `useWhoami(source)`/`<AuthGate>`/`<SignInPanel>`/`<WhoamiChip>`, source-agnostic so marin passes `kind:'edge'` and watchy passes `kind:'app'`. Vendored copy-in rather than a published component package (per share-links §6); the open question is whether the *hooks* still ship as a subpath export while only the styled shells are vendored.
+5. **Request-access + admin UI** — `access_requests` table, `notify(event)` hook, `/access` page.
+6. If/when **marin → Tier 2**: add a D1 binding + `SESSION_SECRET`, host the gate in a Pages Function, add `/auth/sso`, swap `AuthGate` source to `kind:'app'`, and re-narrow the CF Access app from `/data*`+`/v1*`+`/login` down to just `/auth/sso`. Drop the per-person CF whitelist in favor of grant links for Stanford collaborators.
+
+## Schema changes vs watchy's `0007_grants.sql`
+
+The extracted `migrations/0001_grants.sql` is backwards-incompatible with the shipped watchy table; re-pointing watchy (step 3) needs a one-time migration, not a drop-in swap:
+
+- `id`: `INTEGER AUTOINCREMENT` → random `TEXT`. Autoincrement ids in URLs and audit rows leak how many grants exist and invite guessing from a neighbour.
+- Timestamps: ISO `TEXT` → epoch-seconds `INTEGER`. They compare and hour-bucket cheaply, which the access log needs.
+- `label` (NOT NULL) → `name` (nullable), plus the new optional columns from share-links §1: `note`, `subject_json`, `max_redeems`, `redeems`, `session_ttl`, `first_used_at`.
+- `use_count` (requests) → `redeems` (sessions minted). Different quantity, deliberately — see share-links §1.
+- Session cookie name is now configurable (default `oa_auth`, watchy ships `watchy_auth`); the `{v,sub,exp}` claim shape is fixed, which answers the "standardize or shared codec?" question below as *standardize the codec, not the name*.
 
 ## Open questions
 
-- Allowlist model (domain-only vs DB table + hook) — see Layer A.
-- ~~Package home~~ (resolved: this standalone repo); FE as subpath export vs sibling package.
-- Magic-link delivery (auth-gate.md deferred real sending; `mailto:` prefill v1). Package concern or app concern?
-- Do we standardize the session-cookie name / claim shape across apps (watchy: `watchy_auth`, `{v,sub,exp}`), or keep per-app with shared codec?
+- ~~Allowlist model~~ (resolved: `EmailPolicy` hook — see Layer A).
+- ~~Package home~~ (resolved: this standalone repo).
+- ~~Session-cookie name / claim shape~~ (resolved: fixed `{v,sub,exp}` codec, per-app cookie name).
+- FE as subpath export vs sibling package vs pure vendored copy-in — narrowed by share-links §6 but not settled for the *hooks* (as opposed to the styled shells).
+- Magic-link delivery (auth-gate.md deferred real sending; `mailto:` prefill v1). Package concern or app concern? Probably the same `notify(event)` hook as request-access.
 
 ## Status
 
-- [ ] Layer B: extract FE primitives; refactor marin + watchy onto them
-- [ ] Layer A: `@open-athena/auth` package (on 2nd Tier-2 consumer); re-point watchy
-- [ ] Decide allowlist model + packaging home
-- [ ] (marin, if it upgrades) Tier-2 migration per Rollout §4
+- [x] Layer A: `@open-athena/auth` kernel — sessions, grants, policy, audit, D1 + CF Access adapters, migrations, 65 tests
+- [ ] Layer A: re-point watchy at the package (needs the schema migration above)
+- [ ] Layer B: FE primitives; refactor marin + watchy onto them
+- [ ] Request-access flow + admin UI (see [`share-links-and-audit.md`](./share-links-and-audit.md) §2)
+- [ ] (marin, if it upgrades) Tier-2 migration per Rollout §6
 
 [`marin-gcs-usage`]: https://github.com/Open-Athena/marin-gcs-usage
 [`npm-dist`]: https://github.com/runsascoded/npm-dist

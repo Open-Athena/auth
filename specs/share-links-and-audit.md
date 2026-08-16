@@ -2,6 +2,8 @@
 
 *(RW + session, 2026-08-15. Extends [`overview.md`](./overview.md), which specced the session/grant substrate but left the share-link **configuration surface**, the **request-access** flow, and the **audit/analytics** story unwritten.)*
 
+**Implementation status (2026-08-16):** §0 (core/adapters split), §1 (share-link config surface + redemption semantics), and §3 (access log) are **built** — see `src/`, `migrations/`, and the deltas noted inline below. §2 (request-access), §4's beacon/rollup work, §5's watermark/disclosure UI, and §6's vendored FE are **not**.
+
 Framing: the product is *"share a sensitive dashboard view with a named person via a link, and know what happened."* That's the differentiated thing — sessions/SSO are table stakes.
 
 ## 0. Scope & naming (revisit)
@@ -41,7 +43,9 @@ grants (
 )
 ```
 
-**Redemptions ≠ requests.** `max_redeems` counts *sessions minted* (≈ distinct browsers), not HTTP requests. This is what makes "one-use link" mean something a human would predict. Note in the admin UI that `max_redeems: 1` is **hostile UX in practice** — the recipient opens it on their phone, then their laptop, and is locked out; prefer unlimited-redeem + named + logged + revocable, and reach for 1 only for genuinely single-shot flows (password-reset-shaped).
+*Built as `migrations/0001_grants.sql`, with two deltas: `id` is a random 9-byte base64url string rather than an opaque TEXT of unspecified provenance (autoincrement or sequential ids in URLs leak grant counts), and `token_hash` carries a `UNIQUE` constraint. Timestamps are epoch seconds as written here — a deliberate break from watchy's ISO-text columns, which is why re-pointing watchy needs a migration (see `overview.md` §"Schema changes").*
+
+**Redemptions ≠ requests.** `max_redeems` counts *sessions minted* (≈ distinct browsers), not HTTP requests. *Built: the cap is enforced only in `redeem()`, and as a single-statement compare-and-swap (`UPDATE … WHERE … AND (max_redeems IS NULL OR redeems < max_redeems) RETURNING …`) — a read-then-write would let two simultaneous opens both pass a `max_redeems: 1` check. `authenticate()` never spends a redemption, so `Bearer`/`?key=` script use and ordinary page loads don't burn the cap; the trade is that a capped link used purely as a script credential bypasses the cap, which is the right reading of "sessions minted".* This is what makes "one-use link" mean something a human would predict. Note in the admin UI that `max_redeems: 1` is **hostile UX in practice** — the recipient opens it on their phone, then their laptop, and is locked out; prefer unlimited-redeem + named + logged + revocable, and reach for 1 only for genuinely single-shot flows (password-reset-shaped).
 
 **Redemption flow** (already sketched in `overview.md`): `?key=<token>` → `POST /auth/exchange` → validate (not revoked, not expired, redeems < max) → mint session cookie → `history.replaceState` strips the param. Additions:
 
@@ -81,6 +85,10 @@ access_log (
 ```
 
 `authenticate()` already runs on every gated request, so it's the natural emit point. Two-tier volume control: always log auth-lifecycle events (`redeem`/`deny`/`revoke`/`request`); log `view` events **deduped per (session, path, hour)** so a chatty SPA doesn't write thousands of rows.
+
+*Built as `migrations/0002_access_log.sql`, plus two columns this sketch didn't have: `reason` (why a `deny` happened — `bad-token` | `revoked` | `expired` | `exhausted` | `not-allowed`, which is most of what makes the log worth reading during an incident) and `bucket` (`floor(ts/3600)` on `view` rows, NULL otherwise). The dedupe is a **partial unique index** on `(session_sub, path, bucket) WHERE bucket IS NOT NULL` with `ON CONFLICT DO NOTHING` — enforced by the DB rather than by a read-then-write race in the worker, and structurally unable to swallow a lifecycle event. `signout` joined the event vocabulary.*
+
+*Not logged: an absent credential. An anonymous request is not a denial, and logging one per public page load would drown the signal — so `deny` rows mean "someone presented something that didn't work", which is the question the log is actually asked.*
 
 What the admin view then answers, which is exactly the user-facing ask:
 
@@ -134,5 +142,6 @@ That split — *security-critical logic packaged, presentation vendored* — is 
 
 - **Publish identity** (settled): GH `Open-Athena/auth`, npm `@open-athena/auth`. The npm org **already exists** — RW (`rdub`) is its sole owner, having registered it earlier and forgotten; `openathena` is also held, as a defensive squat on the hyphenless variant. Pending: create the GH repo, and invite other OA members to the npm org so the namespace isn't bus-factor-1. Personal consumers (mortgage-viz, watchy's `rw` instance) consume the OA-scoped package; that's fine and needs no second package. If ownership ever has to move, GH transfers preserve redirects while a published npm name can only be deprecated-and-republished — so the scope is the decision to be sure about, and it's now made.
 - Notification transport for request-access (Slack webhook vs email) — package concern or app concern? (Same shape as the parent spec's magic-link-delivery question; probably one pluggable `notify(event)` hook answers both.)
-- Does `view`-event logging default **on** or **off**? (Privacy-forward default is off, with disclosure copy shipped alongside the on switch.)
+- ~~Does `view`-event logging default **on** or **off**?~~ (Settled: **off**, via `logViews` on `createGate`. Privacy-forward, and turning it on is the same edit as shipping the disclosure copy.)
 - Admin UI: extend watchy's `/access` page, or ship the vendored-in admin as part of Layer B?
+- Should `session_ttl` cap at the grant's `expires_at`? Today they're independent — a 30-day cookie on a 1-hour link is minted, and the per-request grant re-join is what actually stops it at the hour mark. Correct, but it leaves a dead cookie in the browser; clearing it on the deny path may be the friendlier behavior (and is what makes "revoke lands softly" in §5 work without a stale-session flicker).
