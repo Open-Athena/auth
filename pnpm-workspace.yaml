@@ -1,3 +1,13 @@
 packages:
   - '.'
   - 'demo'
+
+# pnpm 10 reads this here as well as from package.json. Keeping it out of
+# package.json matters for distribution: `npm-dist` merges the source manifest
+# into the dist branch's, and a field it once copied there stays copied —
+# `pkg_exclude` only filters what's pulled from source, it can't delete. This is
+# workspace-dev config (esbuild/workerd postinstalls); consumers shouldn't see it.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - '@parcel/watcher'

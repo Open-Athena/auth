@@ -47,6 +47,3 @@ jobs:
           # output, so they have to be carried over explicitly.
           extra_files: >-
             migrations/0001_grants.sql,migrations/0002_access_log.sql,migrations/0003_access_requests.sql,migrations/0004_access_log_daily.sql,README.md
-          # `pnpm.onlyBuiltDependencies` is a workspace-dev concern (esbuild,
-          # workerd); it means nothing to a consumer.
-          pkg_exclude: pnpm
