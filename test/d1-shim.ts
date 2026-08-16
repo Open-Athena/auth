@@ -4,7 +4,7 @@
  * `view` rows — is exercised by the test suite rather than reimplemented in a
  * mock. Only the handful of D1 methods the adapter uses are implemented.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -28,12 +28,13 @@ function shim(db: DatabaseSync): D1Database {
   return { prepare: (sql: string) => prepare(sql) } as unknown as D1Database
 }
 
-const migration = (name: string): string =>
-  readFileSync(fileURLToPath(new URL(`../migrations/${name}`, import.meta.url).href), 'utf8')
+const migrationsDir = fileURLToPath(new URL('../migrations/', import.meta.url).href)
 
-/** A fresh in-memory database with every migration applied. */
+/** A fresh in-memory database with every migration applied, discovered not listed. */
 export function testDb(): D1Database {
   const db = new DatabaseSync(':memory:')
-  for (const name of ['0001_grants.sql', '0002_access_log.sql']) db.exec(migration(name))
+  for (const name of readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()) {
+    db.exec(readFileSync(migrationsDir + name, 'utf8'))
+  }
   return shim(db)
 }

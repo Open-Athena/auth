@@ -5,7 +5,17 @@
  * in SQL to be race-free. Every other rule (expiry, revocation, scopes) stays
  * in core so there is one copy of it per rule, not one per backend.
  */
+import type { AccessRequest, RequestStatus } from './requests.js'
 import type { Grant, NewGrant } from './types.js'
+
+export interface GrantListOpts {
+  includeRevoked?: boolean
+  /**
+   * Only grants minted by this identity. Multi-tenant apps (and the demo's
+   * per-visitor sandbox) use it to keep one admin out of another's links.
+   */
+  createdBy?: string
+}
 
 export interface GrantStore {
   byId(id: string): Promise<Grant | null>
@@ -27,7 +37,57 @@ export interface GrantStore {
   touch(id: string, nowS: number, minIntervalS: number): Promise<void>
   /** Returns false if the grant was already revoked or does not exist. */
   revoke(id: string, nowS: number): Promise<boolean>
-  list(opts?: { includeRevoked?: boolean }): Promise<Grant[]>
+  list(opts?: GrantListOpts): Promise<Grant[]>
+}
+
+export interface RequestListOpts {
+  status?: RequestStatus
+  limit?: number
+}
+
+export interface RequestStore {
+  byId(id: string): Promise<AccessRequest | null>
+  /** The open request for this address, if any — so a re-visit doesn't pile up duplicates. */
+  pendingByEmail(email: string): Promise<AccessRequest | null>
+  insert(request: AccessRequest, ipHash: string | null): Promise<void>
+  /** Records the decision; returns null if the row was already decided by someone else. */
+  decide(
+    id: string,
+    decision: { status: RequestStatus; decidedBy: string; grantId: string | null; nowS: number },
+  ): Promise<AccessRequest | null>
+  list(opts?: RequestListOpts): Promise<AccessRequest[]>
+  /** Rate-limit support: requests from this email or IP since `sinceS`. */
+  countSince(sinceS: number, by: { email?: string; ipHash?: string | null }): Promise<number>
+}
+
+/** What an admin view needs to answer "what happened to Bob's link?". */
+export interface GrantActivity {
+  grantId: string
+  /** Distinct `ip_hash` values seen — the forwarding signal, per share-links §3. */
+  distinctIps: number
+  countries: string[]
+  views: number
+  firstSeen: number | null
+  lastSeen: number | null
+  topPaths: { path: string; views: number }[]
+}
+
+export interface AuditQuery {
+  activity(grantId: string): Promise<GrantActivity>
+  /** Most recent events, newest first. `grantId` narrows to one link's trail. */
+  recent(opts?: { grantId?: string; createdBy?: string; limit?: number }): Promise<StoredEvent[]>
+}
+
+/** An `access_log` row as read back out. */
+export interface StoredEvent {
+  id: number
+  ts: number
+  event: string
+  grantId: string | null
+  sessionSub: string | null
+  path: string | null
+  reason: string | null
+  country: string | null
 }
 
 /** Convenience: what a store needs from `mintGrant` before it has an id/timestamps. */

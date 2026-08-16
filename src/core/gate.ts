@@ -10,6 +10,14 @@
 import { type AccessEvent, type AuditSink, nullAudit, requestMeta } from './audit.js'
 import { type EmailPolicy, adminPolicy, firstMatch } from './policy.js'
 import {
+  type AccessRequest,
+  DEFAULT_RATE_LIMIT,
+  type Notify,
+  type RateLimit,
+  isEmailish,
+  noopNotify,
+} from './requests.js'
+import {
   DEFAULT_COOKIE_NAME,
   DEFAULT_SESSION_TTL_S,
   clearCookie,
@@ -22,7 +30,7 @@ import {
   signSession,
   verifySession,
 } from './session.js'
-import type { GrantStore } from './store.js'
+import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js'
 import { ALL_SCOPES, type Auth, type Grant, type NewGrant } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 
@@ -45,9 +53,29 @@ export interface GateOptions {
    * "access is logged" disclosure copy rather than silently.
    */
   logViews?: boolean
+  /** Enables the request-access flow. Without it, `requestAccess` throws. */
+  requests?: RequestStore
+  /** Where approvals and notifications go. Default: nowhere. */
+  notify?: Notify
+  rateLimit?: RateLimit
+  /** Shape of the grant minted when a request is approved. */
+  approvalGrant?: {
+    scopes?: string[]
+    expiresInS?: number | null
+    maxRedeems?: number | null
+    sessionTtlS?: number | null
+  }
 }
 
 export type RedeemFailure = 'bad-token' | 'revoked' | 'expired' | 'exhausted'
+
+export type RequestAccessResult =
+  /** Policy matched: a grant was minted and handed to `notify` immediately. */
+  | { status: 'auto'; request: AccessRequest; grant: Grant; token: string }
+  /** Waiting on an admin. Also returned for a re-submit, with the original row. */
+  | { status: 'pending'; request: AccessRequest }
+  | { status: 'invalid' }
+  | { status: 'rate-limited' }
 
 export type RedeemResult =
   | { ok: true; grant: Grant; auth: Auth; cookie: string }
@@ -86,6 +114,7 @@ export function createGate(opts: GateOptions) {
     : adminPolicy(adminEmails)
   const isAdmin = (email: string): boolean => adminEmails.some(a => a.toLowerCase() === email.toLowerCase())
 
+  const notify: Notify = opts.notify ?? noopNotify
   const log = (event: AccessEvent): Promise<void> => audit.log(event)
 
   async function logWithRequest(req: Request, event: Omit<AccessEvent, 'ts' | 'path'>, nowS: number): Promise<void> {
@@ -233,6 +262,114 @@ export function createGate(opts: GateOptions) {
     return { grant, token }
   }
 
+  function requestStore(): RequestStore {
+    if (!opts.requests) throw new Error('request-access is not configured: pass `requests` to createGate')
+    return opts.requests
+  }
+
+  /** Mint the grant an approval delivers, and hand it to `notify` with its token. */
+  async function grantFor(request: AccessRequest, scopes: string[], createdBy: string, nowMs: number) {
+    const { expiresInS = null, maxRedeems = null, sessionTtlS = null } = opts.approvalGrant ?? {}
+    return mint(
+      {
+        name: request.name ?? request.email,
+        note: request.note,
+        email: request.email,
+        scopes,
+        maxRedeems,
+        expiresAt: expiresInS === null ? null : sec(nowMs) + expiresInS,
+        sessionTtlS,
+        createdBy,
+      },
+      nowMs,
+    )
+  }
+
+  async function requestAccess(
+    input: { email: string; name?: string | null; note?: string | null },
+    req: Request,
+    nowMs = Date.now(),
+  ): Promise<RequestAccessResult> {
+    const requests = requestStore()
+    const nowS = sec(nowMs)
+    const email = input.email.trim().toLowerCase()
+    if (!isEmailish(email)) return { status: 'invalid' }
+
+    const limits = { ...DEFAULT_RATE_LIMIT, ...opts.rateLimit }
+    const meta = await requestMeta(req, secret)
+    const since = nowS - limits.windowS
+    const [byEmail, byIp] = await Promise.all([
+      requests.countSince(since, { email }),
+      meta.ipHash ? requests.countSince(since, { ipHash: meta.ipHash }) : Promise.resolve(0),
+    ])
+    if (byEmail >= limits.perEmail || byIp >= limits.perIp) return { status: 'rate-limited' }
+
+    // A re-visit should show "pending", not queue a second row for an admin.
+    const open = await requests.pendingByEmail(email)
+    if (open) return { status: 'pending', request: open }
+
+    const autoScopes = await policy(email)
+    const request: AccessRequest = {
+      id: generateId(),
+      email,
+      name: input.name?.trim() || null,
+      note: input.note?.trim() || null,
+      createdAt: nowS,
+      status: autoScopes ? 'auto' : 'pending',
+      decidedAt: autoScopes ? nowS : null,
+      decidedBy: autoScopes ? 'policy' : null,
+      grantId: null,
+    }
+
+    if (autoScopes) {
+      const { grant, token } = await grantFor(request, autoScopes, 'policy', nowMs)
+      request.grantId = grant.id
+      await requests.insert(request, meta.ipHash)
+      await log({ ts: nowS, ...meta, event: 'request', grantId: grant.id, sessionSub: emailSub(email) })
+      await notify({ kind: 'access-granted', request, grant, token })
+      return { status: 'auto', request, grant, token }
+    }
+
+    await requests.insert(request, meta.ipHash)
+    await log({ ts: nowS, ...meta, event: 'request', sessionSub: emailSub(email) })
+    await notify({ kind: 'access-requested', request })
+    return { status: 'pending', request }
+  }
+
+  /** Approve a pending request: mint a grant bound to its email and deliver it. */
+  async function approveRequest(
+    id: string,
+    approvedBy: string,
+    override: { scopes?: string[] } = {},
+    nowMs = Date.now(),
+  ): Promise<{ request: AccessRequest; grant: Grant; token: string } | null> {
+    const requests = requestStore()
+    const nowS = sec(nowMs)
+    const existing = await requests.byId(id)
+    if (!existing || existing.status !== 'pending') return null
+    const scopes = override.scopes ?? opts.approvalGrant?.scopes ?? []
+    const { grant, token } = await grantFor(existing, scopes, approvedBy, nowMs)
+    const request = await requests.decide(id, { status: 'approved', decidedBy: approvedBy, grantId: grant.id, nowS })
+    if (!request) {
+      // Another admin decided it in between; don't leave the grant usable.
+      await store.revoke(grant.id, nowS)
+      return null
+    }
+    await notify({ kind: 'access-granted', request, grant, token })
+    return { request, grant, token }
+  }
+
+  async function denyRequest(id: string, deniedBy: string, nowMs = Date.now()): Promise<AccessRequest | null> {
+    const request = await requestStore().decide(id, {
+      status: 'denied',
+      decidedBy: deniedBy,
+      grantId: null,
+      nowS: sec(nowMs),
+    })
+    if (request) await notify({ kind: 'access-denied', request })
+    return request
+  }
+
   async function revoke(id: string, nowMs = Date.now()): Promise<boolean> {
     const nowS = sec(nowMs)
     const ok = await store.revoke(id, nowS)
@@ -266,7 +403,11 @@ export function createGate(opts: GateOptions) {
     whoami,
     isAdmin,
     cookieName,
-    list: (o?: { includeRevoked?: boolean }) => store.list(o),
+    requestAccess,
+    approveRequest,
+    denyRequest,
+    list: (o?: GrantListOpts) => store.list(o),
+    listRequests: (o?: RequestListOpts) => requestStore().list(o),
   }
 }
 
