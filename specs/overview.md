@@ -87,10 +87,18 @@ The extracted `migrations/0001_grants.sql` is backwards-incompatible with the sh
 - [x] Request-access flow + `authRoutes` HTTP surface + audit read queries
 - [x] Layer B: FE primitives (`@open-athena/auth/react`), unstyled; 123 tests total
 - [x] `demo/` — a working Tier-2 app (Pages + Functions + D1) exercising all of the above end to end
-- [ ] Deploy the demo to `auth.oa.dev` (needs the GH repo, a D1 instance, and one CF Access app on `/auth/sso`)
+- [x] §4 analytics: first-party beacon, bot filtering, retention rollup
+- [x] Deployed at **https://auth.oa.dev** (OA CF account); GH repo `Open-Athena/auth` public, CI + `dist` branch green
+- [ ] Publish to npm (`@open-athena/auth` org exists, `rdub` sole owner — invite other OA members first, per the other spec's open question)
 - [ ] Re-point watchy at the package (needs the schema migration above)
 - [ ] Refactor marin's `AuthGate` onto `useWhoami({kind:'edge'})`
 - [ ] (marin, if it upgrades) Tier-2 migration per Rollout §6
+
+### Deployment notes
+
+The demo lives on the **OA** Cloudflare account (`74981a43…`), not the personal one where `watchy-www`/`mortgage-viz` live — `oa.dev` is an OA zone. `demo/scripts/oa-wrangler.sh` mirrors watchy's wrapper for this. Two snags worth recording: `wrangler pages project create` fails with a bare `Authentication error [code: 10000]` under the OA token (it calls a user-details endpoint the token can't reach) while the plain REST call works fine; and `wrangler pages deploy` ignores `wrangler.toml` entirely unless `pages_build_output_dir` is set, so the D1 binding had to be attached to the project via the API. Setting `pages_build_output_dir` in turn breaks `wrangler pages dev -- <cmd>`, which is why the deploy passes the directory on the command line instead.
+
+The Access app is scoped to exactly `auth.oa.dev/auth/sso` with an `openathena.ai` email-domain policy, mirroring watchy's. The team domain is `openathena-ai-pages.cloudflareaccess.com` — worth pinning in writing, because the plausible-looking `openathena.cloudflareaccess.com` does not exist and a wrong `iss` fails JWT verification silently rather than loudly.
 
 ### Learned while building the demo
 
