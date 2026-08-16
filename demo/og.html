@@ -1,0 +1,72 @@
+<!doctype html>
+<!--
+  Source for public/og.jpg. Rendered at exactly 1200x630 and screenshotted, so
+  the social card is composed rather than cropped out of a page screenshot.
+  Regenerate: open /og.html on the dev server, capture 1200x630, then
+  `sips -s format jpeg -s formatOptions 85 shot.png --out public/og.jpg`.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>og:image</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 1200px; height: 630px; overflow: hidden; }
+      body {
+        background: #14161a;
+        color: #e9e9e6;
+        font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        padding: 72px 80px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 28px;
+        position: relative;
+      }
+      /* Faint watermark, echoing what the gated page actually renders. */
+      .wm {
+        position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+        color: #6fae99; opacity: 0.05; font-weight: 700; font-size: 34px;
+        line-height: 2.6; letter-spacing: .18em; word-spacing: 1.5rem;
+        transform: rotate(-22deg) scale(1.5); transform-origin: center;
+      }
+      h1 {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 58px; font-weight: 700; letter-spacing: -0.02em; color: #fff;
+      }
+      .tag { font-size: 27px; line-height: 1.4; color: #b9b9b4; max-width: 900px; }
+      .tag b { color: #6fae99; font-weight: 600; }
+      .row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+      .pill {
+        border: 1px solid #2c3038; background: #1c1f24; border-radius: 999px;
+        padding: 10px 20px; font-size: 20px; color: #cfcfca;
+      }
+      .foot {
+        position: absolute; left: 80px; bottom: 56px;
+        font-size: 20px; color: #7f7f7a;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wm">
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+      <span>Dana Whitfield </span><span>Dana Whitfield </span><span>Dana Whitfield </span>
+    </div>
+    <h1>@open-athena/auth</h1>
+    <p class="tag">
+      Share a sensitive dashboard with a named person via a link — and <b>know what happened</b>.
+    </p>
+    <div class="row">
+      <span class="pill">Named share links</span>
+      <span class="pill">SSO</span>
+      <span class="pill">Access log</span>
+      <span class="pill">Instant revocation</span>
+    </div>
+    <div class="foot">auth.oa.dev</div>
+  </body>
+</html>

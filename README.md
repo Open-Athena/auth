@@ -10,11 +10,17 @@ Extraction target for the shipped implementations in [watchy] (Tier-2 reference)
 
 Scope note: this is *gating* — sessions, SSO hand-off, share links, request-access, audit — not a general-purpose auth framework (no password store, no OAuth server, no RBAC engine).
 
+## Try it: **[auth.oa.dev](https://auth.oa.dev)**
+
+Get a throwaway sandbox, mint a named link, open it, watch its access log fill in — then revoke it and watch the session die on its next request. No account needed.
+
+![@open-athena/auth](demo/public/og.jpg)
+
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, and the React primitives are **implemented and covered by 123 tests**, and exercised end-to-end by [the demo](demo/) — a working Tier-2 app (Pages + Functions + D1) intended for **auth.oa.dev**. Not yet done: deploying it, and re-pointing watchy at the package (which needs a schema migration — see `specs/overview.md`).
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 156 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). Not yet done: re-pointing watchy at the package (which needs a schema migration — see `specs/overview.md`).
 
-- [`demo/`](demo/) — mint a link, watch its access log, revoke it and see the session die
+- [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/overview.md`](specs/overview.md) — two-tier model, layer split, packaging
 - [`specs/share-links-and-audit.md`](specs/share-links-and-audit.md) — share-link config, request-access, access log, analytics
 
@@ -26,7 +32,7 @@ Backend kernel, request-access, the HTTP route surface, and the React primitives
 src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
 src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / disclosure — unstyled
-migrations/     0001_grants.sql, 0002_access_log.sql, 0003_access_requests.sql
+migrations/     grants, access_log, access_requests, access_log_daily
 demo/           a working Tier-2 app on Pages + Functions + D1
 ```
 

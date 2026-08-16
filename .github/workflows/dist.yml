@@ -1,0 +1,25 @@
+# Publish a `dist` branch consumable by SHA, which is how OA/personal projects
+# take this before (and alongside) npm — see `npm-dist` and `pds gh`.
+name: dist
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: runsascoded/npm-dist@v1
+        with:
+          node_version: '24'
+          build_command: pnpm build
+          # `exports` points at ./dist/*, so keep the directory rather than
+          # letting the build output flatten to the branch root.
+          preserve_dirs: dist
+          # Migrations are part of the public surface (`./migrations/*`) but
+          # aren't build output, so they have to be carried over explicitly.
+          extra_files: >-
+            migrations/0001_grants.sql,migrations/0002_access_log.sql,migrations/0003_access_requests.sql,migrations/0004_access_log_daily.sql,README.md
