@@ -69,7 +69,9 @@ export async function verifyAccessJwt(
     return null
   }
   if (claims.iss !== teamDomain) return null
-  if (typeof claims.exp !== 'number' || claims.exp * 1000 < nowMs) return null
+  // `<=`, not `<`: RFC 7519 requires the current time to be *before* `exp`, and
+  // it matches how grant expiry is judged (`expiresAt > nowS`).
+  if (typeof claims.exp !== 'number' || claims.exp * 1000 <= nowMs) return null
   if (expectedAud && !(Array.isArray(claims.aud) ? claims.aud : [claims.aud]).includes(expectedAud)) return null
   return typeof claims.email === 'string' ? claims.email : null
 }

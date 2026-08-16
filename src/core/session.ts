@@ -64,7 +64,9 @@ export async function verifySession(value: string, secret: string, nowMs: number
   }
   const { v, sub, exp } = (claims ?? {}) as Partial<SessionClaims>
   if (v !== 1 || typeof sub !== 'string' || typeof exp !== 'number') return null
-  if (exp * 1000 < nowMs) return null
+  // `<=` so expiry is judged identically everywhere: grants (`expiresAt > nowS`),
+  // Access JWTs, and sessions all treat "exactly at exp" as expired.
+  if (exp * 1000 <= nowMs) return null
   return sub
 }
 
