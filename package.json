@@ -5,6 +5,7 @@
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
   "type": "module",
+  "packageManager": "pnpm@10.18.1",
   "files": [
     "dist",
     "migrations",
