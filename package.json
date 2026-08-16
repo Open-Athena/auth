@@ -1,16 +1,11 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0",
+  "version": "0.1.0-dist.5b2e4e1",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
   "type": "module",
   "packageManager": "pnpm@10.18.1",
-  "files": [
-    "dist",
-    "migrations",
-    "src"
-  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,27 +24,6 @@
       "default": "./dist/react/index.js"
     },
     "./migrations/*": "./migrations/*"
-  },
-  "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.react.json",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.react.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260601.0",
-    "@tanstack/react-query": "^5.101.4",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.4",
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "jsdom": "^30.0.1",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "typescript": "^5.8.0",
-    "vitest": "^4.1.10"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "*",
