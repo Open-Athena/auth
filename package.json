@@ -65,5 +65,12 @@
     "react": {
       "optional": true
     }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "@parcel/watcher"
+    ]
   }
 }

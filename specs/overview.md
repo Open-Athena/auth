@@ -83,11 +83,20 @@ The extracted `migrations/0001_grants.sql` is backwards-incompatible with the sh
 
 ## Status
 
-- [x] Layer A: `@open-athena/auth` kernel — sessions, grants, policy, audit, D1 + CF Access adapters, migrations, 65 tests
-- [ ] Layer A: re-point watchy at the package (needs the schema migration above)
-- [ ] Layer B: FE primitives; refactor marin + watchy onto them
-- [ ] Request-access flow + admin UI (see [`share-links-and-audit.md`](./share-links-and-audit.md) §2)
+- [x] Layer A: `@open-athena/auth` kernel — sessions, grants, policy, audit, D1 + CF Access adapters, migrations
+- [x] Request-access flow + `authRoutes` HTTP surface + audit read queries
+- [x] Layer B: FE primitives (`@open-athena/auth/react`), unstyled; 123 tests total
+- [x] `demo/` — a working Tier-2 app (Pages + Functions + D1) exercising all of the above end to end
+- [ ] Deploy the demo to `auth.oa.dev` (needs the GH repo, a D1 instance, and one CF Access app on `/auth/sso`)
+- [ ] Re-point watchy at the package (needs the schema migration above)
+- [ ] Refactor marin's `AuthGate` onto `useWhoami({kind:'edge'})`
 - [ ] (marin, if it upgrades) Tier-2 migration per Rollout §6
+
+### Learned while building the demo
+
+The demo caught a bug no unit test had: `?key=` exchange fired **twice** per link open (React StrictMode double-invokes effects, and both invocations read the token before either stripped it), so every redemption counted double. Since redemption count *is* the forwarding signal — and `max_redeems: 1` would be burned instantly — that's a correctness bug in the product's core claim, not a dev-mode annoyance. Fixed by claiming the token synchronously (read + strip before the `await`), which makes `exchangeKeyParam` self-idempotent for any caller rather than just patching the hook. Worth remembering that the shipped-app loop is what surfaced it.
+
+Also settled by building it: two gates over one grants table (different cookie names, shared store) is a clean way to hold "admin" and "recipient" roles in one browser, and the `created_by` filter alone is enough multi-tenancy for a shared demo — no schema change needed.
 
 [`marin-gcs-usage`]: https://github.com/Open-Athena/marin-gcs-usage
 [`npm-dist`]: https://github.com/runsascoded/npm-dist

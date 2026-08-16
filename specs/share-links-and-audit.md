@@ -2,7 +2,7 @@
 
 *(RW + session, 2026-08-15. Extends [`overview.md`](./overview.md), which specced the session/grant substrate but left the share-link **configuration surface**, the **request-access** flow, and the **audit/analytics** story unwritten.)*
 
-**Implementation status (2026-08-16):** §0 (core/adapters split), §1 (share-link config surface + redemption semantics), and §3 (access log) are **built** — see `src/`, `migrations/`, and the deltas noted inline below. §2 (request-access), §4's beacon/rollup work, §5's watermark/disclosure UI, and §6's vendored FE are **not**.
+**Implementation status (2026-08-16):** §0 (core/adapters split), §1 (share-link config), §2 (request-access), §3 (access log), and §5's disclosure/watermark components are **built** — see `src/`, `migrations/`, and the deltas noted inline below — and exercised end to end by [`demo/`](../demo). Still open: §4's client beacon, bot filtering and retention/rollup job, and §6's vendored-admin-UI question (the demo's console is app-specific rather than vendored, which is evidence for that split but not yet a decision).
 
 Framing: the product is *"share a sensitive dashboard view with a named person via a link, and know what happened."* That's the differentiated thing — sessions/SSO are table stakes.
 
@@ -70,6 +70,8 @@ Flow: visitor submits email (+ optional note) → row inserted `pending` → adm
 - **Auto-approve rules** (optional): domain match (`@openathena.ai` → `auto`, grant minted immediately) — this is where the parent spec's *allowlist open question* resolves: a small `policy` fn `(email) => scopes | null`, DB-backed allowlist optional on top.
 - **Abuse control**: rate-limit per IP + per email, honeypot field, cap pending rows. CF Turnstile is the natural escalation (free, same platform) but shouldn't be required by default.
 - **Requester UX**: after submit, show "pending" state (a signed cookie holding the request id) so a re-visit doesn't re-submit; approval mail is the completion signal.
+
+*Built as `migrations/0003_access_requests.sql` + `core/requests.ts`, with these resolutions: the auto-approve `policy` fn is **the same `EmailPolicy` used for SSO**, so an app states "who is allowed" once. The pending-state cookie was unnecessary — a partial unique index on `(email) WHERE status = 'pending'` means a re-submit returns the original row, which is the same UX with no extra cookie. `ip_hash` joined the table for rate-limiting (HMAC, never a raw address). One `notify(event)` hook covers request notification, approval delivery, *and* the parent spec's magic-link-delivery question — they turned out to be one problem, as §"Open questions" guessed. Approval mints a grant and then decides the row; losing that race revokes the orphan rather than leaving it usable.*
 
 ## 3. Access log (audit)
 

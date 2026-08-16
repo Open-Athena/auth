@@ -94,6 +94,18 @@ describe('exchangeKeyParam', () => {
     expect(window.location.href).toBe('https://x.test/dash')
   })
 
+  it('spends one redemption when called twice concurrently', async () => {
+    // React StrictMode double-invokes effects, and any remount re-runs them.
+    // Claiming the token synchronously is what stops the second call finding
+    // one — a second POST would burn a `maxRedeems: 1` link and inflate the
+    // redemption count the admin view reads as a forwarding signal.
+    setLocation('https://x.test/dash?key=SECRET')
+    const calls = stubFetch({ '/api/auth/exchange': { status: 200, body: GRANT } })
+    const [a, b] = await Promise.all([exchangeKeyParam(), exchangeKeyParam()])
+    expect([a, b]).toEqual([true, false])
+    expect(calls.length).toBe(1)
+  })
+
   it('honours a custom param name', async () => {
     setLocation('https://x.test/dash?t=SECRET&key=untouched')
     const calls = stubFetch({ '/api/auth/exchange': { status: 200, body: GRANT } })

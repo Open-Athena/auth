@@ -12,8 +12,9 @@ Scope note: this is *gating* — sessions, SSO hand-off, share links, request-ac
 
 ## Status
 
-The **backend kernel is implemented**: sessions, grants, policy, audit, and the D1 + CF Access adapters, with 65 tests. Not yet built: request-access, the admin UI, the React primitives, and re-pointing watchy at the package. See the specs for what's next.
+Backend kernel, request-access, the HTTP route surface, and the React primitives are **implemented and covered by 123 tests**, and exercised end-to-end by [the demo](demo/) — a working Tier-2 app (Pages + Functions + D1) intended for **auth.oa.dev**. Not yet done: deploying it, and re-pointing watchy at the package (which needs a schema migration — see `specs/overview.md`).
 
+- [`demo/`](demo/) — mint a link, watch its access log, revoke it and see the session die
 - [`specs/overview.md`](specs/overview.md) — two-tier model, layer split, packaging
 - [`specs/share-links-and-audit.md`](specs/share-links-and-audit.md) — share-link config, request-access, access log, analytics
 
@@ -22,9 +23,11 @@ The **backend kernel is implemented**: sessions, grants, policy, audit, and the 
 `core/` is runtime-agnostic — Web Crypto and a SQL-shaped store interface, nothing else. The Cloudflare coupling is exactly two adapters, kept as a *file boundary* rather than an abstraction layer (no plugin registry, no DI):
 
 ```
-src/core/       sessions, tokens, grants, policy, audit — no CF, no Node
-src/adapters/   d1.ts (store + audit sink), cf-access.ts (SSO IdP)
-migrations/     0001_grants.sql, 0002_access_log.sql
+src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
+src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / disclosure — unstyled
+migrations/     0001_grants.sql, 0002_access_log.sql, 0003_access_requests.sql
+demo/           a working Tier-2 app on Pages + Functions + D1
 ```
 
 Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; peers of `adapters/cf-access` are Google/GitHub OIDC, WorkOS, or no IdP at all. Every current consumer is on CF, so those stay the only two adapters until a non-CF consumer appears.
@@ -80,6 +83,22 @@ export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflare
 
 **The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
 
+**Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
+
+**On the frontend**, `@open-athena/auth/react` ships the logic and leaves the presentation to you — every string and class is a prop, and no CSS is bundled:
+
+```tsx
+<AuthGate
+  source={{ kind: 'app' }}          // or { kind: 'edge' } for Tier 1 — the only line that changes
+  signIn={<SignInPanel signInUrl="/auth/sso" requestAccess />}
+>
+  {whoami => <>
+    <AccessNotice whoami={whoami} />   {/* "Private link for Bob Smith · access is logged" */}
+    <Dashboard />
+  </>}
+</AuthGate>
+```
+
 ## Development
 
 ```bash
@@ -87,9 +106,10 @@ pnpm install
 pnpm test        # vitest; core runs against an in-memory store, adapters against node:sqlite
 pnpm typecheck
 pnpm build
+cd demo && pnpm dev    # the whole thing running, on :4187
 ```
 
-`pnpm build` compiles against `@cloudflare/workers-types` alone (no Node types), which is what keeps `src/` honest about being runtime-agnostic.
+`pnpm build` compiles `src/core` and `src/adapters` against `@cloudflare/workers-types` alone (no Node types), which is what keeps them honest about being runtime-agnostic. `src/react` is a separate compilation because DOM lib and workers-types declare conflicting globals.
 
 [watchy]: https://github.com/runsascoded/watchy
 [marin-gcs-usage]: https://github.com/Open-Athena/marin-gcs-usage

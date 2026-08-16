@@ -1,0 +1,3 @@
+# SPA fallback. Pages matches Functions before static assets, so /api/* and
+# /auth/sso are unaffected by this.
+/*  /index.html  200

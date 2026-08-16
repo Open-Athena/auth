@@ -16,6 +16,12 @@ export interface RouteOptions {
   basePath?: string
   /** Scope required for the admin routes. Default `admin` (the wildcard `*` satisfies it). */
   adminScope?: string
+  /**
+   * Scope required to see and decide access requests. Defaults to `adminScope`.
+   * Worth separating: minting a share link affects only your own links, while
+   * the request queue holds other people's email addresses.
+   */
+  requestScope?: string
   /** Read side of the access log; without it the activity/log routes 501. */
   audit?: AuditQuery
   /**
@@ -62,11 +68,12 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
 
     /** Resolve identity once per request; admin routes then re-check the scope. */
     const auth = await gate.authenticate(req)
-    const admin = async (): Promise<Auth | Response> => {
+    const require = async (scope: string): Promise<Auth | Response> => {
       if (!auth) return json({ error: 'unauthenticated' }, 401)
-      if (!hasScope(auth, adminScope)) return json({ error: 'forbidden' }, 403)
+      if (!hasScope(auth, scope)) return json({ error: 'forbidden' }, 403)
       return auth
     }
+    const admin = () => require(adminScope)
     const listFilter = (a: Auth) => (scopeToCreator ? { createdBy: scopeToCreator(a) } : {})
 
     // ---- public -------------------------------------------------------------
@@ -152,7 +159,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     }
 
     if (seg[0] === 'requests') {
-      const a = await admin()
+      const a = await require(opts.requestScope ?? adminScope)
       if (a instanceof Response) return a
 
       if (seg.length === 1 && method === 'GET') {

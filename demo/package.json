@@ -1,0 +1,30 @@
+{
+  "name": "@open-athena/auth-demo",
+  "private": true,
+  "type": "module",
+  "devPort": 4187,
+  "scripts": {
+    "dev": "pnpm -w run build && pnpm db:local && wrangler pages dev --port 4187 -- pnpm vite --port 4188 --strictPort",
+    "build": "pnpm -w run build && vite build",
+    "typecheck": "tsc --noEmit",
+    "db:local": "wrangler d1 migrations apply oa-auth-demo --local",
+    "db:remote": "wrangler d1 migrations apply oa-auth-demo --remote",
+    "deploy": "pnpm build && wrangler pages deploy dist"
+  },
+  "dependencies": {
+    "@open-athena/auth": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.1.0",
+    "sass": "^1.83.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.1.0",
+    "wrangler": "^4.0.0"
+  }
+}
