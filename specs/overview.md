@@ -49,6 +49,7 @@ Styling stays per-app (className hooks, not bundled CSS). `use-prms`/`@tanstack/
 ## Packaging
 
 - **Backend**: `@open-athena/auth` — Workers/Pages-Functions TS (Web Crypto only, no Node). Home: **this repo** (`Open-Athena/auth`), consumed by SHA via [`npm-dist`] (per `pds gh`) like other OA/personal libs. Cross-dir `import` (watchy's current `../../cfw/src/gate`, esbuild-bundled) is fine as an interim before the package exists.
+  - **Shipping as of 2026-08-16**: the `dist` branch is the distribution channel, and the only one until the API settles. The publish job is gated on the test job in the same workflow rather than running as a peer — consumers pin dist SHAs, so the branch must never advance past a commit whose tests failed. That's the single failure mode this model has, and it's cheap to foreclose. `pkg_exclude: pnpm` keeps the workspace's `onlyBuiltDependencies` out of the consumer-facing manifest; `type`, `exports`, `peerDependencies` and `peerDependenciesMeta` all carry over as-is.
 - **FE**: either the same repo (`@open-athena/auth/react` subpath export) or a sibling `@open-athena/auth-react`. Ship as a dist-branch too.
 - First real extraction = when the 2nd Tier-2 consumer appears. Until then, watchy stays the source of truth and new consumers `import` from it / copy, tracked here.
 
@@ -89,7 +90,7 @@ The extracted `migrations/0001_grants.sql` is backwards-incompatible with the sh
 - [x] `demo/` — a working Tier-2 app (Pages + Functions + D1) exercising all of the above end to end
 - [x] §4 analytics: first-party beacon, bot filtering, retention rollup
 - [x] Deployed at **https://auth.oa.dev** (OA CF account); GH repo `Open-Athena/auth` public, CI + `dist` branch green
-- [ ] Publish to npm (`@open-athena/auth` org exists, `rdub` sole owner — invite other OA members first, per the other spec's open question)
+- [ ] npm publish — **deliberately deferred** (RW, 2026-08-16): distribute via the `dist` branch until the API stops moving. A published npm version can only be deprecated, never taken back, so the cost of publishing early is permanent namespace clutter; a dist SHA costs nothing to abandon. Prerequisites when it's time: invite other OA members to the npm org (currently bus-factor-1, `rdub` sole owner) and pick a real semver.
 - [ ] Re-point watchy at the package (needs the schema migration above)
 - [ ] Refactor marin's `AuthGate` onto `useWhoami({kind:'edge'})`
 - [ ] (marin, if it upgrades) Tier-2 migration per Rollout §6

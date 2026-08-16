@@ -38,6 +38,25 @@ demo/           a working Tier-2 app on Pages + Functions + D1
 
 Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; peers of `adapters/cf-access` are Google/GitHub OIDC, WorkOS, or no IdP at all. Every current consumer is on CF, so those stay the only two adapters until a non-CF consumer appears.
 
+## Installing
+
+Not on npm yet — it ships as a **`dist` branch**, consumed by SHA (the [`npm-dist`] model other OA/personal libs use). npm comes once the API has stopped moving; the scope is registered and waiting.
+
+```bash
+pds gh auth            # if the dep is already pds-managed
+```
+
+or by hand, pinning a SHA rather than the branch so a consumer's build is reproducible:
+
+```bash
+SHA=$(gh api repos/Open-Athena/auth/commits/dist --jq .sha)
+pnpm add "@open-athena/auth@github:Open-Athena/auth#$SHA"
+```
+
+The `dist` branch only advances on a commit whose tests passed, so any SHA you can pin is green. It carries built JS + `.d.ts`, the migrations, and the peer-dep declarations; versions read `0.1.0-dist.<sha>`.
+
+Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), and `react` + `@tanstack/react-query` for the `/react` subpath.
+
 ## Quickstart
 
 Apply the migrations, then build a gate:
@@ -117,6 +136,7 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 
 `pnpm build` compiles `src/core` and `src/adapters` against `@cloudflare/workers-types` alone (no Node types), which is what keeps them honest about being runtime-agnostic. `src/react` is a separate compilation because DOM lib and workers-types declare conflicting globals.
 
+[`npm-dist`]: https://github.com/runsascoded/npm-dist
 [watchy]: https://github.com/runsascoded/watchy
 [marin-gcs-usage]: https://github.com/Open-Athena/marin-gcs-usage
 [mortgage-viz]: https://github.com/runsascoded/mortgage-viz
