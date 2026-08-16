@@ -22,7 +22,10 @@ const gate = (extra: Partial<Parameters<typeof createGate>[0]> = {}) =>
     ...extra,
   })
 
-const req = (path = '/dash', init: RequestInit = {}) => new Request(`https://x.test${path}`, init)
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0 Safari/537.36'
+
+const req = (path = '/dash', init: RequestInit = {}) =>
+  new Request(`https://x.test${path}`, { ...init, headers: { 'User-Agent': UA, ...(init.headers as Record<string, string>) } })
 const withCookie = (cookie: string, path = '/dash') => req(path, { headers: { Cookie: cookie } })
 
 /** `name=value` out of a Set-Cookie string. */
@@ -131,7 +134,7 @@ describe('redeem', () => {
   it('drops Secure on a plain-http origin', async () => {
     const g = gate()
     const { token } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
-    const res = await g.redeem(token, new Request('http://localhost:3456/'), NOW)
+    const res = await g.redeem(token, new Request('http://localhost:3456/', { headers: { 'User-Agent': UA } }), NOW)
     if (!res.ok) throw new Error('expected redeem to succeed')
     expect(res.cookie).toBe(cookiePair(res.cookie) + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000')
   })

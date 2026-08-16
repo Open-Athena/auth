@@ -28,7 +28,8 @@ const RSA = { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256', modulusLength: 2048, p
 beforeAll(async () => {
   keys = (await crypto.subtle.generateKey(RSA, true, ['sign', 'verify'])) as CryptoKeyPair
   otherKeys = (await crypto.subtle.generateKey(RSA, true, ['sign', 'verify'])) as CryptoKeyPair
-  const jwk = await crypto.subtle.exportKey('jwk', keys.publicKey)
+  // workers-types declares exportKey as ArrayBuffer | JsonWebKey; 'jwk' gives the latter.
+  const jwk = (await crypto.subtle.exportKey('jwk', keys.publicKey)) as JsonWebKey
   jwks = { keys: [{ ...jwk, kid: KID }] }
 })
 
@@ -174,7 +175,7 @@ describe('ssoHandler', () => {
     valid({ exp: Math.floor(Date.now() / 1000) + 3600, ...over })
 
   const call = async (jwt: string | null, url = 'https://x.test/auth/sso') => {
-    const headers = jwt ? { 'Cf-Access-Jwt-Assertion': jwt } : {}
+    const headers: Record<string, string> = jwt ? { 'Cf-Access-Jwt-Assertion': jwt } : {}
     return ssoHandler({ gate: gate(), teamDomain: TEAM, aud: AUD })({ request: new Request(url, { headers }) })
   }
 

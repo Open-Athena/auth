@@ -1,6 +1,7 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js'
 export { nullAudit, requestMeta } from './core/audit.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
+export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
 export { ALL_SCOPES, createGate, isActive } from './core/gate.js'
 export type { Gate, GateOptions, MintResult, RedeemFailure, RedeemResult, RequestAccessResult } from './core/gate.js'
 export { DEFAULT_RATE_LIMIT, isEmailish, noopNotify } from './core/requests.js'

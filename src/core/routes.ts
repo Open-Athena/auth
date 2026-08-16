@@ -66,8 +66,10 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     const method = req.method
     const seg = rest.split('/').filter(Boolean)
 
-    /** Resolve identity once per request; admin routes then re-check the scope. */
-    const auth = await gate.authenticate(req)
+    // Resolve identity once per request; admin routes then re-check the scope.
+    // `logView: false` because these endpoints are plumbing, not pages — a view
+    // row per `/whoami` poll would bury the routes a visitor actually read.
+    const auth = await gate.authenticate(req, undefined, { logView: false })
     const require = async (scope: string): Promise<Auth | Response> => {
       if (!auth) return json({ error: 'unauthenticated' }, 401)
       if (!hasScope(auth, scope)) return json({ error: 'forbidden' }, 403)
@@ -92,6 +94,25 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
 
     if (rest === '/logout' && method === 'POST') {
       return json({ ok: true }, 200, { 'set-cookie': await gate.signOut(req, auth) })
+    }
+
+    /**
+     * First-party beacon for client-only signals — SPA route changes above all,
+     * which no server request would otherwise reveal. Same store as everything
+     * else, so "who viewed what" still joins to `grants` natively; no
+     * third-party script, and no cookie banner, since the only cookie involved
+     * is the session the visitor already has.
+     */
+    if (rest === '/track' && method === 'POST') {
+      if (!auth) return json({ ok: true }) // anonymous beacons are simply dropped
+      const { path } = await body<{ path: string }>(req)
+      // A client-supplied path is untrusted input that lands in an admin's
+      // table: take same-origin paths only, and cap the length.
+      if (!path || !path.startsWith('/') || path.startsWith('//') || path.length > 512) {
+        return json({ error: 'path must be a same-origin path' }, 400)
+      }
+      await gate.logView(req, auth, undefined, path)
+      return json({ ok: true })
     }
 
     if (rest === '/request' && method === 'POST') {

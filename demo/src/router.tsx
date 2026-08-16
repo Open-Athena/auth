@@ -3,6 +3,22 @@ import { type ReactNode, createContext, useCallback, useContext, useEffect, useS
 
 const NavContext = createContext<(to: string) => void>(() => {})
 
+/**
+ * Tell the gate which route was actually viewed. A client-side navigation makes
+ * no server request, so without this the log would show whatever API call
+ * happened to fire — never the page the visitor read. Anonymous beacons are
+ * dropped server-side, so this is a no-op for signed-out visitors.
+ */
+const beacon = (path: string): void => {
+  void fetch('/api/view/track', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path }),
+    keepalive: true,
+  }).catch(() => {})
+}
+
 export function useNavigate() {
   return useContext(NavContext)
 }
@@ -16,9 +32,12 @@ export function usePath(): [string, (to: string) => void] {
   }, [])
   const navigate = useCallback((to: string) => {
     window.history.pushState({}, '', to)
-    setPath(new URL(to, window.location.origin).pathname)
+    const next = new URL(to, window.location.origin).pathname
+    setPath(next)
     window.scrollTo(0, 0)
+    beacon(next)
   }, [])
+  useEffect(() => beacon(window.location.pathname), [])
   return [path, navigate]
 }
 

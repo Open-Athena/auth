@@ -235,6 +235,62 @@ export function d1RequestStore(db: D1Database): RequestStore {
   }
 }
 
+export interface RollupResult {
+  /** Raw rows collapsed and removed. */
+  rolledUp: number
+  /** Daily buckets written or incremented. */
+  buckets: number
+  /** Rows at or after this timestamp were left alone. */
+  cutoff: number
+}
+
+/**
+ * Collapse raw `access_log` rows older than `olderThanDays` into daily buckets,
+ * then delete them. Idempotent: re-running produces the same table, because the
+ * upsert adds to existing buckets and the source rows are gone.
+ *
+ * Schedule it from a Worker cron (Pages Functions have no scheduler of their
+ * own) or call it from an admin route. Retention is the other thing a hosted
+ * analytics tool does for you; a first-party log has to do it deliberately.
+ */
+export async function rollupAccessLog(
+  db: D1Database,
+  { olderThanDays = 90, nowS = Math.floor(Date.now() / 1000) }: { olderThanDays?: number; nowS?: number } = {},
+): Promise<RollupResult> {
+  const cutoff = nowS - olderThanDays * 86400
+  const before = await db
+    .prepare(`SELECT COUNT(*) AS n FROM access_log WHERE ts < ?`)
+    .bind(cutoff)
+    .first<{ n: number }>()
+  if (!before?.n) return { rolledUp: 0, buckets: 0, cutoff }
+
+  // COALESCE the grouping keys: SQLite treats NULLs as distinct in a PRIMARY
+  // KEY, so without it every NULL-path row would get its own bucket and the
+  // upsert would never merge.
+  const upsert = await db
+    .prepare(
+      `INSERT INTO access_log_daily (day, event, grant_id, path, country, events, clients)
+       SELECT ts / 86400,
+              event,
+              COALESCE(grant_id, ''),
+              COALESCE(path, ''),
+              COALESCE(country, ''),
+              COUNT(*),
+              COUNT(DISTINCT ip_hash)
+         FROM access_log
+        WHERE ts < ?
+        GROUP BY ts / 86400, event, COALESCE(grant_id, ''), COALESCE(path, ''), COALESCE(country, '')
+       ON CONFLICT (day, event, grant_id, path, country) DO UPDATE SET
+              events = events + excluded.events,
+              clients = MAX(clients, excluded.clients)`,
+    )
+    .bind(cutoff)
+    .run()
+
+  await db.prepare(`DELETE FROM access_log WHERE ts < ?`).bind(cutoff).run()
+  return { rolledUp: before.n, buckets: upsert.meta?.changes ?? 0, cutoff }
+}
+
 /**
  * Read side of the access log. This is what turns rows into the sentence the
  * admin view exists to say: "Bob's link: redeemed 4 times from 2 countries,

@@ -8,6 +8,7 @@
  * story (assume forwarding; make it visible and revocable) actually work.
  */
 import { type AccessEvent, type AuditSink, nullAudit, requestMeta } from './audit.js'
+import { looksAutomated } from './bots.js'
 import { type EmailPolicy, adminPolicy, firstMatch } from './policy.js'
 import {
   type AccessRequest,
@@ -53,6 +54,12 @@ export interface GateOptions {
    * "access is logged" disclosure copy rather than silently.
    */
   logViews?: boolean
+  /**
+   * Drop `view` rows from self-identified automation. Default true. Only views
+   * are filtered — an auth-lifecycle event from a bot is exactly the thing you
+   * want to see in the log.
+   */
+  filterBots?: boolean
   /** Enables the request-access flow. Without it, `requestAccess` throws. */
   requests?: RequestStore
   /** Where approvals and notifications go. Default: nowhere. */
@@ -108,6 +115,7 @@ export function createGate(opts: GateOptions) {
     audit = nullAudit,
     touchIntervalS = 60,
     logViews = false,
+    filterBots = true,
   } = opts
   const policy: EmailPolicy = opts.policy
     ? firstMatch(adminPolicy(adminEmails), opts.policy)
@@ -132,8 +140,22 @@ export function createGate(opts: GateOptions) {
    * exchange; they are request-scoped and never count as a redemption, since a
    * redemption means "a browser session was minted".
    */
-  async function authenticate(req: Request, nowMs = Date.now()): Promise<Auth | null> {
+  async function authenticate(
+    req: Request,
+    nowMs = Date.now(),
+    /**
+     * `logView: false` suppresses the automatic view row for this call. The
+     * auth endpoints themselves use it: `/whoami` and `/track` are plumbing,
+     * not pages, and logging them would bury the routes a visitor actually read
+     * under one row per API call.
+     */
+    { logView: shouldLogView = true }: { logView?: boolean } = {},
+  ): Promise<Auth | null> {
     const nowS = sec(nowMs)
+    const afterAuth = async (auth: Auth): Promise<Auth> => {
+      if (logViews && shouldLogView) await logView(req, auth, nowS)
+      return auth
+    }
     const url = new URL(req.url)
     const presented = req.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1] ?? url.searchParams.get('key')
 
@@ -148,7 +170,7 @@ export function createGate(opts: GateOptions) {
         return null
       }
       await store.touch(grant.id, nowS, touchIntervalS)
-      return await afterAuth(req, grantAuth(grant), nowS)
+      return await afterAuth(grantAuth(grant))
     }
 
     const cookie = readCookie(req, cookieName)
@@ -164,7 +186,7 @@ export function createGate(opts: GateOptions) {
         await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS)
         return null
       }
-      return await afterAuth(req, { kind: 'sso', email: parsed.value, admin: isAdmin(parsed.value), scopes }, nowS)
+      return await afterAuth({ kind: 'sso', email: parsed.value, admin: isAdmin(parsed.value), scopes })
     }
 
     // Re-join the grant every request: this is what makes revocation instant.
@@ -174,22 +196,23 @@ export function createGate(opts: GateOptions) {
       return null
     }
     await store.touch(grant.id, nowS, touchIntervalS)
-    return await afterAuth(req, grantAuth(grant), nowS)
+    return await afterAuth(grantAuth(grant))
   }
 
-  async function afterAuth(req: Request, auth: Auth, nowS: number): Promise<Auth> {
-    if (logViews) await logView(req, auth, nowS)
-    return auth
-  }
 
-  async function logView(req: Request, auth: Auth, nowS = sec(Date.now())): Promise<void> {
-    await logWithRequest(
-      req,
-      auth.kind === 'grant'
-        ? { event: 'view', grantId: auth.grant.id, sessionSub: grantSub(auth.grant.id) }
-        : { event: 'view', sessionSub: emailSub(auth.email) },
-      nowS,
-    )
+  async function logView(req: Request, auth: Auth, nowS = sec(Date.now()), path?: string): Promise<void> {
+    if (filterBots && looksAutomated(req)) return
+    const meta = await requestMeta(req, secret)
+    await log({
+      ...meta,
+      // A beacon reports the SPA route the visitor actually saw; without it the
+      // log would only ever show `/api/track`, which answers nothing.
+      ...(path ? { path } : {}),
+      ts: nowS,
+      ...(auth.kind === 'grant'
+        ? { event: 'view' as const, grantId: auth.grant.id, sessionSub: grantSub(auth.grant.id) }
+        : { event: 'view' as const, sessionSub: emailSub(auth.email) }),
+    })
   }
 
   /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
