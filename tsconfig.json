@@ -12,5 +12,8 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  // `src/react` and `test/react` are compiled by tsconfig.react.json instead —
+  // see the note there.
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["src/react/**/*", "test/react/**/*"]
 }

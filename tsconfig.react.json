@@ -1,0 +1,21 @@
+// The React subpath needs DOM lib and React types; the rest of the package needs
+// `@cloudflare/workers-types`. Those two declare conflicting globals (`Request`,
+// `Response`, `fetch`), so they get separate compilations rather than a merged
+// `types` array that would typecheck neither correctly.
+//
+// This config typechecks the React source and its tests; tsconfig.build.react.json
+// emits just the source.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "jsx": "react-jsx",
+    // Test helpers return inferred types from @testing-library, which aren't
+    // nameable across pnpm's store layout (TS2742). Declarations only matter
+    // for the emitted package — tsconfig.build.react.json turns them back on.
+    "declaration": false
+  },
+  "include": ["src/react/**/*", "test/react/**/*"],
+  "exclude": []
+}

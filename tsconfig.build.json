@@ -9,5 +9,6 @@
     // which is the package's whole portability claim.
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/react/**/*"]
 }
