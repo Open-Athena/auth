@@ -1,4 +1,4 @@
-# `cf-gate`: extract the reusable auth stack (backend + FE primitives) across OA/personal apps
+# `sherry`: extract the reusable auth stack (backend + FE primitives) across OA/personal apps
 
 Goal (RW, 2026-08-12): converge the several OA/personal apps with the same "public site, gate a slice" shape onto **reusable, liftable auth layers**, extracted from the shipped implementations. Follow-on to [`auth-gate.md`][auth-gate.md] (which built watchy's app-level gate and already sketched the reuse path); triggered by [`marin-gcs-usage`] standing up its own gate (the "3rd consumer" auth-gate.md anticipated). Spec written from a marin-gcs-usage session into watchy, then seeded into this standalone repo (2026-08-13) — the extraction lives here; the canonical shipped Tier-2 code stays in watchy until re-pointed.
 
@@ -22,7 +22,7 @@ Condensed from [`auth-gate.md`][auth-gate.md]'s research (see it for detail):
 - **mortgage-viz** (`$c/rac/mortgage-viz`) — origin of the *grants/nonce* substrate (`functions/_lib/doc-auth.ts`): 24-byte tokens, SHA-256-hash-only storage, per-request session→grant re-join for instant revocation. Its `specs/live-sync.md` already plans the same package split — coordinate.
 - **applitrack** (`$oa/applitrack`) — a *Tier-1.5* variant: HMAC-signed session cookie (~60 lines, no lib) + **live allowlist table** checked every verify (`allowed_users`, bulk-paste admin, per-domain default roles). Useful input for the allowlist-as-DB option below.
 
-## Layer A — `cf-gate` (backend package)
+## Layer A — `sherry` (backend package)
 
 Lift watchy's Tier-2 core, which is already written app-agnostic (Env deps: `DB`, `SESSION_SECRET`, `ADMIN_EMAILS`; one scope string):
 
@@ -33,7 +33,7 @@ Lift watchy's Tier-2 core, which is already written app-agnostic (Env deps: `DB`
 
 Env contract to formalize: `{ DB: D1Database, SESSION_SECRET: string, ADMIN_EMAILS: string[], ACCESS_TEAM_DOMAIN: string, ACCESS_AUD?: string }`. Scope vocabulary is per-app (watchy uses one: `internal`).
 
-Open question — **allowlist**: watchy hardcodes "`@openathena.ai` OR admin". applitrack's DB-backed `allowed_users` (live-checked, bulk-paste admin, per-domain roles) is more flexible for externals-as-first-class. Decide whether `cf-gate` bakes in domain-match only, or an optional `allowlist` table + hook.
+Open question — **allowlist**: watchy hardcodes "`@openathena.ai` OR admin". applitrack's DB-backed `allowed_users` (live-checked, bulk-paste admin, per-domain roles) is more flexible for externals-as-first-class. Decide whether `sherry` bakes in domain-match only, or an optional `allowlist` table + hook.
 
 ## Layer B — shared FE auth primitives (React)
 
@@ -48,15 +48,15 @@ Styling stays per-app (className hooks, not bundled CSS). `use-prms`/`@tanstack/
 
 ## Packaging
 
-- **Backend**: `cf-gate` — Workers/Pages-Functions TS (Web Crypto only, no Node). Home: **this repo** (`runsascoded/cf-gate`), consumed by SHA via [`npm-dist`] (per `pds gh`) like other OA/personal libs. Cross-dir `import` (watchy's current `../../cfw/src/gate`, esbuild-bundled) is fine as an interim before the package exists.
-- **FE**: either the same repo (`cf-gate/react` subpath export) or a sibling `cf-gate-react`. Ship as a dist-branch too.
+- **Backend**: `sherry` — Workers/Pages-Functions TS (Web Crypto only, no Node). Home: **this repo** (`runsascoded/sherry`), consumed by SHA via [`npm-dist`] (per `pds gh`) like other OA/personal libs. Cross-dir `import` (watchy's current `../../cfw/src/gate`, esbuild-bundled) is fine as an interim before the package exists.
+- **FE**: either the same repo (`sherry/react` subpath export) or a sibling `sherry-react`. Ship as a dist-branch too.
 - First real extraction = when the 2nd Tier-2 consumer appears. Until then, watchy stays the source of truth and new consumers `import` from it / copy, tracked here.
 
 ## Rollout / sequencing
 
-1. **marin** ships Tier 1 as-is (done: `AuthGate` + `/login`; pending the CF dashboard narrowing to `/data*` `/v1*` `/login`). No `cf-gate` dependency yet.
+1. **marin** ships Tier 1 as-is (done: `AuthGate` + `/login`; pending the CF dashboard narrowing to `/data*` `/v1*` `/login`). No `sherry` dependency yet.
 2. **FE primitives** extracted first (lower risk, both apps benefit immediately): refactor marin's `AuthGate` and watchy's `auth.tsx` onto `useWhoami(source)`/`<AuthGate>`/`<SignInPanel>`/`<WhoamiChip>`. marin passes `kind:'edge'`; watchy passes `kind:'app'`.
-3. **`cf-gate` backend** extracted when a 2nd Tier-2 consumer lands (marin's own Tier-2 upgrade, or mortgage-viz's split). At that point: lift `gate.ts` + `0007_grants.sql` + `auth/sso.ts` into the package (Pages-Functions-hosted default), and re-point watchy + the new consumer at it.
+3. **`sherry` backend** extracted when a 2nd Tier-2 consumer lands (marin's own Tier-2 upgrade, or mortgage-viz's split). At that point: lift `gate.ts` + `0007_grants.sql` + `auth/sso.ts` into the package (Pages-Functions-hosted default), and re-point watchy + the new consumer at it.
 4. If/when **marin → Tier 2**: add a D1 binding + `SESSION_SECRET`, host `gate.ts` in a Pages Function, add `/auth/sso`, swap `AuthGate` source to `kind:'app'`, and re-narrow the CF Access app from `/data*`+`/v1*`+`/login` down to just `/auth/sso`. Drop the per-person CF whitelist in favor of grant links for Stanford collaborators.
 
 ## Open questions
@@ -69,7 +69,7 @@ Styling stays per-app (className hooks, not bundled CSS). `use-prms`/`@tanstack/
 ## Status
 
 - [ ] Layer B: extract FE primitives; refactor marin + watchy onto them
-- [ ] Layer A: `cf-gate` package (on 2nd Tier-2 consumer); re-point watchy
+- [ ] Layer A: `sherry` package (on 2nd Tier-2 consumer); re-point watchy
 - [ ] Decide allowlist model + packaging home
 - [ ] (marin, if it upgrades) Tier-2 migration per Rollout §4
 

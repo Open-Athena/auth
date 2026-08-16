@@ -1,0 +1,138 @@
+# Share links, request-access, and the access log
+
+*(RW + session, 2026-08-15. Extends [`sherry.md`](./sherry.md), which specced the session/grant substrate but left the share-link **configuration surface**, the **request-access** flow, and the **audit/analytics** story unwritten.)*
+
+Framing: the product is *"share a sensitive dashboard view with a named person via a link, and know what happened."* That's the differentiated thing — sessions/SSO are table stakes.
+
+## 0. Scope & naming (revisit)
+
+The kernel here — HMAC sessions, hashed grant tokens, scopes, redemption accounting, audit log, request-access — is **runtime-agnostic already**, because it's constrained to Web Crypto + a SQL store. CF-specific surface is exactly two adapters:
+
+- **IdP**: `verifyAccessJwt` (CF Access RS256 vs team certs). Peers: Google/GitHub OIDC, WorkOS, plain magic-link-only (no IdP).
+- **Store**: D1. Peers: any SQLite (Turso/better-sqlite3), Postgres.
+
+So the honest structure is `core/` + `adapters/{cf-access,d1}` — and the old name (`cf-gate`) undersold it. **Renamed to `sherry`** (2026-08-15) while it was still free to do so: a silly diminutive of "share-y", in the `watchy` cadence, and a ready-made fount of iconography (the drink) for logo/favicon/og. No extended metaphor — the cellar vocabulary stays out of the API.
+
+The CF coupling is real but small; build the adapters as a *file boundary*, not an abstraction layer — no plugin registry, no DI container, just `core` importing an interface that `adapters/d1` satisfies in ~40 lines. Every current consumer (watchy, marin-gcs-usage, mortgage-viz, applitrack) is on CF, so CF adapters stay the only ones that exist until a non-CF consumer appears.
+
+## 1. Share links (grants) — configuration surface
+
+Every knob optional, defaults sane, zero-config = "unlimited-use, never-expires, unnamed link" (today's behavior).
+
+```sql
+-- extends 0007_grants.sql
+grants (
+  id            TEXT PRIMARY KEY,
+  token_hash    TEXT NOT NULL,      -- SHA-256; raw token shown once at creation
+  name          TEXT,               -- admin-side label: "Bob Smith (donor)"
+  note          TEXT,               -- freeform: why this exists
+  subject_json  TEXT,               -- optional pre-loaded identity: {first,last,email,avatar}
+  email         TEXT,               -- if set: magic-link semantics (bind on redeem)
+  scopes        TEXT NOT NULL,      -- space-separated
+  max_redeems   INTEGER,            -- NULL = unlimited
+  redeems       INTEGER NOT NULL DEFAULT 0,
+  expires_at    INTEGER,            -- NULL = never
+  session_ttl   INTEGER,            -- seconds; NULL = inherit app default
+  created_at    INTEGER NOT NULL,
+  created_by    TEXT NOT NULL,
+  revoked_at    INTEGER,
+  first_used_at INTEGER,
+  last_used_at  INTEGER
+)
+```
+
+**Redemptions ≠ requests.** `max_redeems` counts *sessions minted* (≈ distinct browsers), not HTTP requests. This is what makes "one-use link" mean something a human would predict. Note in the admin UI that `max_redeems: 1` is **hostile UX in practice** — the recipient opens it on their phone, then their laptop, and is locked out; prefer unlimited-redeem + named + logged + revocable, and reach for 1 only for genuinely single-shot flows (password-reset-shaped).
+
+**Redemption flow** (already sketched in `sherry.md`): `?key=<token>` → `POST /auth/exchange` → validate (not revoked, not expired, redeems < max) → mint session cookie → `history.replaceState` strips the param. Additions:
+
+- **Session ≠ grant lifetime**, but sessions re-join their grant on *every* request (mortgage-viz's design, already adopted) — so revoking the grant kills every session it minted, instantly. Keep this; it's what makes the whole social story workable.
+- **Cookie, not localStorage.** The parent spec's session is an HttpOnly/SameSite=Lax/Secure cookie, and that should stay: an LS-held token is readable by any XSS on the page, can't be HttpOnly, and doesn't auto-attach to `fetch` of gated APIs. "Indefinitely" is a *TTL* choice (`session_ttl` → cookie `Max-Age` of months) not a *storage* choice. Only use LS if a non-cookie consumer genuinely needs the token in JS (cross-origin script, native app), and then treat it as a `Bearer` credential.
+
+## 2. Request access ("enter your email")
+
+Wall gets a second affordance next to SSO: **Request access**.
+
+```sql
+access_requests (
+  id, email, name, note, created_at,
+  status,        -- pending | approved | denied | auto
+  decided_at, decided_by, grant_id   -- grant minted on approval
+)
+```
+
+Flow: visitor submits email (+ optional note) → row inserted `pending` → admin notified (Slack webhook / email — app-configurable) → admin approves in `/access` → **a grant with `email` set is minted and delivered to that address**.
+
+- **No pre-verification round-trip needed**: approval delivers via email, so someone who types a stranger's address merely causes mail to the real owner. Cheaper than a confirm-then-request dance, equally safe.
+- **Auto-approve rules** (optional): domain match (`@openathena.ai` → `auto`, grant minted immediately) — this is where the parent spec's *allowlist open question* resolves: a small `policy` fn `(email) => scopes | null`, DB-backed allowlist optional on top.
+- **Abuse control**: rate-limit per IP + per email, honeypot field, cap pending rows. CF Turnstile is the natural escalation (free, same platform) but shouldn't be required by default.
+- **Requester UX**: after submit, show "pending" state (a signed cookie holding the request id) so a re-visit doesn't re-submit; approval mail is the completion signal.
+
+## 3. Access log (audit)
+
+```sql
+access_log (
+  id, ts,
+  event,          -- redeem | request | deny | revoke | view | signin
+  grant_id, session_sub,
+  path, status,
+  ip_hash,        -- HMAC(ip, secret): correlate without storing raw IPs
+  ua, country, referer
+)
+```
+
+`authenticate()` already runs on every gated request, so it's the natural emit point. Two-tier volume control: always log auth-lifecycle events (`redeem`/`deny`/`revoke`/`request`); log `view` events **deduped per (session, path, hour)** so a chatty SPA doesn't write thousands of rows.
+
+What the admin view then answers, which is exactly the user-facing ask:
+
+- "Bob's link: created 3 weeks ago, redeemed **4 times** from **2 countries**, last seen 2h ago, 37 views, mostly `/finances/2025`."
+- Distinct-session-count per grant is the **forwarding signal**: one person ≈ 1–3 redemptions (phone/laptop/work); 9 redemptions across 5 ASNs means the link left the intended hands. Surface it as a soft badge, not an alarm.
+
+## 4. Analytics: one store, not two
+
+**Default: the gate's own D1 log is the analytics store — for authed *and* anonymous traffic.** The gate middleware already runs on every request (that's how `authenticate()` works), so it is the natural single emit point, and "who viewed what" joins to `grants` natively rather than across systems.
+
+Rejected alternative (an earlier draft of this spec): first-party log for identified traffic + Umami/Plausible for anonymous. That splits one question across two query surfaces — answering "how much of last week's traffic was Bob vs. strangers" would mean querying both and reconciling. Not worth it.
+
+Note also what the sensitivity argument does and doesn't say. The *data* being viewed never leaves D1 either way; only event metadata is at issue, and a **self-hosted** Umami is the user's own box, so "third party" doesn't even apply. The residual concerns are narrower:
+
+- *Hosted* Plausible would put named-viewer behavior (a donor reading finances) on a vendor's servers — modest, but a real reason to prefer self-hosting if an external tool is used at all.
+- **Design fit** is the stronger argument: Umami/Plausible are anonymous-first by construction (hashed visitor ids, no stable person key); grafting grant identity on fights their grain, while `access_log ⋈ grants` is native here.
+
+What that implies to build (all small, and watchy is already a D1-events-with-charts dashboard — the marginal cost is a query + a page):
+
+- Middleware logs every request, not just gated ones: `ts, path, status, grant_id?, session_sub?, ip_hash, ua, country, referer`. CF supplies `country`/ASN on `request.cf` for free.
+- A ~20-line first-party beacon for client-only signals (SPA route changes, viewport, time-on-page), posting to `/api/track` — same store, no third-party script, no cookie banner.
+- Bot filtering (UA regex + CF signals) and a retention/rollup job (raw rows → daily aggregates) — the two things the hosted tools would otherwise do for you.
+
+**Complement, don't join: Cloudflare Web Analytics** (free, zero code, beacon injected at the proxy) for RUM — Real User Monitoring, i.e. Core Web Vitals (LCP/INP/CLS) sampled from actual visitors' browsers, as opposed to synthetic lab runs like Lighthouse. It answers a question ("what fraction of real users saw a slow load?") that never needs joining against the access log, so it costs nothing architecturally. Recommended in the hccs/ctbk session (2026-06-13); Sentry Performance is the escalation if per-route traces are ever wanted.
+
+**Reach for Umami only** if the polished dashboard is wanted sooner than it can be built here — it's a real tradeoff (free UI now vs. one store later), not a wrong answer. Prior recommendation from hccs/crashes (2026-05) was Plausible (cloud, ~$9/mo) or self-hosted Umami (MIT); self-hosted Umami matches the stated free/self-hosted preference.
+
+## 5. Social/normative design (the part that isn't code)
+
+Sharing "here's a link that logs you right in" to actually-sensitive material has social failure modes that no ACL fixes. Positions worth baking into defaults:
+
+- **Assume forwarding.** Links get pasted into email threads and Slack. Design so forwarding is *visible and revocable* rather than *prevented* — prevention (1-use, IP-pinning, device-binding) reliably breaks legitimate users first.
+- **Disclose the logging.** A footer on gated views — *"Private link for Bob Smith · access is logged"* — is the single highest-leverage feature here. It (a) sets accurate expectations, so nobody is betrayed by discovery later, and (b) empirically dampens casual forwarding harder than technical controls, because the recipient now knows the link is attributable to *them*.
+- **Watermark for the sensitive tier.** Rendering the grant's name in-page (the data-room convention) makes screenshots attributable. Cheap: the gate already knows `name`/`subject_json`.
+- **Expiry as a social tool.** "This link works for 30 days" bounds propagation without accusing anyone; renewal is one click.
+- **Revoke should land softly.** A revoked/expired link shows the *request-access* wall, not a bare 403 — the person who legitimately lost access self-serves, and the person who shouldn't have it hits a door that names itself.
+- **Asymmetry is a choice.** Optionally show the viewer their own trail ("you've viewed this 4 times"), which is the honest version of the relationship and costs nothing.
+
+Per-app tuning is expected: a donor dashboard wants named + watermarked + disclosed; a link to a public-ish chart wants none of it. Ship these as flags, defaulted per tier.
+
+## 6. Packaging: package the kernel, copy-in the UI
+
+Connects to the fork-vs-package thread (see the awair session's `git subtree` discussion — `subtree split` rewrites paths mechanically for upstreaming; `git-subrepo`/`josh` as heavier alternatives).
+
+- **Backend kernel = a real package, not a fork-and-tweak.** Auth code is precisely where *silent divergence is dangerous*: a cookie-flag fix, a timing-safe comparison, a token-entropy bump must reach every consumer, and a fleet of quietly-forked copies guarantees it won't. The pltly fork fragmentation (three live pins of the same fork across seven consumers) is the cautionary data point.
+- **FE wall/admin UI = copy-in (shadcn-style), vendored via `git subtree`.** Branding, copy, and layout of the sign-in wall are inherently per-app; a styled component library would be fought by every consumer. Vendoring under `vendor/` with subtree keeps a real merge path in both directions.
+
+That split — *security-critical logic packaged, presentation vendored* — is the general rule, not just this project's.
+
+## Open questions
+
+- **Publish identity.** GH home starts at `runsascoded/sherry` (free; transfers preserve redirects, so moving to `Open-Athena` later is cheap — the npm name is the sticky one). Bare `sherry` on npm is claimed by a dead 2022 alpha ("A Well-Brewed Scaffolding Tool", ~31 dl/wk), so publish scoped: `@open-athena/sherry` if OA is the primary consumer/funder, else `@rdub/sherry` (or unscoped `sherry-auth`). Decide at first publish, not before.
+- Notification transport for request-access (Slack webhook vs email) — package concern or app concern? (Same shape as the parent spec's magic-link-delivery question; probably one pluggable `notify(event)` hook answers both.)
+- Does `view`-event logging default **on** or **off**? (Privacy-forward default is off, with disclosure copy shipped alongside the on switch.)
+- Admin UI: extend watchy's `/access` page, or ship the vendored-in admin as part of Layer B?
