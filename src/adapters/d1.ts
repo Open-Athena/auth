@@ -385,7 +385,16 @@ export function d1AuditQuery(db: D1Database): AuditQuery {
 export function d1AuditSink(db: D1Database): AuditSink {
   return {
     async log(e: AccessEvent) {
-      const bucket = e.event === 'view' ? Math.floor(e.ts / 3600) : null
+      // Dedupe per (event, session, path, hour) for chatty-but-uninformative
+      // repeats: `view` rows, and `deny` rows from a session we can already
+      // name — a revoked link's browser re-denies on every page load, and the
+      // second row through the tenth tell you nothing the first didn't.
+      //
+      // A deny with no `session_sub` came from a *presented token*, not a known
+      // session. Those always land: repeated bad tokens are someone probing,
+      // which is exactly the signal the log exists to keep.
+      const dedupe = e.event === 'view' || (e.event === 'deny' && !!e.sessionSub)
+      const bucket = dedupe ? Math.floor(e.ts / 3600) : null
       await db
         .prepare(
           `INSERT INTO access_log (ts, event, grant_id, session_sub, path, status, ip_hash, ua, country, referer, reason, bucket)

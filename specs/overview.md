@@ -91,8 +91,8 @@ The extracted `migrations/0001_grants.sql` is backwards-incompatible with the sh
 - [x] §4 analytics: first-party beacon, bot filtering, retention rollup
 - [x] Deployed at **https://auth.oa.dev** (OA CF account); GH repo `Open-Athena/auth` public, CI + `dist` branch green
 - [ ] npm publish — **deliberately deferred** (RW, 2026-08-16): distribute via the `dist` branch until the API stops moving. A published npm version can only be deprecated, never taken back, so the cost of publishing early is permanent namespace clutter; a dist SHA costs nothing to abandon. Prerequisites when it's time: invite other OA members to the npm org (currently bus-factor-1, `rdub` sole owner) and pick a real semver.
-- [ ] Re-point watchy at the package (needs the schema migration above)
-- [ ] Refactor marin's `AuthGate` onto `useWhoami({kind:'edge'})`
+- [ ] Re-point watchy at the package — **cheap**: its live `grants` table holds 2 rows, all revoked, so the BIC schema change is a drop-and-recreate, not a data migration (see [`adoption.md`](./adoption.md))
+- [ ] Refactor marin's `AuthGate` onto `useWhoami({kind:'edge'})` — unblocked by `devIdentity` (see [`adoption.md`](./adoption.md))
 - [ ] (marin, if it upgrades) Tier-2 migration per Rollout §6
 
 ### Deployment notes

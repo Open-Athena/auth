@@ -242,3 +242,42 @@ describe('AccessNotice', () => {
     expect(container.textContent).toBe('')
   })
 })
+
+describe('devIdentity', () => {
+  it('stubs the identity without probing — Tier 1 has no get-identity locally', async () => {
+    const calls = stubFetch({})
+    renderWithQuery(
+      <AuthGate
+        source={{ kind: 'edge' }}
+        devIdentity={{ email: 'dev@example.test' }}
+        signIn={<div>WALL</div>}
+      >
+        {w => <div>APP:{displayName(w)}</div>}
+      </AuthGate>,
+    )
+    await waitFor(() => expect(screen.getByText('APP:dev@example.test')).toBeDefined())
+    expect(calls).toEqual([])
+  })
+
+  it('null forces the wall, so it can be eyeballed without a deploy', async () => {
+    const calls = stubFetch({})
+    renderWithQuery(
+      <AuthGate source={{ kind: 'edge' }} devIdentity={null} signIn={<div>WALL</div>}>
+        {() => <div>APP</div>}
+      </AuthGate>,
+    )
+    await waitFor(() => expect(screen.getByText('WALL')).toBeDefined())
+    expect(calls).toEqual([])
+  })
+
+  it('undefined probes normally, so production is untouched', async () => {
+    const calls = stubFetch({ '/cdn-cgi/access/get-identity': { status: 200, body: { email: 'real@x.test' } } })
+    renderWithQuery(
+      <AuthGate source={{ kind: 'edge' }} devIdentity={undefined} signIn={<div>WALL</div>}>
+        {w => <div>APP:{displayName(w)}</div>}
+      </AuthGate>,
+    )
+    await waitFor(() => expect(screen.getByText('APP:real@x.test')).toBeDefined())
+    expect(calls.map(c => c.url)).toEqual(['/cdn-cgi/access/get-identity'])
+  })
+})

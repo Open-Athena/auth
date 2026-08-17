@@ -16,6 +16,11 @@ export interface AuthGateProps<T extends Whoami = Whoami> {
   loading?: ReactNode
   /** Redeem a `?key=` share link before probing. Pass false to disable. */
   exchange?: ExchangeOptions | false
+  /**
+   * Stub the identity instead of probing — see `useWhoami`'s `devIdentity`.
+   * `null` forces the wall; `undefined` (the default) probes normally.
+   */
+  devIdentity?: T | null
 }
 
 /**
@@ -29,9 +34,10 @@ export function AuthGate<T extends Whoami = Whoami>({
   signIn,
   loading = null,
   exchange = {},
+  devIdentity,
 }: AuthGateProps<T>) {
   const ready = useKeyExchange(exchange)
-  const { whoami, refresh } = useWhoami<T>(source, { enabled: ready })
+  const { whoami, refresh } = useWhoami<T>(source, { enabled: ready, devIdentity })
 
   if (whoami === undefined) return <>{loading}</>
   if (whoami === null) return <>{typeof signIn === 'function' ? signIn(refresh) : signIn}</>

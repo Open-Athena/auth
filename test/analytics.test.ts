@@ -264,3 +264,56 @@ describe('rollupAccessLog', () => {
     expect((await daily()).map(r => [r.event, r.path, r.country, r.events])).toEqual([['deny', '', '', 2]])
   })
 })
+
+describe('deny dedupe', () => {
+  let db: D1Database
+  let audit: ReturnType<typeof d1AuditSink>
+  const denies = async () =>
+    (
+      await db
+        .prepare(`SELECT event, session_sub, path, reason, bucket FROM access_log ORDER BY id`)
+        .all<{ event: string; session_sub: string | null; path: string | null; reason: string; bucket: number | null }>()
+    ).results
+
+  beforeEach(() => {
+    db = testDb()
+    audit = d1AuditSink(db)
+  })
+
+  it('collapses repeat denials from one dead session', async () => {
+    // A revoked link's browser re-denies on every page load; rows 2..n say
+    // nothing row 1 didn't.
+    for (const ts of [NOW_S, NOW_S + 5, NOW_S + 30]) {
+      await audit.log({ ts, event: 'deny', sessionSub: 'g:abc', path: '/dash', grantId: 'abc', reason: 'revoked' })
+    }
+    expect((await denies()).length).toBe(1)
+  })
+
+  it('keeps every token-presented denial — repeats there are someone probing', async () => {
+    for (const ts of [NOW_S, NOW_S + 5, NOW_S + 30]) {
+      await audit.log({ ts, event: 'deny', path: '/api', reason: 'bad-token' })
+    }
+    expect((await denies()).map(r => [r.reason, r.bucket])).toEqual([
+      ['bad-token', null],
+      ['bad-token', null],
+      ['bad-token', null],
+    ])
+  })
+
+  it('starts a fresh row each hour, and per path', async () => {
+    const deny = (ts: number, path: string) =>
+      audit.log({ ts, event: 'deny', sessionSub: 'g:abc', path, reason: 'revoked' })
+    await deny(NOW_S, '/dash')
+    await deny(NOW_S + 3601, '/dash')
+    await deny(NOW_S, '/other')
+    expect((await denies()).map(r => r.path)).toEqual(['/dash', '/dash', '/other'])
+  })
+
+  it('does not let a deny and a view collide in the same session/path/hour', async () => {
+    // The dedupe index keys on `event` too; without that, whichever landed
+    // second would be silently dropped.
+    await audit.log({ ts: NOW_S, event: 'view', sessionSub: 'g:abc', path: '/dash' })
+    await audit.log({ ts: NOW_S, event: 'deny', sessionSub: 'g:abc', path: '/dash', reason: 'revoked' })
+    expect((await denies()).map(r => r.event)).toEqual(['view', 'deny'])
+  })
+})

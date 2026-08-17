@@ -45,12 +45,13 @@ const CHECK = String.raw`
 import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from '@open-athena/auth'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
 import { ssoHandler, verifyAccessJwt } from '@open-athena/auth/cf-access'
+import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const req = createRequire(import.meta.url)
 const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/auth/package.json', import.meta.url), 'utf8'))
-const migrations = ['0001_grants', '0002_access_log', '0003_access_requests', '0004_access_log_daily']
+const migrations = ['0001_grants', '0002_access_log', '0003_access_requests', '0004_access_log_daily', '0005_dedupe_by_event']
   .map(m => readFileSync(req.resolve('@open-athena/auth/migrations/' + m + '.sql'), 'utf8'))
 
 const rows = new Map(), hashes = new Map()
@@ -84,7 +85,7 @@ const checks = {
   'peer deps declared':           ['react', '@tanstack/react-query'].every(d => d in (manifest.peerDependencies ?? {})),
   'peer deps optional':           ['react', '@tanstack/react-query'].every(d => manifest.peerDependenciesMeta?.[d]?.optional),
   'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler].every(f => typeof f === 'function'),
-  'migrations shipped':           migrations.length === 4 && migrations[0].includes('CREATE TABLE grants'),
+  'migrations shipped':           migrations.length === 5 && migrations[0].includes('CREATE TABLE grants'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,
   'redeem mints a session':       redeemed.ok === true,
@@ -92,6 +93,7 @@ const checks = {
   'scopes enforced':              hasScope(authed, 'reports') && !hasScope(authed, 'admin'),
   'revoke kills live session':    afterRevoke === null,
   'bot filter discriminates':     isBot('Googlebot/2.1') === true && isBot(UA) === false,
+  'testing stores exported':      [memoryGrantStore, memoryRequestStore, memoryAudit].every(f => typeof f === 'function'),
 }
 
 let failed = 0

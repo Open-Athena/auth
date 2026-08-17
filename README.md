@@ -18,9 +18,10 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 156 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). Not yet done: re-pointing watchy at the package (which needs a schema migration — see `specs/overview.md`).
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 163 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). Next up: adoption — see `specs/adoption.md`.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
+- [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
 - [`specs/overview.md`](specs/overview.md) — two-tier model, layer split, packaging
 - [`specs/share-links-and-audit.md`](specs/share-links-and-audit.md) — share-link config, request-access, access log, analytics
 
