@@ -33,7 +33,8 @@ Backend kernel, request-access, the HTTP route surface, the React primitives, an
 src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
 src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / disclosure — unstyled
-migrations/     grants, access_log, access_requests, access_log_daily
+src/testing/    in-memory stores, so adopters can test a gated route without a DB
+migrations/     grants, access_log, access_requests, access_log_daily, dedupe index
 demo/           a working Tier-2 app on Pages + Functions + D1
 ```
 
