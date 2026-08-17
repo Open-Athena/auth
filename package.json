@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.c35d945",
+  "version": "0.1.0-dist.94c8451",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",

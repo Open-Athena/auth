@@ -3,9 +3,9 @@
  * natural single emit point — and "who viewed what" then joins to `grants`
  * natively instead of across two systems (see specs/share-links-and-audit.md §4).
  *
- * Volume control is two-tier: auth-lifecycle events (`redeem`/`deny`/`revoke`/
- * `request`/`signin`/`signout`) always log; `view` events are deduped per
- * (session, path, hour) by the adapter, and are off by default.
+ * Volume control is two-tier: auth-lifecycle events (`mint`/`redeem`/`deny`/
+ * `revoke`/`request`/`signin`/`signout`) always log; `view` events are deduped
+ * per (session, path, hour) by the adapter, and are off by default.
  */
 import { hashIp } from './tokens.js';
 /** Drops everything. The default when an app hasn't wired a store. */

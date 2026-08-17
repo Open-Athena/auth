@@ -1,4 +1,4 @@
-export type AccessEventKind = 'redeem' | 'deny' | 'revoke' | 'request' | 'view' | 'signin' | 'signout';
+export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'revoke' | 'request' | 'view' | 'signin' | 'signout';
 export interface AccessEvent {
     ts: number;
     event: AccessEventKind;
@@ -11,7 +11,11 @@ export interface AccessEvent {
     ua?: string | null;
     country?: string | null;
     referer?: string | null;
-    /** Why a `deny` happened: `expired`, `revoked`, `exhausted`, `bad-token`, `not-allowed`. */
+    /**
+     * Event detail. On `deny`: `expired`, `revoked`, `exhausted`, `bad-token`,
+     * `not-allowed`. On `mint`: the actor, when it isn't an email (`policy`) and
+     * so can't be a `sessionSub`.
+     */
     reason?: string | null;
 }
 export interface AuditSink {
