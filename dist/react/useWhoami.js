@@ -5,12 +5,13 @@ export const WHOAMI_KEY = ['oa-auth', 'whoami'];
  * Probe the current identity from either source. `retry: false` because a 401
  * is a real answer, not a transient failure — retrying it just delays the wall.
  */
-export function useWhoami(source, { staleTime = 5 * 60_000, enabled = true } = {}) {
+export function useWhoami(source, { staleTime = 5 * 60_000, enabled = true, devIdentity } = {}) {
     const client = useQueryClient();
     const endpoint = source.endpoint ?? DEFAULT_ENDPOINTS[source.kind];
+    const stubbed = devIdentity !== undefined;
     const query = useQuery({
         queryKey: [...WHOAMI_KEY, source.kind, endpoint],
-        enabled,
+        enabled: enabled && !stubbed,
         staleTime,
         retry: false,
         queryFn: async () => {
@@ -23,6 +24,8 @@ export function useWhoami(source, { staleTime = 5 * 60_000, enabled = true } = {
             return (await res.json());
         },
     });
+    if (stubbed)
+        return { whoami: devIdentity, refresh: () => { }, error: null };
     return {
         whoami: enabled && query.isPending ? undefined : (query.data ?? null),
         refresh: () => void client.invalidateQueries({ queryKey: WHOAMI_KEY }),

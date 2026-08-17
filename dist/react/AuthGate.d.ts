@@ -14,10 +14,15 @@ export interface AuthGateProps<T extends Whoami = Whoami> {
     loading?: ReactNode;
     /** Redeem a `?key=` share link before probing. Pass false to disable. */
     exchange?: ExchangeOptions | false;
+    /**
+     * Stub the identity instead of probing — see `useWhoami`'s `devIdentity`.
+     * `null` forces the wall; `undefined` (the default) probes normally.
+     */
+    devIdentity?: T | null;
 }
 /**
  * Probe identity, then render the app or the wall. Both tiers use this — marin
  * passes `{ kind: 'edge' }`, watchy passes `{ kind: 'app' }` — which is the
  * whole point of making the source a parameter.
  */
-export declare function AuthGate<T extends Whoami = Whoami>({ source, children, signIn, loading, exchange, }: AuthGateProps<T>): import("react").JSX.Element;
+export declare function AuthGate<T extends Whoami = Whoami>({ source, children, signIn, loading, exchange, devIdentity, }: AuthGateProps<T>): import("react").JSX.Element;

@@ -6,9 +6,9 @@ import { useWhoami } from './useWhoami.js';
  * passes `{ kind: 'edge' }`, watchy passes `{ kind: 'app' }` — which is the
  * whole point of making the source a parameter.
  */
-export function AuthGate({ source, children, signIn, loading = null, exchange = {}, }) {
+export function AuthGate({ source, children, signIn, loading = null, exchange = {}, devIdentity, }) {
     const ready = useKeyExchange(exchange);
-    const { whoami, refresh } = useWhoami(source, { enabled: ready });
+    const { whoami, refresh } = useWhoami(source, { enabled: ready, devIdentity });
     if (whoami === undefined)
         return _jsx(_Fragment, { children: loading });
     if (whoami === null)
