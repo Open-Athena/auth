@@ -77,6 +77,7 @@ describe('redeem', () => {
     expect([res.grant.redeems, res.grant.firstUsedAt, res.grant.lastUsedAt]).toEqual([1, NOW_S, NOW_S])
     expect(res.cookie).toMatch(/^oa_auth=[\w-]+\.[\w-]+; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=2592000$/)
     expect(logged(audit.events)).toEqual([
+      { event: 'mint', grantId: grant.id, sessionSub: 'e:boss@openathena.ai', path: null, reason: null },
       { event: 'redeem', grantId: grant.id, sessionSub: `g:${grant.id}`, path: '/r', reason: null },
     ])
   })
@@ -175,6 +176,7 @@ describe('authenticate — grant sessions', () => {
     expect(await g.authenticate(withCookie(cookie), NOW + 2000)).toBe(null)
 
     expect(logged(audit.events).map(e => [e.event, e.reason])).toEqual([
+      ['mint', null],
       ['redeem', null],
       ['revoke', null],
       ['deny', 'revoked'],
@@ -304,7 +306,10 @@ describe('revoke', () => {
     const { grant } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
     expect([await g.revoke(grant.id, NOW), await g.revoke(grant.id, NOW + 1000)]).toEqual([true, false])
     expect(await g.revoke('no-such-grant', NOW)).toBe(false)
-    expect(logged(audit.events).map(e => [e.event, e.grantId])).toEqual([['revoke', grant.id]])
+    expect(logged(audit.events).map(e => [e.event, e.grantId])).toEqual([
+      ['mint', grant.id],
+      ['revoke', grant.id],
+    ])
   })
 })
 

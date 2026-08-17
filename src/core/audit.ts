@@ -3,13 +3,13 @@
  * natural single emit point — and "who viewed what" then joins to `grants`
  * natively instead of across two systems (see specs/share-links-and-audit.md §4).
  *
- * Volume control is two-tier: auth-lifecycle events (`redeem`/`deny`/`revoke`/
- * `request`/`signin`/`signout`) always log; `view` events are deduped per
- * (session, path, hour) by the adapter, and are off by default.
+ * Volume control is two-tier: auth-lifecycle events (`mint`/`redeem`/`deny`/
+ * `revoke`/`request`/`signin`/`signout`) always log; `view` events are deduped
+ * per (session, path, hour) by the adapter, and are off by default.
  */
 import { hashIp } from './tokens.js'
 
-export type AccessEventKind = 'redeem' | 'deny' | 'revoke' | 'request' | 'view' | 'signin' | 'signout'
+export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'revoke' | 'request' | 'view' | 'signin' | 'signout'
 
 export interface AccessEvent {
   ts: number // epoch seconds
@@ -23,7 +23,11 @@ export interface AccessEvent {
   ua?: string | null
   country?: string | null
   referer?: string | null
-  /** Why a `deny` happened: `expired`, `revoked`, `exhausted`, `bad-token`, `not-allowed`. */
+  /**
+   * Event detail. On `deny`: `expired`, `revoked`, `exhausted`, `bad-token`,
+   * `not-allowed`. On `mint`: the actor, when it isn't an email (`policy`) and
+   * so can't be a `sessionSub`.
+   */
   reason?: string | null
 }
 

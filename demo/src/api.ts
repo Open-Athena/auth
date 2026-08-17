@@ -40,7 +40,7 @@ export interface MintInput {
 }
 
 export const api = {
-  grants: () => call<{ grants: Grant[] }>('/api/admin/grants?all=1').then(r => r.grants),
+  grants: () => call<{ grants: Grant[] }>('/api/admin/grants').then(r => r.grants),
   mint: (input: MintInput) => post<{ grant: Grant; token: string }>('/api/admin/grants', input),
   revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
   activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),

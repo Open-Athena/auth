@@ -71,6 +71,19 @@ describe('requestAccess', () => {
     expect(notified()).toEqual([['access-granted', 'staff@openathena.ai']])
   })
 
+  it('logs the auto-grant mint against `policy`, since a non-email actor has no `sub`', async () => {
+    const g = gate()
+    await g.requestAccess({ email: 'staff@openathena.ai' }, req(), NOW)
+    await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
+    const rows = await db
+      .prepare(`SELECT event, session_sub, reason FROM access_log WHERE event = 'mint' ORDER BY id`)
+      .all<{ event: string; session_sub: string | null; reason: string | null }>()
+    expect(rows.results).toEqual([
+      { event: 'mint', session_sub: null, reason: 'policy' },
+      { event: 'mint', session_sub: 'e:boss@openathena.ai', reason: null },
+    ])
+  })
+
   it('mints a working link on auto-approval', async () => {
     const g = gate()
     const res = await g.requestAccess({ email: 'staff@openathena.ai' }, req(), NOW)

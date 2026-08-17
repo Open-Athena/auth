@@ -4,9 +4,13 @@
 
 Ranked by (value of adopting) ÷ (cost of adopting). The short version: **watchy now, marin next, mortgage-viz only after a design decision, applitrack probably never.**
 
-## 1. watchy — do this first
+## 1. watchy — done (2026-08-17)
 
 **Cost: low. Value: high (it's the code this was extracted from).**
+
+**Adopted and deployed on both branches** (`rw` → watchy.rbw.sh, `oa` → gh.oa.dev), verified live: an SSO cookie minted by the *old* hand-rolled code verified against the package's gate with no re-login — the session-format compatibility claim, proven rather than asserted — then mint → redeem (200 on gated data, **403** on admin) → revoke (401 instantly), with `access_log` showing the full trail. Legacy `grants` dropped in `0014`; `0015`–`0019` are byte-identical copies of this package's `0001`–`0005`.
+
+Two package defects fell out of that adoption, both fixed here (see the last section).
 
 `cfw/src/gate.ts` (186 lines), `cfw/src/auth.ts` (99), `www/functions/auth/sso.ts` (27) and `www/src/auth.tsx` (78) all collapse into package calls. The `/api/[[path]]` proxy hop can go too if the gate moves into Pages Functions, which `overview.md` already calls watchy's deployment wart.
 
@@ -64,6 +68,13 @@ Revisit only if a second non-CF, non-Workers consumer appears — at which point
 - `devIdentity` on `useWhoami`/`<AuthGate>` (marin, above).
 - **`@open-athena/auth/testing`** — in-memory `GrantStore`/`RequestStore`/`AuditSink`. Every adopter needs to test a gated route, and standing up D1 to assert "a revoked link 401s" is enough ceremony that people skip the test instead. The memory store mirrors the D1 adapter's redemption-cap guard, so behaviour matches production.
 - **Deny dedupe.** A revoked link's browser re-denied on *every* page load, one row each. Denials that carry a `session_sub` are now deduped per (event, session, path, hour); denials from a *presented token* are never deduped, because repeats there are someone probing — precisely the signal worth keeping. Needed `0005_dedupe_by_event.sql`, since the old index would have let a deny and a view collide.
+
+### Found by the watchy adoption, fixed here (2026-08-17)
+
+Both are the same class of bug — a default that every consumer immediately had to work around, or a record nobody wrote — and neither was reachable from this repo's own tests, because both need a *second* consumer to look wrong.
+
+- **`mint` now logs.** The timeline started at `redeem`, so "who handed this link out" lived only in `grants.created_by` — not in the log an admin reads, and gone entirely if the grant row is. It's the one lifecycle event with no request behind it (no path, IP, or UA); the minting admin lands in `session_sub`, and a non-email actor (`policy`) in `reason`.
+- **`GET /grants` keeps revoked grants by default**, with `?active=1` to opt out. It used to hide them unless you passed `?all=1` — so revoking made the row *vanish*, indistinguishable from a delete, hiding exactly the history revocation is evidence of. watchy's ported admin page had a dead `revoked` rendering branch because of it. Tellingly, **both** consumers (watchy's `/access` and this repo's own demo console) had independently added `?all=1`: when every caller overrides a default, the default is wrong. The *store* still defaults to active-only, which is right for a gate check.
 
 ## Still open, and worth deciding before a second Tier-2 consumer
 

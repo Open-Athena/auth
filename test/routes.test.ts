@@ -128,8 +128,11 @@ describe('admin routes', () => {
     expect(listed.body.grants.map((x: { id: string }) => x.id)).toEqual([minted.body.grant.id])
 
     expect(await post(`/grants/${minted.body.grant.id}/revoke`, {}, cookie)).toMatchObject({ body: { ok: true } })
-    expect((await call('/grants', {}, cookie)).body.grants).toEqual([])
-    expect((await call('/grants?all=1', {}, cookie)).body.grants.length).toBe(1)
+    // A revoked grant stays in the ledger; `?active=1` is what hides it.
+    const [row] = (await call('/grants', {}, cookie)).body.grants as { id: string; revokedAt: number }[]
+    const nowS = Math.floor(Date.now() / 1000)
+    expect([row!.id, nowS - row!.revokedAt < 10]).toEqual([minted.body.grant.id, true])
+    expect((await call('/grants?active=1', {}, cookie)).body.grants).toEqual([])
   })
 
   it('requires scopes to mint', async () => {
@@ -259,8 +262,12 @@ describe('access log routes', () => {
     await post('/exchange', { token: minted.body.token })
     await handle(new Request(`https://x.test/api/auth/whoami?key=${minted.body.token}`))
 
+    // Newest first, so the admin who minted it is the tail of the trail.
     const log = await call(`/log?grant=${id}`, {}, cookie)
-    expect(log.body.events.map((e: { event: string }) => e.event)).toEqual(['redeem'])
+    expect(log.body.events.map((e: { event: string; sessionSub: string }) => [e.event, e.sessionSub])).toEqual([
+      ['redeem', `g:${id}`],
+      ['mint', 'e:boss@openathena.ai'],
+    ])
 
     // Routes don't take an injected clock (that seam is core-level), so the two
     // timestamps are wall-clock: assert they're the same recent second, then

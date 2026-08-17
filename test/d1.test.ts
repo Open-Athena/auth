@@ -135,6 +135,7 @@ describe('access log', () => {
     await g.authenticate(new Request(`https://x.test/api?key=${token}`), NOW)
 
     expect((await logRows()).map(r => [r.event, r.grant_id, r.path, r.reason])).toEqual([
+      ['mint', grant.id, null, null],
       ['redeem', grant.id, '/r', null],
       ['deny', null, '/r', 'bad-token'],
       ['revoke', grant.id, null, null],
@@ -150,7 +151,9 @@ describe('access log', () => {
       new Request('https://x.test/r', { headers: { 'CF-Connecting-IP': '203.0.113.7', 'CF-IPCountry': 'US' } }),
       NOW,
     )
-    const [row] = await logRows()
+    // `mint` is logged first, but it has no request to pull metadata from.
+    const [mint, row] = await logRows()
+    expect([mint!.event, mint!.ip_hash, mint!.country]).toEqual(['mint', null, null])
     expect(row!.ip_hash).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(row!.country).toBe('US')
     expect(await rows<{ n: number }>(`SELECT COUNT(*) AS n FROM access_log WHERE ip_hash LIKE '%203.0.113.7%'`)).toEqual([

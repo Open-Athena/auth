@@ -282,6 +282,18 @@ export function createGate(opts: GateOptions) {
       lastUsedAt: null,
     }
     await store.insert(grant, await hashToken(token))
+    // Without this the timeline starts at `redeem`, so "who handed this link
+    // out" is only recoverable from `grants.created_by` — not from the log an
+    // admin would actually read, and not at all once the grant is deleted.
+    // `createdBy` is free-form (an admin email, but `policy` for auto-grants),
+    // so only email actors get a `sub`; the rest are identified by `grantId`.
+    await log({
+      ts: nowS,
+      event: 'mint',
+      grantId: grant.id,
+      sessionSub: isEmailish(grant.createdBy) ? emailSub(grant.createdBy) : null,
+      reason: isEmailish(grant.createdBy) ? null : grant.createdBy,
+    })
     return { grant, token }
   }
 

@@ -90,6 +90,8 @@ access_log (
 
 *Built as `migrations/0002_access_log.sql`, plus two columns this sketch didn't have: `reason` (why a `deny` happened — `bad-token` | `revoked` | `expired` | `exhausted` | `not-allowed`, which is most of what makes the log worth reading during an incident) and `bucket` (`floor(ts/3600)` on `view` rows, NULL otherwise). The dedupe is a **partial unique index** on `(session_sub, path, bucket) WHERE bucket IS NOT NULL` with `ON CONFLICT DO NOTHING` — enforced by the DB rather than by a read-then-write race in the worker, and structurally unable to swallow a lifecycle event. `signout` joined the event vocabulary.*
 
+*Later (2026-08-17, from watchy's adoption): `mint` joined it too. The timeline used to start at `redeem`, so "who handed this link out" was recoverable only from `grants.created_by` — not from the log an admin actually reads, and not at all once the grant row is gone. It's the one lifecycle event with no request behind it, so it carries no path/IP/UA; the minting admin lands in `session_sub` as `e:<email>`, and a non-email actor (`policy`, for auto-approved requests) in `reason`, since it can't be a `sub`.*
+
 *Not logged: an absent credential. An anonymous request is not a denial, and logging one per public page load would drown the signal — so `deny` rows mean "someone presented something that didn't work", which is the question the log is actually asked.*
 
 What the admin view then answers, which is exactly the user-facing ask:

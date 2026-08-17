@@ -135,7 +135,12 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (a instanceof Response) return a
 
       if (seg.length === 1 && method === 'GET') {
-        const includeRevoked = url.searchParams.get('all') === '1'
+        // Revoked grants stay in the list by default: this is the ledger an
+        // admin reads, and a row vanishing on revoke is indistinguishable from
+        // a delete — it hides exactly the history revocation is evidence of.
+        // `?active=1` opts out. (The *store* still defaults to active-only,
+        // which is the right default for a gate check.)
+        const includeRevoked = url.searchParams.get('active') !== '1'
         return json({ grants: await gate.list({ includeRevoked, ...listFilter(a) }) })
       }
 
