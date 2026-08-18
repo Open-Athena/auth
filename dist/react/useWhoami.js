@@ -32,8 +32,20 @@ export function useWhoami(source, { staleTime = 5 * 60_000, enabled = true, devI
         error: query.error ?? null,
     };
 }
-/** Drop any cached identity — call after signing out so the wall appears at once. */
+/**
+ * Drop any cached identity — call after signing out so the wall appears at once.
+ *
+ * `resetQueries`, not `removeQueries`: removing a query notifies *cache*-level
+ * subscribers, while a `QueryObserver` subscribes to the query itself, so no
+ * mounted component ever hears about it and the page keeps rendering the
+ * identity you just dropped. That failure looks like a security bug from the
+ * outside even though the session is genuinely dead server-side — watchy hit
+ * exactly this. `removeQueries` is only correct for queries nobody is watching.
+ *
+ * Resetting also refetches active observers, so the signed-out state is
+ * confirmed by the server rather than assumed.
+ */
 export function useForgetWhoami() {
     const client = useQueryClient();
-    return () => void client.removeQueries({ queryKey: WHOAMI_KEY });
+    return () => void client.resetQueries({ queryKey: WHOAMI_KEY });
 }

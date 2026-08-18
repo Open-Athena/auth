@@ -34,5 +34,17 @@ export interface UseWhoamiResult<T> {
  * is a real answer, not a transient failure — retrying it just delays the wall.
  */
 export declare function useWhoami<T extends Whoami = Whoami>(source: WhoamiSource, { staleTime, enabled, devIdentity }?: UseWhoamiOptions<T>): UseWhoamiResult<T>;
-/** Drop any cached identity — call after signing out so the wall appears at once. */
+/**
+ * Drop any cached identity — call after signing out so the wall appears at once.
+ *
+ * `resetQueries`, not `removeQueries`: removing a query notifies *cache*-level
+ * subscribers, while a `QueryObserver` subscribes to the query itself, so no
+ * mounted component ever hears about it and the page keeps rendering the
+ * identity you just dropped. That failure looks like a security bug from the
+ * outside even though the session is genuinely dead server-side — watchy hit
+ * exactly this. `removeQueries` is only correct for queries nobody is watching.
+ *
+ * Resetting also refetches active observers, so the signed-out state is
+ * confirmed by the server rather than assumed.
+ */
 export declare function useForgetWhoami(): () => void;

@@ -13,6 +13,7 @@
  * (share-links-only). None of them touch `core`.
  */
 import { b64uDecodeBytes, b64uDecodeString } from '../core/base64.js';
+import { emailSub, isSecureRequest, sessionCookie, signSession } from '../core/session.js';
 const enc = new TextEncoder();
 /**
  * Verify an Access JWT against the Zero Trust team's public certs and return
@@ -68,16 +69,52 @@ function safeNext(raw) {
  */
 export function ssoHandler({ gate, teamDomain, aud }) {
     return async ({ request }) => {
-        const jwt = request.headers.get('Cf-Access-Jwt-Assertion');
-        if (!jwt)
-            return new Response('no Access JWT — is this path still gated?\n', { status: 401 });
-        const email = await verifyAccessJwt(jwt, teamDomain, aud);
-        if (!email)
-            return new Response('Access JWT failed verification\n', { status: 401 });
+        const email = await accessEmail(request, teamDomain, aud);
+        if (email instanceof Response)
+            return email;
         const signedIn = await gate.signIn(email, request);
         if (!signedIn)
             return new Response(`${email} is not authorized for this app\n`, { status: 403 });
-        const next = safeNext(new URL(request.url).searchParams.get('next'));
-        return new Response(null, { status: 302, headers: { location: next, 'set-cookie': signedIn.cookie } });
+        return bounce(request, signedIn.cookie);
     };
 }
+/**
+ * `ssoHandler` without a gate — for a deployment that can mint sessions but
+ * can't verify them, because the store lives somewhere else. watchy's Pages
+ * project is the case: its `/auth/sso` is the only Access-gated path, but the
+ * auth authority (and D1 binding) is a separate Worker, so taking a whole gate
+ * costs it a binding it has no other use for.
+ *
+ * Safe because a session cookie carries no authorization: the claim is only
+ * `e:<email>`, and scopes are re-derived from `policy` on every `authenticate`.
+ * So this mints for any Access-verified email and the gate decides later —
+ * the same order of operations `ssoHandler` uses, minus the early rejection
+ * (and minus the `signin` audit row, which needs the gate's sink).
+ */
+export function ssoSessionHandler({ secret, teamDomain, aud, cookieName, sessionTtlS }) {
+    return async ({ request }) => {
+        const email = await accessEmail(request, teamDomain, aud);
+        if (email instanceof Response)
+            return email;
+        const value = await signSession(emailSub(email), secret, Date.now(), sessionTtlS);
+        return bounce(request, sessionCookie(value, { name: cookieName, secure: isSecureRequest(request), ttlS: sessionTtlS }));
+    };
+}
+/** The Access identity, or the response to return instead. */
+async function accessEmail(request, teamDomain, aud) {
+    const jwt = request.headers.get('Cf-Access-Jwt-Assertion');
+    if (!jwt)
+        return new Response('no Access JWT — is this path still gated?\n', { status: 401 });
+    const email = await verifyAccessJwt(jwt, teamDomain, aud);
+    if (!email)
+        return new Response('Access JWT failed verification\n', { status: 401 });
+    return email;
+}
+const bounce = (request, cookie) => new Response(null, {
+    status: 302,
+    headers: {
+        location: safeNext(new URL(request.url).searchParams.get('next')),
+        'set-cookie': cookie,
+        'cache-control': 'no-store',
+    },
+});
