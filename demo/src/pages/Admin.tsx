@@ -1,5 +1,5 @@
-import type { Grant } from '@open-athena/auth'
-import { type AppWhoami, useWhoami } from '@open-athena/auth/react'
+import { type Grant, subjectName } from '@open-athena/auth'
+import { type AppWhoami, Avatar, useWhoami } from '@open-athena/auth/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
@@ -316,10 +316,16 @@ function RequestQueue({ onChange }: { onChange: () => void }) {
       {requests.data?.length === 0 && <p className="muted">Nothing pending.</p>}
       {requests.data?.map(r => (
         <div key={r.id} className="request">
-          <div>
-            <strong>{r.email}</strong>
-            {r.name && ` · ${r.name}`}
-            {r.note && <p className="muted small">{r.note}</p>}
+          <div className="row">
+            {/* A queue of addresses is a queue of strangers; a queue of names
+                and faces is a queue of people, which is the whole point of
+                asking for a name at request time. */}
+            <Avatar name={subjectName(r.subject) ?? r.name} size={28} className="avatar" />
+            <div>
+              <strong>{subjectName(r.subject) ?? r.name ?? r.email}</strong>
+              {(subjectName(r.subject) ?? r.name) && <span className="muted small"> · {r.email}</span>}
+              {r.note && <p className="muted small">{r.note}</p>}
+            </div>
           </div>
           <div className="row">
             <button className="btn small primary" type="button" onClick={() => approve.mutate(r.id)}>

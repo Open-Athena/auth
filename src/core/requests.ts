@@ -6,7 +6,7 @@
  * someone who types a stranger's address merely causes mail to the real owner.
  * That is cheaper than a confirm-then-request dance and exactly as safe.
  */
-import type { Grant } from './types.js'
+import type { Grant, Subject } from './types.js'
 
 export type RequestStatus = 'pending' | 'approved' | 'denied' | 'auto'
 
@@ -14,6 +14,12 @@ export interface AccessRequest {
   id: string
   email: string
   name: string | null
+  /**
+   * Who they say they are, in the same shape a grant carries — so approval can
+   * hand the minted grant a person rather than an address, and the watermark
+   * and chip render "Bob Smith" instead of `bob@…`.
+   */
+  subject: Subject | null
   note: string | null
   createdAt: number
   status: RequestStatus
@@ -48,6 +54,41 @@ export const noopNotify: Notify = async () => {}
  */
 export function isEmailish(email: string): boolean {
   return /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)
+}
+
+/**
+ * Fields a stranger may fill in, clamped before they reach an admin's screen.
+ *
+ * Everything here is attacker-controlled text that gets rendered in a table
+ * someone with `admin` is looking at, so it is length-capped and stripped of
+ * control characters. `avatar` is *not* accepted from the form at all — a
+ * URL supplied by an unauthenticated submitter and then rendered as `<img src>`
+ * is a tracking pixel aimed at the admin page at best, so avatars are derived
+ * client-side (`<Avatar>`) rather than collected. An app that genuinely wants
+ * uploaded avatars can set `subject.avatar` itself after approval.
+ */
+export const MAX_SUBJECT_FIELD = 64
+
+export function cleanSubject(input: {
+  first?: string | null
+  last?: string | null
+}): Subject | null {
+  const clean = (v: string | null | undefined): string | undefined => {
+    // Trim again after the cap: slicing mid-word can leave a trailing space.
+    const t = v?.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, MAX_SUBJECT_FIELD).trim()
+    return t || undefined
+  }
+  const subject: Subject = {}
+  const first = clean(input.first)
+  const last = clean(input.last)
+  if (first) subject.first = first
+  if (last) subject.last = last
+  return Object.keys(subject).length ? subject : null
+}
+
+/** "Bob Smith" from a subject, or null if it holds no name. */
+export function subjectName(subject: Subject | null | undefined): string | null {
+  return [subject?.first, subject?.last].filter(Boolean).join(' ') || null
 }
 
 export interface RateLimit {

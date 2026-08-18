@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { d1AuditSink, d1GrantStore, d1RequestStore } from '../src/adapters/d1.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
-import { isEmailish, type NotifyEvent } from '../src/core/requests.js'
+import { MAX_SUBJECT_FIELD, cleanSubject, isEmailish, type NotifyEvent, subjectName } from '../src/core/requests.js'
 import { testDb } from './d1-shim.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -42,6 +42,43 @@ describe('isEmailish', () => {
   })
 })
 
+describe('cleanSubject', () => {
+  it('keeps only the parts that were filled in, and nothing when none were', () => {
+    expect([
+      cleanSubject({ first: 'Bob', last: 'Smith' }),
+      cleanSubject({ first: 'Cher', last: '' }),
+      cleanSubject({ first: '   ', last: null }),
+      cleanSubject({}),
+    ]).toEqual([{ first: 'Bob', last: 'Smith' }, { first: 'Cher' }, null, null])
+  })
+
+  it('clamps what a stranger can put on an admin screen', () => {
+    // Control characters (a newline forging a second table row, a NUL) and
+    // unbounded length are the two things a free-text field hands an attacker.
+    expect([
+      cleanSubject({ first: 'Bob\nSmith\u0000<script>' }),
+      cleanSubject({ first: 'x'.repeat(MAX_SUBJECT_FIELD + 40) }),
+    ]).toEqual([{ first: 'Bob Smith <script>' }, { first: 'x'.repeat(MAX_SUBJECT_FIELD) }])
+  })
+
+  it('never accepts an avatar from the form', () => {
+    // A URL from an unauthenticated submitter, rendered as <img src> on the
+    // admin page, is a tracking pixel pointed at whoever reviews requests.
+    expect(cleanSubject({ first: 'Bob', avatar: 'https://evil.test/p.gif' } as never)).toEqual({ first: 'Bob' })
+  })
+})
+
+describe('subjectName', () => {
+  it('joins what it has, and admits when it has nothing', () => {
+    expect([
+      subjectName({ first: 'Bob', last: 'Smith' }),
+      subjectName({ last: 'Smith' }),
+      subjectName({ avatar: 'x' }),
+      subjectName(null),
+    ]).toEqual(['Bob Smith', 'Smith', null, null])
+  })
+})
+
 describe('requestAccess', () => {
   it('queues a pending request and notifies an admin', async () => {
     const res = await gate().requestAccess({ email: 'Bob@Example.com', name: 'Bob', note: 'donor' }, req(), NOW)
@@ -51,6 +88,7 @@ describe('requestAccess', () => {
       id: expect.stringMatching(/^[A-Za-z0-9_-]{12}$/),
       email: 'bob@example.com', // normalized
       name: 'Bob',
+      subject: null,
       note: 'donor',
       createdAt: NOW_S,
       status: 'pending',
@@ -165,6 +203,27 @@ describe('approveRequest', () => {
 
     const redeemed = await g.redeem(res.token, req(), NOW + 2000)
     expect(redeemed.ok).toBe(true)
+  })
+
+  it('carries the requester onto the grant, so the watermark names a person', async () => {
+    const g = gate()
+    // No `name`: a split-name form posts first/last and nothing else.
+    const pending = await g.requestAccess(
+      { email: 'bob@example.com', subject: cleanSubject({ first: 'Bob', last: 'Smith' }) },
+      req(),
+      NOW,
+    )
+    if (pending.status !== 'pending') throw new Error('expected pending')
+
+    const res = await g.approveRequest(pending.request.id, 'boss@openathena.ai', {}, NOW + 1000)
+    if (!res) throw new Error('expected approval to succeed')
+    // `name` falls back through the subject before the address: without that,
+    // a grant minted from a split-name request would be labelled `bob@…`.
+    expect([res.grant.name, res.grant.subject]).toEqual(['Bob Smith', { first: 'Bob', last: 'Smith' }])
+
+    // And it survives the round-trip through the store, not just this call.
+    const reread = await g.listRequests()
+    expect(reread.map(r => [r.email, r.subject])).toEqual([['bob@example.com', { first: 'Bob', last: 'Smith' }]])
   })
 
   it('honours a scope override', async () => {

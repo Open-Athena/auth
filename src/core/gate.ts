@@ -17,6 +17,7 @@ import {
   type RateLimit,
   isEmailish,
   noopNotify,
+  subjectName,
 } from './requests.js'
 import {
   DEFAULT_COOKIE_NAME,
@@ -32,7 +33,7 @@ import {
   verifySession,
 } from './session.js'
 import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js'
-import { ALL_SCOPES, type Auth, type Grant, type NewGrant } from './types.js'
+import { ALL_SCOPES, type Auth, type Grant, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 
 export interface GateOptions {
@@ -307,7 +308,10 @@ export function createGate(opts: GateOptions) {
     const { expiresInS = null, maxRedeems = null, sessionTtlS = null } = opts.approvalGrant ?? {}
     return mint(
       {
-        name: request.name ?? request.email,
+        name: request.name ?? subjectName(request.subject) ?? request.email,
+        // The whole point of collecting a name at request time: the minted
+        // grant knows a person, so the watermark and chip say "Bob Smith".
+        subject: request.subject,
         note: request.note,
         email: request.email,
         scopes,
@@ -321,7 +325,7 @@ export function createGate(opts: GateOptions) {
   }
 
   async function requestAccess(
-    input: { email: string; name?: string | null; note?: string | null },
+    input: { email: string; name?: string | null; note?: string | null; subject?: Subject | null },
     req: Request,
     nowMs = Date.now(),
   ): Promise<RequestAccessResult> {
@@ -348,6 +352,7 @@ export function createGate(opts: GateOptions) {
       id: generateId(),
       email,
       name: input.name?.trim() || null,
+      subject: input.subject ?? null,
       note: input.note?.trim() || null,
       createdAt: nowS,
       status: autoScopes ? 'auto' : 'pending',

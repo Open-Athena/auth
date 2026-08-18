@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Avatar } from './Avatar.js'
 import { useForgetWhoami } from './useWhoami.js'
 import { type Whoami, displayName } from './types.js'
 
@@ -8,7 +9,9 @@ export interface WhoamiChipProps {
   logoutEndpoint?: string | null
   signOutLabel?: ReactNode
   onSignedOut?: () => void
-  classNames?: Partial<Record<'root' | 'name' | 'button', string>>
+  /** Show an `<Avatar>` before the name. Off by default: it changes the layout. */
+  avatar?: boolean | { src?: string | null; size?: number }
+  classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar', string>>
 }
 
 /** Header chip: who you are, and how to stop being them. */
@@ -17,6 +20,7 @@ export function WhoamiChip({
   logoutEndpoint = '/api/auth/logout',
   signOutLabel = 'Sign out',
   onSignedOut,
+  avatar = false,
   classNames = {},
 }: WhoamiChipProps) {
   const forget = useForgetWhoami()
@@ -31,6 +35,13 @@ export function WhoamiChip({
 
   return (
     <div className={classNames.root}>
+      {avatar && (
+        <Avatar
+          whoami={whoami}
+          className={classNames.avatar}
+          {...(typeof avatar === 'object' ? avatar : {})}
+        />
+      )}
       <span className={classNames.name}>{name}</span>
       {logoutEndpoint !== null && (
         <button className={classNames.button} type="button" onClick={signOut}>

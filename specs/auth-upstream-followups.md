@@ -2,7 +2,7 @@
 
 Written from watchy (the first consumer) after a live end-to-end pass on `gh.oa.dev` against dist `f754988`. Two items found there are already fixed at HEAD (`94c8451`: `mint` logging, revoked grants no longer hidden) and are not repeated. What follows is one confirmed bug, and a set of features the adoption surfaced — ordered by how much they cost the consumer today.
 
-**Status (2026-08-18, upstream):** §1, §2, §3 and the `ssoHandler` note are **done** — see the deltas inline. §4–§7 are unstarted: each is a feature with a design decision inside it, and they want prioritising rather than doing in order.
+**Status (2026-08-18, upstream):** §1, §2, §3, §5 and the `ssoHandler` note are **done** — see the deltas inline. §7 carries a correction rather than an implementation. §4 and §6 are unstarted; §4 is blocked on credentials and one identity-mapping decision (see its delta).
 
 ## 1. `useForgetWhoami` doesn't re-render — sign-out silently no-ops (bug)
 
@@ -65,6 +65,17 @@ watchy's ask: optionally collect first/last name and an avatar at request time, 
 
 Suggest optional columns on `access_requests` + matching optional fields in `RequestAccessForm`, with the field list configurable so an app can ask for none of it. Avatar upload is a bigger commitment (storage, moderation, size limits); Gravatar-by-email-hash or initials-in-a-circle covers most of the value at none of the cost.
 
+*Done, with the shape taken from `Subject` rather than invented: `grants.subject_json` already models `{first,last,email,avatar}` for the greeting and the watermark, and approval had nothing to put there. So `access_requests` gains one `subject_json` column (migration 0006, same name and same JSON shape as `grants`), `RequestAccessForm` gains `askName="split"`, and `approveRequest` carries the subject onto the minted grant — which is the point: the grant now knows a person, so the watermark says "Ada Lovelace" instead of `ada@…`. `grant.name` falls back through `subjectName(subject)` before the address, or a split-name request would mint a link labelled with an email.*
+
+*Two deliberate refusals:*
+
+- ***No first/last columns.*** The pair lives inside `Subject` as optional fields, and `cleanSubject` drops whichever is missing. Splitting a name is the classic falsehood, and `askName` defaults to a single free-text field — `'split'` is opt-in, for apps that specifically need the parts. A required Last is how you lose people who don't have one.
+- ***`avatar` is never accepted from the form.*** A URL supplied by an unauthenticated stranger and then rendered as `<img src>` on the admin's request queue is a tracking pixel aimed at whoever reviews requests, and the route drops it (test: posting `avatar` alongside `first`/`last` stores only the names). Avatars are *derived* instead: `<Avatar>` renders `subject.avatar` when an app has set one itself, else initials — code-point-safe, so a name beginning with an emoji doesn't render half a surrogate pair. No Gravatar by default either: fetching one tells a third party the hash of your visitor's address on every render of a page whose premise is that access is private. An app that wants it passes the URL in.*
+
+*`cleanSubject` also caps each field at 64 chars and strips control characters — a newline in `first` is a forged second row in an admin's table.*
+
+*Verified end to end in the demo (which now uses the package's own form rather than its hand-rolled one): a split-name request stored `{"first":"Ada","last":"Lovelace"}`, the queue rendered the person and initials rather than an address, and approving it minted a grant carrying both `name: "Ada Lovelace"` and the subject.*
+
 ## 6. Upgrade a link session into a real identity
 
 Today a link session is terminal: you are "whoever holds this link" until it expires. The natural upsell, once someone is already looking at the data: *"You're viewing via a shared link — verify your email to keep access"*, which turns an anonymous grant into an email-bound identity, surviving revocation of the shared link and making the audit log name a person instead of a link.
@@ -79,9 +90,17 @@ watchy's ask: "list all active sessions, including SSO'd users."
 
 1. **Derive it from the access log** (cheap, no schema change): "identities seen in the last N minutes", grouped by `session_sub`. This is what an operator usually means by "who's on the site", and the data is already there. It cannot see an idle-but-valid session, and shouldn't claim to.
 2. **A `not-before` epoch per subject** (small): one column, checked at authenticate; bumping it invalidates every existing session for that subject. This is "sign out everywhere", which is the action people actually want after listing sessions.
-3. **A real session registry** (largest): put a session id in the claims and write a row per sign-in — enables per-device listing and per-device revoke, at the cost of a DB read on every authenticated request, which is exactly the property the stateless design was chosen to avoid.
+3. **A real session registry** (largest): put a session id in the claims and write a row per sign-in — enables per-device listing and per-device revoke, at the cost of a row per sign-in to create, expire and garbage-collect.
 
-Recommendation: 1 + 2. Skip 3 unless per-device revoke turns out to be a real requirement — the sign-in-from-a-hotel-laptop case is served fine by "sign out everywhere".
+**Correction to an earlier draft of this section,** which called the design "stateless" and priced option 3 at "a DB read on every authenticated request, which is exactly the property the stateless design was chosen to avoid". Only half of that is true, and it isn't the half that matters:
+
+- **Grant sessions already read the DB every request.** `authenticate` re-joins `store.byId(grantId)` on every call — deliberately, since that per-request re-join *is* instant revocation (share-links §3). For the link half of the product there is no stateless property to protect; the read is the feature.
+- **Only SSO sessions are read-free**: HMAC-verify the cookie, then `policy(email)`, which for `domainPolicy`/`adminPolicy` is a pure string check. Note that `EmailPolicy` is allowed to be async precisely so a consumer *can* back it with a table — applitrack's allowlist does exactly that — so even this half is read-free only by the consumer's choice, not by construction.
+- **Option 2 costs the same read as option 3.** A `not_before` epoch "checked at authenticate" is a lookup keyed by subject; there is no way to check it without one. So the read cannot be the reason to prefer 2 over 3 — the earlier draft recommended 1+2 on an argument that rules out 2 just as hard.
+
+The real difference is lifecycle, not reads: option 2 is one column with no rows to manage, and its read is cacheable (a per-subject epoch changes ~never, so a short-TTL memo is safe, trading a bounded delay on "sign out everywhere" for the read). Option 3 needs a row per sign-in, an expiry sweep, and a story for what happens when the registry and the cookie disagree.
+
+Recommendation is unchanged, for the corrected reason: **1 + 2**. Skip 3 unless per-device listing/revoke is a real requirement — the hotel-laptop case is served by "sign out everywhere". If it does get built, note it composes with the grant path for free, since that path is already doing a per-request lookup that a registry read could join onto.
 
 ## Not blocking, noted
 

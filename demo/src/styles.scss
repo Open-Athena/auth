@@ -501,5 +501,23 @@ table {
 
 .row {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
+}
+
+// `RequestAccessForm` wraps each label/input pair in `classNames.field`; the
+// hand-rolled form this replaced used bare `<label>`s, which `.stack` styled.
+.field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+// The package's `<Avatar>` ships only geometry — a circle, centred text — so
+// the ground and weight are the app's, as with every other primitive here.
+.avatar {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 600;
 }

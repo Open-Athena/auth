@@ -6,6 +6,7 @@ import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AuthGate } from '../../src/react/AuthGate.js'
+import { Avatar, initialsOf } from '../../src/react/Avatar.js'
 import { AccessNotice } from '../../src/react/disclosure.js'
 import { exchangeKeyParam } from '../../src/react/exchange.js'
 import { RequestAccessForm } from '../../src/react/RequestAccessForm.js'
@@ -202,6 +203,25 @@ describe('RequestAccessForm', () => {
     expect(screen.queryByRole('button')).toBe(null)
   })
 
+  it("posts first/last in split mode, and doesn't also post a `name`", async () => {
+    const calls = stubFetch({ '/api/auth/request': { status: 200, body: { status: 'pending' } } })
+    renderWithQuery(<RequestAccessForm askName="split" askNote={false} />)
+    expect(screen.queryByLabelText('Name')).toBe(null)
+    await userEvent.type(screen.getByLabelText('Email'), 'bob@example.com')
+    await userEvent.type(screen.getByLabelText('First name'), 'Bob')
+    await userEvent.type(screen.getByLabelText('Last name'), 'Smith')
+    await userEvent.click(screen.getByRole('button', { name: 'Request access' }))
+
+    await waitFor(() => expect(screen.getByText(/we'll email you a link/)).toBeDefined())
+    expect(calls).toEqual([
+      {
+        url: '/api/auth/request',
+        method: 'POST',
+        body: { email: 'bob@example.com', first: 'Bob', last: 'Smith', website: '' },
+      },
+    ])
+  })
+
   it('surfaces rate-limiting and invalid addresses distinctly', async () => {
     stubFetch({ '/api/auth/request': { status: 429, body: { status: 'rate-limited' } } })
     renderWithQuery(<RequestAccessForm askName={false} askNote={false} />)
@@ -313,5 +333,38 @@ describe('signing out', () => {
 
     await waitFor(() => expect(screen.getByText('WALL')).toBeDefined())
     expect(screen.queryByText('APP:Bob Smith')).toBe(null)
+  })
+})
+
+describe('Avatar', () => {
+  it('takes the first and last initial, code-point-safe', () => {
+    // `Array.from` rather than `[0]`: an astral-plane first character would
+    // otherwise render as half a surrogate pair.
+    expect(['Bob Smith', 'Bob van der Smith', 'Cher', '🙂 Smith', '  ', ''].map(initialsOf)).toEqual([
+      'BS',
+      'BS',
+      'C',
+      '🙂S',
+      '',
+      '',
+    ])
+  })
+
+  it('renders initials when there is no image, and nothing at all when there is no name', () => {
+    const { container } = renderWithQuery(<Avatar whoami={GRANT} className="av" />)
+    expect(container.querySelector('.av')?.textContent).toBe('BS')
+    cleanup()
+    expect(renderWithQuery(<Avatar whoami={null} />).container.innerHTML).toBe('')
+  })
+
+  it("renders a subject's avatar without handing the referrer to whoever hosts it", () => {
+    const withAvatar: AppWhoami = { ...GRANT, subject: { first: 'Bob', avatar: 'https://cdn.test/bob.png' } }
+    const { container } = renderWithQuery(<Avatar whoami={withAvatar} />)
+    const img = container.querySelector('img')!
+    expect([img.getAttribute('src'), img.getAttribute('referrerpolicy'), img.getAttribute('alt')]).toEqual([
+      'https://cdn.test/bob.png',
+      'no-referrer',
+      'Bob Smith',
+    ])
   })
 })

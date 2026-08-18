@@ -9,6 +9,7 @@
 import type { Auth } from './types.js'
 import type { AuditQuery } from './store.js'
 import type { Gate } from './gate.js'
+import { cleanSubject } from './requests.js'
 import { hasScope } from './types.js'
 
 export interface RouteOptions {
@@ -127,12 +128,22 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     }
 
     if (rest === '/request' && method === 'POST') {
-      const input = await body<{ email: string; name: string; note: string } & Record<string, string>>(req)
+      const input = await body<{ email: string; name: string; first: string; last: string; note: string } & Record<string, string>>(req)
       // A filled honeypot gets the same answer a human gets: no signal back to
       // the bot about what tripped, and no row to clean up.
       if (input[honeypotField]) return json({ status: 'pending' })
       if (!input.email) return json({ error: 'email required' }, 400)
-      const res = await gate.requestAccess({ email: input.email, name: input.name, note: input.note }, req)
+      // `cleanSubject` caps and strips these: they are attacker-controlled
+      // strings destined for a table an admin reads.
+      const res = await gate.requestAccess(
+        {
+          email: input.email,
+          name: input.name,
+          note: input.note,
+          subject: cleanSubject({ first: input.first, last: input.last }),
+        },
+        req,
+      )
       if (res.status === 'invalid') return json({ status: 'invalid', error: "that doesn't look like an email address" }, 400)
       if (res.status === 'rate-limited') return json({ status: 'rate-limited', error: 'too many requests; try later' }, 429)
       // Never echo the request id or token back to an unauthenticated submitter.

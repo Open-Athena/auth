@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 177 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 187 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -32,9 +32,9 @@ Backend kernel, request-access, the HTTP route surface, the React primitives, an
 ```
 src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
 src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
-src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / disclosure — unstyled
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / disclosure — unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
-migrations/     grants, access_log, access_requests, access_log_daily, dedupe index
+migrations/     grants, access_log, access_requests, access_log_daily, dedupe index, request subject
 demo/           a working Tier-2 app on Pages + Functions + D1
 ```
 
@@ -113,6 +113,8 @@ export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflare
 **The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
+
+**Request access** collects an address, and optionally a person: `<RequestAccessForm askName="split" />` posts first/last, stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the watermark says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
 
 **On the frontend**, `@open-athena/auth/react` ships the logic and leaves the presentation to you — every string and class is a prop, and no CSS is bundled:
 

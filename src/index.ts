@@ -4,7 +4,7 @@ export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './cor
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
 export { ALL_SCOPES, createGate, isActive } from './core/gate.js'
 export type { Gate, GateOptions, MintResult, RedeemFailure, RedeemResult, RequestAccessResult } from './core/gate.js'
-export { DEFAULT_RATE_LIMIT, isEmailish, noopNotify } from './core/requests.js'
+export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js'
 export type { AccessRequest, Notify, NotifyEvent, RateLimit, RequestStatus } from './core/requests.js'
 export { authRoutes } from './core/routes.js'
 export type { RouteOptions } from './core/routes.js'

@@ -151,6 +151,7 @@ interface RequestRow {
   id: string
   email: string
   name: string | null
+  subject_json: string | null
   note: string | null
   created_at: number
   status: RequestStatus
@@ -159,12 +160,13 @@ interface RequestRow {
   grant_id: string | null
 }
 
-const REQ_COLS = 'id, email, name, note, created_at, status, decided_at, decided_by, grant_id'
+const REQ_COLS = 'id, email, name, subject_json, note, created_at, status, decided_at, decided_by, grant_id'
 
 const toRequest = (r: RequestRow): AccessRequest => ({
   id: r.id,
   email: r.email,
   name: r.name,
+  subject: parseSubject(r.subject_json),
   note: r.note,
   createdAt: r.created_at,
   status: r.status,
@@ -191,10 +193,22 @@ export function d1RequestStore(db: D1Database): RequestStore {
     async insert(r, ipHash) {
       await db
         .prepare(
-          `INSERT INTO access_requests (id, email, name, note, created_at, status, decided_at, decided_by, grant_id, ip_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO access_requests (id, email, name, subject_json, note, created_at, status, decided_at, decided_by, grant_id, ip_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(r.id, r.email, r.name, r.note, r.createdAt, r.status, r.decidedAt, r.decidedBy, r.grantId, ipHash)
+        .bind(
+          r.id,
+          r.email,
+          r.name,
+          r.subject ? JSON.stringify(r.subject) : null,
+          r.note,
+          r.createdAt,
+          r.status,
+          r.decidedAt,
+          r.decidedBy,
+          r.grantId,
+          ipHash,
+        )
         .run()
     },
 

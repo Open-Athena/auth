@@ -117,7 +117,13 @@ describe('redeem', () => {
       { ok: false, reason: 'expired' },
       { ok: false, reason: 'revoked' },
     ])
-    expect(logged(audit.events).map(e => [e.event, e.path, e.reason])).toEqual([
+    // Sorted, not asserted in-order: the three redeems run concurrently, so the
+    // rows land in completion order. Asserting the launch order passes almost
+    // always and fails under load, which is the worst kind of test.
+    const rows = logged(audit.events)
+      .map(e => [e.event, e.path, e.reason])
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1])))
+    expect(rows).toEqual([
       ['deny', '/a', 'bad-token'],
       ['deny', '/b', 'expired'],
       ['deny', '/c', 'revoked'],

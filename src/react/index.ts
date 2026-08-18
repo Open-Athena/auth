@@ -1,5 +1,7 @@
 export { AuthGate } from './AuthGate.js'
 export type { AuthGateProps } from './AuthGate.js'
+export { Avatar, initialsOf } from './Avatar.js'
+export type { AvatarProps } from './Avatar.js'
 export { AccessNotice, Watermark } from './disclosure.js'
 export type { AccessNoticeProps, WatermarkProps } from './disclosure.js'
 export { exchangeKeyParam, hasKeyParam, useKeyExchange } from './exchange.js'

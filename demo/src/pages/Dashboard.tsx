@@ -1,4 +1,4 @@
-import { AccessNotice, AuthGate, Watermark, WhoamiChip, type AppWhoami } from '@open-athena/auth/react'
+import { AccessNotice, AuthGate, RequestAccessForm, Watermark, WhoamiChip, type AppWhoami } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { ApiError, api, money } from '../api.js'
@@ -55,40 +55,18 @@ function Wall({ onRetry }: { onRetry: () => void }) {
 }
 
 function RequestAccess() {
-  const [state, setState] = useState<'idle' | 'sending' | 'pending' | 'error'>('idle')
-  if (state === 'pending')
-    return <p className="ok">Thanks — an approval would email you a link. (Nothing is actually sent in this demo.)</p>
+  // The package's own form, in split-name mode: first/last are stored as the
+  // same `Subject` a grant carries, so approving this request mints a link that
+  // knows a person — which is what the watermark and the chip then render.
   return (
-    <form
-      className="stack"
-      onSubmit={async e => {
-        e.preventDefault()
-        const data = Object.fromEntries(new FormData(e.currentTarget).entries())
-        setState('sending')
-        const res = await fetch('/api/view/request', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(data),
-        })
-        setState(res.ok ? 'pending' : 'error')
-      }}
-    >
-      <label>
-        Email
-        <input name="email" type="email" required placeholder="you@example.com" />
-      </label>
-      <label>
-        Why? <span className="muted">(optional)</span>
-        <input name="note" type="text" placeholder="Board member, reviewing Q3" />
-      </label>
-      {/* Honeypot: the server treats a filled value as a bot and stores nothing. */}
-      <input name="website" type="text" tabIndex={-1} autoComplete="off" aria-hidden="true" className="hp" />
-      <button className="btn" type="submit" disabled={state === 'sending'}>
-        {state === 'sending' ? 'Sending…' : 'Request access'}
-      </button>
-      {state === 'error' && <p className="err">That didn't work. Rate limited, maybe?</p>}
-    </form>
+    <RequestAccessForm
+      // This demo mounts `authRoutes` at `/api/view`, not the default `/api/auth`.
+      endpoint="/api/view/request"
+      askName="split"
+      notePlaceholder="Board member, reviewing Q3"
+      classNames={{ form: 'stack', field: 'field', input: 'input', button: 'btn', message: 'ok' }}
+      labels={{ submit: 'Request access' }}
+    />
   )
 }
 
@@ -120,8 +98,9 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
             which is exactly how the `removeQueries` bug survived this demo. */}
         <WhoamiChip
           whoami={whoami}
+          avatar
           logoutEndpoint="/api/view/logout"
-          classNames={{ root: 'chip', name: 'chip-name', button: 'btn small' }}
+          classNames={{ root: 'chip', name: 'chip-name', button: 'btn small', avatar: 'avatar' }}
         />
       </header>
 
