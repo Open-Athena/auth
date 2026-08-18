@@ -6,9 +6,10 @@
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { b64uEncode } from '../src/core/base64.js'
-import { ssoHandler, verifyAccessJwt } from '../src/adapters/cf-access.js'
+import { ssoHandler, ssoSessionHandler, verifyAccessJwt } from '../src/adapters/cf-access.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
+import { verifySession } from '../src/core/session.js'
 import { memoryStore } from './memory-store.js'
 
 const TEAM = 'https://acme.cloudflareaccess.com'
@@ -217,5 +218,52 @@ describe('ssoHandler', () => {
     stubCerts()
     const res = await call(await makeJwt(live({ email: 'stranger@example.com' })))
     expect([res.status, res.headers.get('set-cookie')]).toEqual([403, null])
+  })
+})
+
+describe('ssoSessionHandler', () => {
+  const SECRET = 'test-secret-0123456789abcdef'
+  const live = (over: Partial<Claims> = {}): Claims => valid({ exp: Math.floor(Date.now() / 1000) + 3600, ...over })
+
+  const call = async (jwt: string | null, url = 'https://x.test/auth/sso') => {
+    const headers: Record<string, string> = jwt ? { 'Cf-Access-Jwt-Assertion': jwt } : {}
+    const handler = ssoSessionHandler({ secret: SECRET, teamDomain: TEAM, aud: AUD, cookieName: 'watchy_auth' })
+    return handler({ request: new Request(url, { headers }) })
+  }
+
+  it('mints a cookie a gate elsewhere can verify, under the app’s own name', async () => {
+    stubCerts()
+    const res = await call(await makeJwt(live()), 'https://x.test/auth/sso?next=%2Factors')
+    expect([res.status, res.headers.get('location')]).toEqual([302, '/actors'])
+
+    const value = res.headers.get('set-cookie')!.split(';')[0]!.replace('watchy_auth=', '')
+    expect(await verifySession(value, SECRET, Date.now())).toBe('e:staff@openathena.ai')
+  })
+
+  it('mints for any Access-verified identity — authorization is the gate’s job, per request', async () => {
+    // The contrast with `ssoHandler`, which 403s this same identity: without a
+    // store there is no policy to consult here, and none is needed, because the
+    // claim carries no scopes and `authenticate` re-derives them every time.
+    stubCerts()
+    const res = await call(await makeJwt(live({ email: 'stranger@example.com' })))
+    const value = res.headers.get('set-cookie')!.split(';')[0]!.replace('watchy_auth=', '')
+    expect([res.status, await verifySession(value, SECRET, Date.now())]).toEqual([302, 'e:stranger@example.com'])
+
+    const gate = createGate({
+      store: memoryStore(),
+      secret: SECRET,
+      cookieName: 'watchy_auth',
+      policy: domainPolicy(['openathena.ai'], ['internal']),
+    })
+    const req = new Request('https://x.test/api', { headers: { Cookie: `watchy_auth=${value}` } })
+    expect(await gate.authenticate(req)).toBe(null)
+  })
+
+  it('rejects a bad JWT and refuses to be an open redirect, same as the gated handler', async () => {
+    stubCerts()
+    const forged = await call(await makeJwt(live(), { key: otherKeys.privateKey }))
+    const noJwt = await call(null)
+    const redirect = await call(await makeJwt(live()), 'https://x.test/auth/sso?next=//evil.test/x')
+    expect([forged.status, noJwt.status, redirect.headers.get('location')]).toEqual([401, 401, '/'])
   })
 })

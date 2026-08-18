@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 164 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 177 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -105,6 +105,8 @@ import { ssoHandler } from '@open-athena/auth/cf-access'
 
 export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflareaccess.com', aud: env.ACCESS_AUD })
 ```
+
+`ssoSessionHandler` is the same thing for a deployment that can mint sessions but not verify them — the auth store lives in another worker, so there's no gate to hand it. It takes `{ secret, teamDomain, aud, cookieName }` and mints for any Access-verified email; the gate that later verifies the cookie re-derives scopes from `policy` on every request, so authorization isn't being skipped, just deferred to where it can be answered.
 
 **Revocation is instant.** Grant-backed sessions re-join their grant row on every request, so `gate.revoke(id)` kills every session that link ever minted — no waiting out a cookie TTL. That property is what makes the social story work: assume links get forwarded, and design so forwarding is *visible and revocable* rather than prevented.
 

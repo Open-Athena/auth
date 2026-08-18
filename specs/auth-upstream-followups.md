@@ -2,6 +2,8 @@
 
 Written from watchy (the first consumer) after a live end-to-end pass on `gh.oa.dev` against dist `f754988`. Two items found there are already fixed at HEAD (`94c8451`: `mint` logging, revoked grants no longer hidden) and are not repeated. What follows is one confirmed bug, and a set of features the adoption surfaced — ordered by how much they cost the consumer today.
 
+**Status (2026-08-18, upstream):** §1, §2, §3 and the `ssoHandler` note are **done** — see the deltas inline. §4–§7 are unstarted: each is a feature with a design decision inside it, and they want prioritising rather than doing in order.
+
 ## 1. `useForgetWhoami` doesn't re-render — sign-out silently no-ops (bug)
 
 `useForgetWhoami` calls `client.removeQueries({ queryKey: WHOAMI_KEY })`. In query-core 5.101, `removeQueries` → `queryCache.remove(query)` → `query.destroy()` + delete from the map + `notify({type:'removed'})`. That notification goes to **cache**-level subscribers; a `QueryObserver` subscribes to the *query*, so no mounted component is told anything. The observer keeps rendering its last result.
@@ -14,9 +16,13 @@ Worth a test, since the failure is invisible to unit tests that only assert on t
 
 watchy currently works around it with `onSignedOut={() => location.reload()}`, which it may keep regardless: a reload also evicts every already-fetched private response from memory, which is arguably what sign-out should mean.
 
+*Fixed: `useForgetWhoami` now calls `resetQueries`. The test is the one suggested above — mount `AuthGate` + `WhoamiChip` over one client, click Sign out, assert the wall replaces the identity — and it was written first, against the bug, so it has been seen to fail for the right reason. Reverting to `removeQueries` fails it; nothing else in the suite notices, which is exactly why this shipped.*
+
 ## 2. Identity responses carry no `cache-control`
 
 `/whoami` (and the admin JSON) set no `cache-control`. Nothing is caching them today — Cloudflare returns `cf-cache-status: DYNAMIC`, and a validator-less 200 is unlikely to be heuristically cached — so this is hardening, not a live bug. But an identity endpoint that a proxy could serve to the wrong person is a bad thing to leave to chance, and the fix is one header: `cache-control: no-store` on every authenticated response.
+
+*Done, in the one place every route already funnels through (`json()` in `core/routes.ts`), so it covers errors too — a 401 body is identity-shaped as well. The SSO 302 carries it too, since that response is the one setting the cookie.*
 
 ## 3. E2E tests for the link lifecycle
 
@@ -36,6 +42,10 @@ The semantics I verified by hand are exactly the ones worth pinning in CI, becau
 The `/testing` in-memory stores make most of this cheap; the cookie round-trip wants a real fetch handler (Miniflare/`unstable_dev`, or just calling `authRoutes` with hand-built `Request`s and threading the `set-cookie` back).
 
 Suggested split: one e2e test per row above, plus one "happy path" narrative test that reads like the table — mint → redeem → use → revoke → denied.
+
+*Built as `test/e2e.test.ts`: the package's routes plus a small app of its own (one gated route, so `hasScope` and the fall-through are under test), a real `d1GrantStore`, and the `set-cookie` threaded into the next request. One test per row, plus a ninth for the `no-store` header above.*
+
+*Each guard was then mutation-tested, and one of the eight was a false positive worth recording: **row 8 passed with the deny-dedupe guard removed.** Three bad-token denials land as three rows either way — they carry a NULL `session_sub`, and SQLite treats NULLs as distinct in a unique index, so they could never have collided. Counting rows tested SQLite's NULL semantics, not the guard. The assertion now also pins `bucket` to NULL, which is the actual difference between "deliberately not deduped" and "accidentally didn't collide", and that version does fail when the guard goes.*
 
 ## 4. Notification sinks, and acting *from* the notification
 
@@ -77,3 +87,5 @@ Recommendation: 1 + 2. Skip 3 unless per-device revoke turns out to be a real re
 
 - The admin page's revoked-row rendering only worked once watchy passed `?all=1`; HEAD's default change fixes that for the next adopter.
 - watchy deliberately does not use `ssoHandler`: it takes a whole gate (hence a D1 binding), and watchy's Pages project has none — its auth authority is a cross-account worker. A gate-less variant taking just `{ secret, teamDomain, aud, cookieName }` would let that project drop its last hand-written handler.
+
+  *Shipped as `ssoSessionHandler` on `@open-athena/auth/cf-access`, with exactly that option shape. It mints for any Access-verified email and lets the gate decide later — which is not a weakening, because a session claim is only `e:<email>` and scopes are re-derived from `policy` on every `authenticate`; the test asserts that an identity this handler happily mints for is still refused by a gate whose policy excludes it. What it gives up versus `ssoHandler` is the early 403 and the `signin` audit row, both of which need a store. watchy's `www/functions/auth/sso.ts` should collapse to a call to it.*

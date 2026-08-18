@@ -115,10 +115,12 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
           <h1>{data.title}</h1>
           <p className="muted small">Updated {data.updated} · invented figures, but shaped like the real thing</p>
         </div>
+        {/* No `onSignedOut` on purpose: forgetting the identity is the hook's
+            job, and an app-side refresh here would mask a regression in it —
+            which is exactly how the `removeQueries` bug survived this demo. */}
         <WhoamiChip
           whoami={whoami}
           logoutEndpoint="/api/view/logout"
-          onSignedOut={onLost}
           classNames={{ root: 'chip', name: 'chip-name', button: 'btn small' }}
         />
       </header>

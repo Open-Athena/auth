@@ -37,10 +37,21 @@ export interface RouteOptions {
   honeypotField?: string
 }
 
+/**
+ * Every response here is identity-shaped — who you are, which links are yours,
+ * who asked for access — so none of it may be stored by anything between the
+ * worker and the browser. Nothing caches these today (CF reports `DYNAMIC`),
+ * but an identity endpoint a proxy *could* hand to the wrong person is a bad
+ * thing to leave to heuristics when the fix is one header.
+ */
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data, null, 2) + '\n', {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      ...headers,
+    },
   })
 
 async function body<T>(req: Request): Promise<Partial<T>> {

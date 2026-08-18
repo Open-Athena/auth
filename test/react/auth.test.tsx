@@ -10,6 +10,7 @@ import { AccessNotice } from '../../src/react/disclosure.js'
 import { exchangeKeyParam } from '../../src/react/exchange.js'
 import { RequestAccessForm } from '../../src/react/RequestAccessForm.js'
 import { SignInPanel } from '../../src/react/SignInPanel.js'
+import { WhoamiChip } from '../../src/react/WhoamiChip.js'
 import { displayName, hasScope, type AppWhoami } from '../../src/react/types.js'
 import { renderWithQuery, setLocation, stubFetch } from './helpers.js'
 
@@ -279,5 +280,38 @@ describe('devIdentity', () => {
     )
     await waitFor(() => expect(screen.getByText('APP:real@x.test')).toBeDefined())
     expect(calls.map(c => c.url)).toEqual(['/cdn-cgi/access/get-identity'])
+  })
+})
+
+describe('signing out', () => {
+  /** The gate and the chip over one client, which is how an app actually mounts them. */
+  const signedIn = () =>
+    renderWithQuery(
+      <AuthGate source={{ kind: 'app' }} signIn={<div>WALL</div>}>
+        {w => (
+          <div>
+            APP:{displayName(w)}
+            <WhoamiChip whoami={w} />
+          </div>
+        )}
+      </AuthGate>,
+    )
+
+  it('re-renders the wall, rather than leaving the dead identity on screen', async () => {
+    const calls = stubFetch({
+      '/api/auth/whoami': { status: 200, body: GRANT },
+      '/api/auth/logout': { status: 200, body: { ok: true } },
+    })
+    signedIn()
+    await waitFor(() => expect(screen.getByText('APP:Bob Smith')).toBeDefined())
+
+    // The cookie is already gone at this point; the bug was purely that no
+    // mounted observer heard about it, so the page kept rendering the identity.
+    calls.length = 0
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 })) as typeof fetch
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    await waitFor(() => expect(screen.getByText('WALL')).toBeDefined())
+    expect(screen.queryByText('APP:Bob Smith')).toBe(null)
   })
 })
