@@ -9,6 +9,7 @@
 import type { Auth } from './types.js'
 import type { AuditQuery } from './store.js'
 import type { Gate } from './gate.js'
+import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
 import { cleanSubject } from './requests.js'
 import { hasScope } from './types.js'
 
@@ -36,6 +37,15 @@ export interface RouteOptions {
   scopeToCreator?: (auth: Auth) => string | undefined
   /** Hidden form field that only a bot fills in. Default `website`. */
   honeypotField?: string
+  /**
+   * Enables `POST <basePath>/avatar`, which resolves a Gravatar/GitHub/explicit
+   * avatar for the admin UI to preview *before* minting. Only ever fetches
+   * gravatar.com and github.com, so it is not a general fetch proxy.
+   *
+   * Off by default: it makes an outbound request per call, which a deployment
+   * should opt into rather than discover.
+   */
+  avatarLookup?: boolean | ResolveAvatarOptions
 }
 
 /**
@@ -69,6 +79,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     creatorOf = defaultCreator,
     scopeToCreator,
     honeypotField = 'website',
+    avatarLookup = false,
   } = opts
 
   return async function handle(req: Request): Promise<Response | null> {
@@ -171,16 +182,25 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           name: string
           note: string
           email: string
+          first: string
+          last: string
+          avatar: string
           scopes: string[]
           maxRedeems: number | null
           expiresInS: number | null
           sessionTtlS: number | null
         }>(req)
         if (!b.scopes?.length) return json({ error: 'scopes required' }, 400)
+        // Unlike the request form, the supplier here is an admin, so an avatar
+        // *is* accepted — still `https:`-only, since the value lands in an
+        // `<img src>` on every recipient's page.
+        const subject = cleanSubject({ first: b.first, last: b.last })
+        const avatar = b.avatar && isSafeAvatarUrl(b.avatar) ? b.avatar : null
         const { grant, token } = await gate.mint({
           name: b.name ?? null,
           note: b.note ?? null,
           email: b.email ?? null,
+          subject: avatar ? { ...subject, avatar } : subject,
           scopes: b.scopes,
           maxRedeems: b.maxRedeems ?? null,
           expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
@@ -228,6 +248,15 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         if (!request) return json({ error: 'no pending request with that id' }, 404)
         return json({ request })
       }
+    }
+
+    if (rest === '/avatar' && method === 'POST') {
+      const a = await admin()
+      if (a instanceof Response) return a
+      if (!avatarLookup) return json({ error: 'avatar lookup not configured' }, 501)
+      const b = await body<AvatarSource>(req)
+      const opts = typeof avatarLookup === 'object' ? avatarLookup : {}
+      return json({ avatar: await resolveAvatar({ email: b.email, github: b.github, url: b.url }, opts) })
     }
 
     if (rest === '/log' && method === 'GET') {

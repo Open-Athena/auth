@@ -1,5 +1,14 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js'
 export { nullAudit, requestMeta } from './core/audit.js'
+export {
+  MAX_INLINE_AVATAR_BYTES,
+  githubAvatarUrl,
+  gravatarUrl,
+  isGithubHandle,
+  isSafeAvatarUrl,
+  resolveAvatar,
+} from './core/avatar.js'
+export type { AvatarSource, ResolveAvatarOptions } from './core/avatar.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
 export { ALL_SCOPES, createGate, isActive } from './core/gate.js'

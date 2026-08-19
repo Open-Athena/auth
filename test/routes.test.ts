@@ -141,6 +141,43 @@ describe('admin routes', () => {
   })
 })
 
+describe('mint route: the person on the link', () => {
+  it('stores first/last and an https avatar on the grant', async () => {
+    const cookie = await asAdmin()
+    const minted = await post(
+      '/grants',
+      { name: 'Bob', scopes: ['reports'], first: 'Bob', last: 'Smith', avatar: 'https://cdn.test/bob.png' },
+      cookie,
+    )
+    expect(minted.body.grant.subject).toEqual({ first: 'Bob', last: 'Smith', avatar: 'https://cdn.test/bob.png' })
+  })
+
+  it('drops an avatar that is not https, rather than minting a link that loads it', async () => {
+    const cookie = await asAdmin()
+    const cases = ['http://cdn.test/bob.png', 'javascript:alert(1)', 'data:image/png;base64,AAAA']
+    const minted = []
+    for (const avatar of cases) {
+      const res = await post('/grants', { scopes: ['reports'], first: 'Bob', avatar }, cookie)
+      minted.push(res.body.grant.subject)
+    }
+    expect(minted).toEqual([{ first: 'Bob' }, { first: 'Bob' }, { first: 'Bob' }])
+  })
+
+  it('501s the avatar lookup until a deployment opts in', async () => {
+    const cookie = await asAdmin()
+    expect(await post('/avatar', { email: 'bob@example.com' }, cookie)).toMatchObject({
+      status: 501,
+      body: { error: 'avatar lookup not configured' },
+    })
+  })
+
+  it('never lets a non-admin ask it to fetch anything', async () => {
+    // Checked *before* the 501, so an anonymous caller can't even discover
+    // whether lookup is enabled.
+    expect((await post('/avatar', { email: 'bob@example.com' })).status).toBe(401)
+  })
+})
+
 describe('request-access route', () => {
   it('accepts a submission but never echoes the id back to a stranger', async () => {
     const res = await post('/request', { email: 'bob@example.com', note: 'donor' })
