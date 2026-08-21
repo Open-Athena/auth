@@ -11,6 +11,8 @@ export {
 export type { AvatarSource, ResolveAvatarOptions } from './core/avatar.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
+export { emailNotify } from './core/email.js'
+export type { EmailMessage, EmailNotifyOptions, SendEmail, SendResult } from './core/email.js'
 export { verifyRs256Jwt } from './core/jwt.js'
 export type { VerifyJwtOptions } from './core/jwt.js'
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js'

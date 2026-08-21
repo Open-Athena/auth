@@ -20,6 +20,10 @@
       "types": "./dist/adapters/d1.d.ts",
       "default": "./dist/adapters/d1.js"
     },
+    "./resend": {
+      "types": "./dist/adapters/resend.d.ts",
+      "default": "./dist/adapters/resend.js"
+    },
     "./oidc": {
       "types": "./dist/adapters/oidc.d.ts",
       "default": "./dist/adapters/oidc.js"

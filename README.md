@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 223 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 231 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -140,6 +140,26 @@ There's also a seat argument: every Access-authenticated user consumes a Cloudfl
 `gate.update(id, patch)` changes a link's terms after the fact — expiry, cap, TTL, memo — so extending a deadline doesn't mean minting and re-sending a second link. (`sessionTtlS` is baked into the cookie at redeem, so it only affects future redemptions.)
 
 **The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
+
+**Magic links / passwordless sign-up.** `anyEmailPolicy` auto-approves any address, mints a grant bound to it, and hands it to `notify` — which becomes a real sign-in flow once `notify` can send mail:
+
+```ts
+import { emailNotify } from '@open-athena/auth'
+import { resendEmail } from '@open-athena/auth/resend'
+
+notify: emailNotify({
+  send: resendEmail({ apiKey: env.RESEND_API_KEY }),
+  from: 'Reports <auth@example.org>',
+  adminTo: 'boss@example.org',                                  // access-requested goes here
+  linkFor: token => `https://reports.example.org/?key=${token}`,
+})
+```
+
+No password store and no account table: **delivery is the verification.** A link sent to the claimed address proves mailbox control; a link handed straight back to whoever typed the address proves nothing — which is why the demo, having no ESP, is explicit that showing you the link is the one dishonest step on the page.
+
+The `access-granted` message is the only place a token is ever rendered, and it goes to the bound address alone — not to the admin who approved it, not into a log, and not into the subject line. Denials send nothing: a denial notice confirms to a prober that the address exists and that a human looked, and carries nothing actionable for a real requester.
+
+`SendEmail` is one method, so Postmark or SES is a sibling file rather than a refactor. (MailChannels' free Workers integration ended in 2024, so an ESP is a real dependency now.)
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
 
