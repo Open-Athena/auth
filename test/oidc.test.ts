@@ -1,0 +1,264 @@
+/**
+ * The OIDC sign-in flow, with a fake issuer: a real RSA keypair generated per
+ * suite, a JWKS endpoint serving its public half, and a token endpoint that
+ * signs whatever id_token the test asks for.
+ *
+ * Faking the *provider* rather than the verification is the point — these
+ * tests exercise the same `verifyRs256Jwt` a production sign-in runs, so a
+ * signature check that stops checking fails here.
+ */
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { GOOGLE, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
+import { createGate } from '../src/core/gate.js'
+import { domainPolicy } from '../src/core/policy.js'
+import { memoryAudit, memoryStore } from './memory-store.js'
+
+const SECRET = 'test-secret-0123456789abcdef'
+const CLIENT_ID = 'client-123.apps.googleusercontent.com'
+const REDIRECT = 'https://app.test/auth/google/callback'
+
+let keys: CryptoKeyPair
+let jwks: { keys: (JsonWebKey & { kid: string })[] }
+let gate: ReturnType<typeof createGate>
+
+const enc = new TextEncoder()
+
+/** `Headers.getSetCookie` isn't in `@cloudflare/workers-types`, but exists at runtime. */
+const setCookies = (res: Response): string[] => (res.headers as unknown as { getSetCookie(): string[] }).getSetCookie()
+const b64u = (b: ArrayBuffer | Uint8Array): string => {
+  const bytes = b instanceof Uint8Array ? b : new Uint8Array(b)
+  let s = ''
+  for (const c of bytes) s += String.fromCharCode(c)
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/** An id_token from our fake issuer, signed for real. */
+async function idToken(claims: Record<string, unknown>, kid = 'test-key'): Promise<string> {
+  const header = b64u(enc.encode(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' })))
+  const payload = b64u(
+    enc.encode(
+      JSON.stringify({
+        iss: 'https://accounts.google.com',
+        aud: CLIENT_ID,
+        exp: Math.floor(Date.now() / 1000) + 300,
+        ...claims,
+      }),
+    ),
+  )
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keys.privateKey, enc.encode(`${header}.${payload}`))
+  return `${header}.${payload}.${b64u(sig)}`
+}
+
+/** Answers the provider's JWKS and token endpoints; everything else 404s. */
+function providerFetch(token: string | null) {
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url === GOOGLE.jwksUrl) return Response.json(jwks)
+    if (url === GOOGLE.tokenUrl) {
+      return token ? Response.json({ id_token: token }) : new Response('nope', { status: 400 })
+    }
+    return new Response(null, { status: 404 })
+  }) as typeof globalThis.fetch
+}
+
+beforeAll(async () => {
+  keys = (await crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['sign', 'verify'],
+  )) as CryptoKeyPair
+  const jwk = (await crypto.subtle.exportKey('jwk', keys.publicKey)) as JsonWebKey
+  jwks = { keys: [{ ...jwk, kid: 'test-key' } as JsonWebKey & { kid: string }] }
+})
+
+beforeEach(() => {
+  gate = createGate({
+    store: memoryStore(),
+    audit: memoryAudit(),
+    secret: SECRET,
+    adminEmails: ['boss@openathena.ai'],
+    policy: domainPolicy(['openathena.ai'], ['internal']),
+  })
+})
+
+const opts = (fetch: typeof globalThis.fetch) => ({
+  gate,
+  clientId: CLIENT_ID,
+  clientSecret: 'shh',
+  redirectUri: REDIRECT,
+  fetch,
+})
+
+/** Walk the redirect: returns the state and the nonce cookie the browser got. */
+async function start(next = '/reports'): Promise<{ state: string; cookie: string }> {
+  const res = await oidcStart(opts(providerFetch(null)))({
+    request: new Request(`https://app.test/auth/google?next=${encodeURIComponent(next)}`),
+  })
+  const location = new URL(res.headers.get('location')!)
+  const setCookie = res.headers.get('set-cookie')!
+  return { state: location.searchParams.get('state')!, cookie: setCookie.split(';')[0]! }
+}
+
+const callback = (state: string, cookie: string | null, token: string | null) =>
+  oidcCallback(opts(providerFetch(token)))({
+    request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`, {
+      headers: cookie ? { Cookie: cookie } : {},
+    }),
+  })
+
+describe('oidcStart', () => {
+  it('sends the browser to the provider with everything the flow needs', async () => {
+    const res = await oidcStart(opts(providerFetch(null)))({
+      request: new Request('https://app.test/auth/google?next=%2Freports'),
+    })
+    const url = new URL(res.headers.get('location')!)
+    const p = url.searchParams
+    expect([res.status, `${url.origin}${url.pathname}`, p.get('client_id'), p.get('redirect_uri'), p.get('response_type'), p.get('scope')]).toEqual([
+      302,
+      GOOGLE.authUrl,
+      CLIENT_ID,
+      REDIRECT,
+      'code',
+      'openid email profile',
+    ])
+    // The nonce is in the URL *and* in a cookie — that pairing is the CSRF defence.
+    expect(res.headers.get('set-cookie')).toContain(`oa_oidc=${p.get('nonce')}`)
+  })
+
+  it('collapses an off-site `next` to `/` before signing it into the state', async () => {
+    // Otherwise `?next=` is an open redirect with our signature on it — and the
+    // signature is what would make it *convincing*.
+    const subjectOf = (state: string): string => {
+      const body = state.slice(0, state.indexOf('.')).replace(/-/g, '+').replace(/_/g, '/')
+      return (JSON.parse(atob(body)) as { sub: string }).sub
+    }
+    const [offsite, protocolRelative, ok] = await Promise.all([
+      start('https://evil.test/steal'),
+      start('//evil.test/steal'),
+      start('/reports'),
+    ])
+    expect([subjectOf(offsite.state), subjectOf(protocolRelative.state), subjectOf(ok.state)].map(sub => sub.slice(sub.indexOf(':', 5) + 1))).toEqual([
+      '/',
+      '/',
+      '/reports',
+    ])
+  })
+})
+
+describe('oidcCallback', () => {
+  it('signs in a verified address and lands on the requested path', async () => {
+    const { state, cookie } = await start('/reports')
+    const nonce = cookie.split('=')[1]!
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }))
+
+    const cookies = setCookies(res)
+    expect([res.status, res.headers.get('location')]).toEqual([302, '/reports'])
+    expect(cookies.some(c => c.startsWith('oa_auth='))).toBe(true)
+    // The nonce cookie is spent, and cleared rather than left to expire.
+    expect(cookies.some(c => c.startsWith('oa_oidc=') && c.includes('Max-Age=0'))).toBe(true)
+  })
+
+  it('refuses a state that was issued to a different browser', async () => {
+    // Login-CSRF: the attacker runs the flow themselves, then feeds their own
+    // (perfectly well-signed) state to the victim. Without the cookie check the
+    // victim is silently signed in as the attacker.
+    const attacker = await start('/reports')
+    const nonce = attacker.cookie.split('=')[1]!
+    const token = await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce })
+
+    const withoutCookie = await callback(attacker.state, null, token)
+    const withOtherCookie = await callback(attacker.state, 'oa_oidc=some-other-nonce', token)
+    expect([withoutCookie.status, withOtherCookie.status]).toEqual([400, 400])
+  })
+
+  it('refuses an id_token answering someone else’s nonce', async () => {
+    const { state, cookie } = await start()
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce: 'replayed' }))
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses an unverified address', async () => {
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: false, nonce }))
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses a token signed by a key the provider does not publish', async () => {
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    // Right claims, right shape, wrong `kid` — so no published key matches.
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }, 'other-key'))
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses a token minted for a different client', async () => {
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce, aud: 'someone-else' }))
+    expect(res.status).toBe(400)
+  })
+
+  it('separates "who you are" from "may you in": a verified stranger is bounced, not signed in', async () => {
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    const res = await callback(state, cookie, await idToken({ email: 'stranger@example.com', email_verified: true, nonce }))
+
+    // A 302 carrying the *verified* address, so the app can pre-fill a
+    // request-access form with an address Google vouched for rather than one
+    // the visitor typed.
+    expect([res.status, res.headers.get('location')]).toEqual([302, '/?denied=stranger%40example.com'])
+    expect(setCookies(res).some(c => c.startsWith('oa_auth='))).toBe(false)
+  })
+
+  it('refuses a state that is merely a valid session cookie', async () => {
+    // The two token types share a secret and must stay mutually inert.
+    const signedIn = await gate.signIn('staff@openathena.ai', new Request('https://app.test/'))
+    const sessionValue = signedIn!.cookie.split(';')[0]!.split('=')[1]!
+    const res = await callback(sessionValue, 'oa_oidc=whatever', null)
+    expect(res.status).toBe(400)
+  })
+
+  it('pins the algorithm rather than believing the header', async () => {
+    // A genuine RS256 signature under a header that *claims* HS256. The header
+    // is part of the signed input, so the signature verifies — meaning without
+    // the `alg` pin this token is accepted on the strength of a claim it makes
+    // about itself. That is the shape of every JWT algorithm-confusion bug.
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    const header = b64u(enc.encode(JSON.stringify({ alg: 'HS256', kid: 'test-key', typ: 'JWT' })))
+    const payload = b64u(
+      enc.encode(
+        JSON.stringify({
+          iss: 'https://accounts.google.com',
+          aud: CLIENT_ID,
+          exp: Math.floor(Date.now() / 1000) + 300,
+          email: 'staff@openathena.ai',
+          email_verified: true,
+          nonce,
+        }),
+      ),
+    )
+    const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keys.privateKey, enc.encode(`${header}.${payload}`))
+    expect((await callback(state, cookie, `${header}.${payload}.${b64u(sig)}`)).status).toBe(400)
+  })
+
+  it('mints a state that is inert as a session cookie', async () => {
+    // This is the direction that matters: a state is handed to the browser, so
+    // if it doubled as a session it would be a free sign-in. Two independent
+    // things stop it, and mutating either one alone leaves this passing —
+    // `parseSub` accepts only `e:`/`g:` subjects, and even read as a grant,
+    // no grant exists whose id is a nonce. Defence in depth, so stated as
+    // such rather than credited to one guard.
+    const { state } = await start()
+    const auth = await gate.authenticate(new Request('https://app.test/', { headers: { Cookie: `oa_auth=${state}` } }))
+    expect(auth).toBe(null)
+  })
+
+  it('refuses a callback with no code at all', async () => {
+    const res = await oidcCallback(opts(providerFetch(null)))({
+      request: new Request('https://app.test/auth/google/callback'),
+    })
+    expect(res.status).toBe(400)
+  })
+})

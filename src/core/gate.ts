@@ -526,6 +526,12 @@ export function createGate(opts: GateOptions) {
     whoami,
     isAdmin,
     cookieName,
+    /**
+     * The HMAC key, for adapters that need to sign something alongside a
+     * session — the OIDC adapter's `state`, say. Not a widening of exposure:
+     * anyone holding this object can already `signIn` as any address.
+     */
+    secret,
     requestAccess,
     approveRequest,
     denyRequest,

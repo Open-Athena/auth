@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 206 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 223 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -105,6 +105,23 @@ import { ssoHandler } from '@open-athena/auth/cf-access'
 
 export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflareaccess.com', aud: env.ACCESS_AUD })
 ```
+
+**Or skip Access entirely.** `@open-athena/auth/oidc` signs people in against an OIDC provider directly, so the hosted chooser and its generic copy are replaced by a page you own:
+
+```ts
+import { GOOGLE, oidcCallback, oidcStart } from '@open-athena/auth/oidc'
+
+const cfg = { gate, clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET,
+              redirectUri: 'https://app.example.org/auth/google/callback' }
+export const start = oidcStart(cfg)        // -> /auth/google
+export const callback = oidcCallback(cfg)  // -> /auth/google/callback
+```
+
+Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
+
+A verified address that policy rejects redirects with `?denied=<email>` rather than 403ing, which is what lets an app pre-fill request-access with an address the *provider* vouched for instead of one the visitor typed.
+
+There's also a seat argument: every Access-authenticated user consumes a Cloudflare Zero Trust seat, while share links never touch Access at all. A growing allowlist hits that ceiling; this is the way off it.
 
 `ssoSessionHandler` is the same thing for a deployment that can mint sessions but not verify them — the auth store lives in another worker, so there's no gate to hand it. It takes `{ secret, teamDomain, aud, cookieName }` and mints for any Access-verified email; the gate that later verifies the cookie re-derives scopes from `policy` on every request, so authorization isn't being skipped, just deferred to where it can be answered.
 

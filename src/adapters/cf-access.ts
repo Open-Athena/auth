@@ -12,8 +12,8 @@
  * Peers of this file: Google/GitHub OIDC, WorkOS, or no IdP at all
  * (share-links-only). None of them touch `core`.
  */
-import { b64uDecodeBytes, b64uDecodeString } from '../core/base64.js'
 import type { Gate } from '../core/gate.js'
+import { verifyRs256Jwt } from '../core/jwt.js'
 import { emailSub, isSecureRequest, sessionCookie, signSession } from '../core/session.js'
 
 interface JwtHeader {
@@ -41,40 +41,12 @@ export async function verifyAccessJwt(
   expectedAud?: string,
   nowMs = Date.now(),
 ): Promise<string | null> {
-  const parts = jwt.split('.')
-  if (parts.length !== 3) return null
-  const [h, p, s] = parts as [string, string, string]
-
-  let header: JwtHeader
-  try {
-    header = JSON.parse(b64uDecodeString(h)) as JwtHeader
-  } catch {
-    return null
-  }
-  if (header.alg !== 'RS256') return null
-
-  const certs = await fetch(`${teamDomain}/cdn-cgi/access/certs`, { cf: { cacheTtl: 3600 } } as RequestInit).then(
-    r => r.json() as Promise<{ keys: (JsonWebKey & { kid: string })[] }>,
-  )
-  const jwk = certs.keys.find(k => k.kid === header.kid)
-  if (!jwk) return null
-
-  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
-  const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64uDecodeBytes(s), enc.encode(`${h}.${p}`))
-  if (!ok) return null
-
-  let claims: AccessClaims
-  try {
-    claims = JSON.parse(b64uDecodeString(p)) as AccessClaims
-  } catch {
-    return null
-  }
-  if (claims.iss !== teamDomain) return null
-  // `<=`, not `<`: RFC 7519 requires the current time to be *before* `exp`, and
-  // it matches how grant expiry is judged (`expiresAt > nowS`).
-  if (typeof claims.exp !== 'number' || claims.exp * 1000 <= nowMs) return null
-  if (expectedAud && !(Array.isArray(claims.aud) ? claims.aud : [claims.aud]).includes(expectedAud)) return null
-  return typeof claims.email === 'string' ? claims.email : null
+  const claims = await verifyRs256Jwt<AccessClaims & Record<string, unknown>>(jwt, `${teamDomain}/cdn-cgi/access/certs`, {
+    issuer: teamDomain,
+    audience: expectedAud,
+    nowMs,
+  })
+  return typeof claims?.email === 'string' ? claims.email : null
 }
 
 /** Reject absolute and protocol-relative `next` values — an open redirect off a login path. */

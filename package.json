@@ -20,6 +20,10 @@
       "types": "./dist/adapters/d1.d.ts",
       "default": "./dist/adapters/d1.js"
     },
+    "./oidc": {
+      "types": "./dist/adapters/oidc.d.ts",
+      "default": "./dist/adapters/oidc.js"
+    },
     "./cf-access": {
       "types": "./dist/adapters/cf-access.d.ts",
       "default": "./dist/adapters/cf-access.js"

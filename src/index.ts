@@ -11,6 +11,8 @@ export {
 export type { AvatarSource, ResolveAvatarOptions } from './core/avatar.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
+export { verifyRs256Jwt } from './core/jwt.js'
+export type { VerifyJwtOptions } from './core/jwt.js'
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js'
 export type { Gate, GateOptions, MintResult, RedeemFailure, RedeemResult, RequestAccessResult } from './core/gate.js'
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js'
