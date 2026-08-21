@@ -86,6 +86,9 @@ describe('exchange', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
       kind: 'grant',
+      // The grant id is returned to the recipient: it names the session they
+      // are in, and it isn't the secret — the token is.
+      id: minted.body.grant.id,
       name: 'Bob',
       subject: null,
       email: null,

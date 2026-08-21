@@ -25,7 +25,7 @@ export function App() {
             Dashboard
           </Link>
           <Link to="/admin" className={path === '/admin' ? 'on' : ''}>
-            Console
+            Admin
           </Link>
           <a href="https://github.com/Open-Athena/auth">GitHub</a>
         </div>

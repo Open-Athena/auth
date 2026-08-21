@@ -499,6 +499,10 @@ export function createGate(opts: GateOptions) {
       ? { kind: 'sso' as const, email: auth.email, admin: auth.admin, scopes: auth.scopes }
       : {
           kind: 'grant' as const,
+          // The grant id, so a recipient's UI can name the session it is in —
+          // it is not a secret (the token is), and without it a link session
+          // has no identifier a person can quote back to an admin.
+          id: auth.grant.id,
           name: auth.grant.name,
           subject: auth.grant.subject,
           email: auth.grant.email,

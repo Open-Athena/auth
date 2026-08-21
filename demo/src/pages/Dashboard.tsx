@@ -12,7 +12,7 @@ export function Dashboard() {
       source={SOURCE}
       exchange={{ endpoint: '/api/view/exchange' }}
       loading={<p className="muted">Checking your access…</p>}
-      signIn={refresh => <Wall onRetry={refresh} />}
+      signIn={<Wall />}
     >
       {(whoami, refresh) => <Gated whoami={whoami} onLost={refresh} />}
     </AuthGate>
@@ -24,7 +24,7 @@ export function Dashboard() {
  * legitimately lost access self-serves, and the person who shouldn't have it
  * hits a door that names itself.
  */
-function Wall({ onRetry }: { onRetry: () => void }) {
+function Wall() {
   return (
     <div className="wall">
       <h1>This dashboard is private</h1>
@@ -37,9 +37,9 @@ function Wall({ onRetry }: { onRetry: () => void }) {
         <a className="btn primary" href={`/auth/sso?next=${encodeURIComponent('/dashboard')}`}>
           Sign in with SSO
         </a>
-        <button className="btn" type="button" onClick={onRetry}>
-          I just opened a link — retry
-        </button>
+        {/* No "I just opened a link — retry" button: `useWhoami` re-probes on
+            window focus while signed out, so redeeming in another tab is
+            noticed on the way back to this one. */}
       </div>
 
       <details className="note">
@@ -48,7 +48,8 @@ function Wall({ onRetry }: { onRetry: () => void }) {
       </details>
 
       <p className="muted small">
-        Want to try the other side? <Link to="/admin">Mint yourself a link</Link> in the console, then open it here.
+        Want to try the other side? <Link to="/admin">Mint yourself a link</Link> in the admin panel, or{' '}
+        <Link to="/">sign in with any email</Link>.
       </p>
     </div>
   )
@@ -90,8 +91,8 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
 
       <header className="dash-head">
         <div>
-          <h1>{data.title}</h1>
-          <p className="muted small">Updated {data.updated} · invented figures, but shaped like the real thing</p>
+          <h1>You're in.</h1>
+          <p className="muted small">This page is gated. Below is everything the gate knows about you.</p>
         </div>
         {/* No `onSignedOut` on purpose: forgetting the identity is the hook's
             job, and an app-side refresh here would mask a regression in it —
@@ -106,54 +107,39 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
 
       <AccessNotice whoami={whoami} className="disclosure" />
 
-      <div className="totals">
-        {(['committed', 'received', 'pledged'] as const).map(k => (
-          <div key={k} className="stat">
-            <span className="stat-label">{k}</span>
-            <span className="stat-value">{money(data.totals[k])}</span>
+      <dl className="facts">
+        {identityFacts(whoami).map(([k, v]) => (
+          <div key={k}>
+            <dt className="stat-label">{k}</dt>
+            <dd className="stat-value small">{v}</dd>
           </div>
         ))}
+      </dl>
+
+      <div className="placeholder">
+        <p className="muted">The private data would be here.</p>
+        <p className="muted small">
+          It isn't the interesting part — {data.title} is invented. What matters is that this page didn't render until
+          the gate said who you were, and stops rendering the moment that stops being true.
+        </p>
       </div>
 
-      <h2>By fund</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Fund</th>
-            <th className="num">Committed</th>
-            <th className="num">Received</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.funds.map(f => (
-            <tr key={f.name}>
-              <td>{f.name}</td>
-              <td className="num">{money(f.committed)}</td>
-              <td className="num">{money(f.received)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2>Top donors</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Donor</th>
-            <th className="num">Amount</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.donors.map(d => (
-            <tr key={d.name}>
-              <td>{d.name}</td>
-              <td className="num">{money(d.amount)}</td>
-              <td>{d.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h2>Try another way in</h2>
+      <p className="muted small">
+        Sign out and come back through a different door — the page is the same, but what it knows about you isn't. A
+        link minted with a name greets you by it; an anonymous one can't.
+      </p>
+      <ul>
+        <li>
+          <Link to="/">Sign in with any email address</Link> — passwordless, no account row.
+        </li>
+        <li>
+          <Link to="/">Open a named or anonymous demo link</Link> and compare the chip above.
+        </li>
+        <li>
+          <Link to="/admin">Mint your own</Link>, then disable or revoke it and watch this page fall back to the wall.
+        </li>
+      </ul>
 
       <label className="toggle">
         <input type="checkbox" checked={watermark} onChange={e => setWatermark(e.target.checked)} /> Watermark this page
@@ -165,4 +151,26 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
       </p>
     </div>
   )
+}
+
+/** What the gate knows, which is the actual subject of this page. */
+function identityFacts(whoami: AppWhoami): [string, string][] {
+  if (whoami.kind === 'sso') {
+    return [
+      ['How you got in', 'SSO'],
+      ['Subject', `e:${whoami.email}`],
+      ['Scopes', whoami.scopes.join(', ') || 'none'],
+    ]
+  }
+  const person = [whoami.subject?.first, whoami.subject?.last].filter(Boolean).join(' ')
+  return [
+    ['How you got in', 'A share link'],
+    // The real session subject, not a prettified stand-in: a link session is
+    // identified by the *link*, which is exactly what makes it anonymous.
+    ['Session subject', `g:${whoami.id}`],
+    ['Link knows you as', person || whoami.name || '— nothing; this link is anonymous'],
+    ['Link memo', whoami.name ?? '—'],
+    ['Scopes', whoami.scopes.join(', ') || 'none'],
+    ['Expires', whoami.expiresAt ? new Date(whoami.expiresAt * 1000).toLocaleString() : 'never'],
+  ]
 }

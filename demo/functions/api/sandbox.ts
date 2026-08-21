@@ -15,9 +15,25 @@ interface Ctx {
   env: Env
 }
 
+/**
+ * Two words, Docker-style. An identity called `brave-otter` is obviously not a
+ * real account, which does the work a paragraph of explanation was doing: you
+ * can see you're in a sandbox without being told.
+ */
+const ADJECTIVES = [
+  'amber', 'brave', 'calm', 'clever', 'dusty', 'eager', 'fuzzy', 'gentle', 'happy', 'jolly',
+  'keen', 'lucky', 'mellow', 'nimble', 'plucky', 'quiet', 'rapid', 'sunny', 'tidy', 'witty',
+]
+const NOUNS = [
+  'otter', 'falcon', 'maple', 'harbor', 'lantern', 'meadow', 'compass', 'pebble', 'quill', 'ridge',
+  'sparrow', 'thistle', 'walnut', 'willow', 'badger', 'cedar', 'ferry', 'grotto', 'heron', 'juniper',
+]
+
+const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)]!
+
 /** Resume an existing sandbox if one is passed, so a redeemed link doesn't strand it. */
 const idFor = (existing: string | null): string =>
-  existing && /^[a-z0-9]{6,12}$/.test(existing) ? existing : Math.random().toString(36).slice(2, 10)
+  existing && /^[a-z]{3,10}-[a-z]{3,10}$/.test(existing) ? existing : `${pick(ADJECTIVES)}-${pick(NOUNS)}`
 
 export const onRequestPost = async ({ request, env }: Ctx): Promise<Response> => {
   const { adminGate } = gates(env, request)

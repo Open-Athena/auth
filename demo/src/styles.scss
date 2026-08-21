@@ -521,3 +521,21 @@ table {
   color: var(--muted);
   font-weight: 600;
 }
+
+// The gated page's point is the identity, not the fake data — so the data is a
+// deliberate blank and the facts list is what's styled.
+.placeholder {
+  display: grid;
+  place-items: center;
+  gap: 0.4rem;
+  text-align: center;
+  padding: 3rem 1.5rem;
+  margin: 1.5rem 0;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+}
+
+.input {
+  flex: 1 1 14rem;
+}

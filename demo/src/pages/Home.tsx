@@ -1,4 +1,18 @@
+import { useMutation } from '@tanstack/react-query'
+import { type FormEvent, useState } from 'react'
 import { Link } from '../router.js'
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string }
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  return data
+}
 
 export function Home() {
   return (
@@ -7,48 +21,35 @@ export function Home() {
         <code>@open-athena/auth</code>
       </h1>
       <p className="lede">
-        Auth and logging utilities:
+        Named share links, SSO, and an access log for gated pages. Mint a link, name it after the person you're sending
+        it to, and see what they looked at — or let anyone sign in with an email address. No password store, no account
+        table.
       </p>
-      <ul>
-        <li>SSO, email allowlists, magic links</li>
-        <li>"Anyone with the link can view" links (with optional redemption-limits, TTLs, user metadata and event auditing)</li>
-      </ul>
 
-      <div className="cards">
-        <Link to="/admin" className="card">
-          <h3>Be the admin →</h3>
-          <p>
-            Get a throwaway sandbox, mint a named link, watch its activity, then revoke it. You only ever see your own
-            links.
-          </p>
-        </Link>
-        <Link to="/dashboard" className="card">
-          <h3>Be the recipient →</h3>
-          <p>Meet the wall: SSO for staff, request-access for everyone else, or open a link someone minted for you.</p>
-        </Link>
-      </div>
-
-      <h2>The demo worth doing</h2>
-      <ol>
-        <li>
-          Open <Link to="/admin">the console</Link> and start a sandbox.
-        </li>
-        <li>Mint a link named after someone. Copy it.</li>
-        <li>
-          Open it in a <strong>private window</strong> — you'll land on the dashboard, watermarked and told that access
-          is logged.
-        </li>
-        <li>Back in the console, watch the redemption and views appear.</li>
-        <li>
-          Hit <strong>revoke</strong>, then reload the private window. The session dies on its very next request — no
-          waiting out a cookie.
-        </li>
-      </ol>
       <p>
-        That last step is the load-bearing one. Grant-backed sessions re-join their grant row on <em>every</em> request,
-        so a revoked link takes every session it ever minted with it. It's what makes it safe to assume links get
-        forwarded: design so forwarding is visible and revocable rather than prevented, because prevention (one-use
-        links, IP pinning, device binding) reliably breaks legitimate users first.
+        <Link to="/dashboard">The dashboard</Link> is gated. Here are three ways in, all of them real:
+      </p>
+
+      <SignUp />
+      <DemoLinks />
+
+      <p className="muted small">
+        Or <a href="/auth/sso?next=%2Fdashboard">sign in with SSO</a> if you're staff — one Cloudflare Access
+        application on one path, with the rest of the site public at the edge.
+      </p>
+
+      <h2>Where the links come from</h2>
+      <p>
+        Those two links were minted through the same API an admin uses. <Link to="/admin">The admin panel</Link> is the
+        power-user side of this demo: mint a link, watch its activity, disable or revoke it, and see the session die on
+        its very next request. You get a throwaway identity, and only ever see your own links — but the links you mint
+        are real, and work for anyone in the world.
+      </p>
+      <p>
+        Revocation being immediate is the load-bearing part. Grant-backed sessions re-join their grant row on{' '}
+        <em>every</em> request, so a revoked link takes every session it ever minted with it. That's what makes it safe
+        to assume links get forwarded: design so forwarding is visible and revocable rather than prevented, because
+        prevention (one-use links, IP pinning, device binding) reliably breaks legitimate users first.
       </p>
 
       <h2>Two tiers, pick per app</h2>
@@ -98,5 +99,83 @@ export function Home() {
         general-purpose auth framework: no password store, no OAuth server, no RBAC engine.
       </p>
     </div>
+  )
+}
+
+function SignUp() {
+  const [url, setUrl] = useState<string | null>(null)
+  const signUp = useMutation({
+    mutationFn: (email: string) => post<{ url: string }>('/api/signup', { email }),
+    onSuccess: r => setUrl(r.url),
+  })
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const email = new FormData(e.currentTarget).get('email')
+    if (typeof email === 'string' && email) signUp.mutate(email)
+  }
+
+  return (
+    <section className="panel">
+      <h3>Sign in with an email address</h3>
+      <p className="muted small">
+        This demo accepts <em>any</em> address — that's a one-line policy (<code>anyEmailPolicy</code>), and a real
+        deployment swaps it for a domain, an allowlist, or an approval queue. There's no password and no account row:
+        the link is what proves the address, so it normally arrives in the inbox. This demo hands it to you directly,
+        which is the one dishonest step on this page.
+      </p>
+      <form className="row" onSubmit={submit}>
+        <input className="input" name="email" type="email" required placeholder="you@example.com" />
+        <button className="btn primary" type="submit" disabled={signUp.isPending}>
+          {signUp.isPending ? 'Signing in…' : 'Send me a link'}
+        </button>
+      </form>
+      {signUp.error && <p className="err small">{(signUp.error as Error).message}</p>}
+      {url && (
+        <p className="ok small">
+          Your link: <a href={url}>{url}</a>
+        </p>
+      )}
+    </section>
+  )
+}
+
+function DemoLinks() {
+  const [links, setLinks] = useState<Record<string, string>>({})
+  const mint = useMutation({
+    mutationFn: (named: boolean) => post<{ url: string; named: boolean }>('/api/demo-link', { named }),
+    onSuccess: r => setLinks(l => ({ ...l, [String(r.named)]: r.url })),
+  })
+
+  return (
+    <section className="panel">
+      <h3>Or open a link someone minted for you</h3>
+      <p className="muted small">
+        Two links to the same page. One knows who it was minted for; the other doesn't. Open both and compare what the
+        page says about you — that difference is the entire social design of share links, and it's cheaper than any
+        attempt to stop forwarding.
+      </p>
+      <div className="cards">
+        {[
+          { named: true, title: 'A link for Mona Octocat', blurb: 'Carries a name and a face. The page greets her, the watermark repeats her name, and the log records it. Awkward to forward.' },
+          { named: false, title: 'An anonymous link', blurb: 'Carries nothing. Whoever holds it is "whoever holds it" — and forwarding costs the sender nothing at all.' },
+        ].map(({ named, title, blurb }) => (
+          <div key={title} className="card">
+            <h3>{title}</h3>
+            <p>{blurb}</p>
+            {links[String(named)] ? (
+              <p className="ok small">
+                <a href={links[String(named)]}>Open it →</a>
+              </p>
+            ) : (
+              <button className="btn" type="button" disabled={mint.isPending} onClick={() => mint.mutate(named)}>
+                Mint one
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="muted small">Both expire in an hour, and neither limits how many people can open it.</p>
+    </section>
   )
 }

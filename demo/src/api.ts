@@ -32,8 +32,11 @@ export interface SandboxIdentity {
 export const startSandbox = (id: string | null) => post<SandboxIdentity>('/api/sandbox', { id })
 
 export interface MintInput {
-  name: string
+  name: string | null
   note?: string
+  /** Optional recipient identity — becomes the grant's `Subject`. */
+  first?: string
+  last?: string
   scopes: string[]
   maxRedeems: number | null
   expiresInS: number | null
@@ -43,6 +46,8 @@ export const api = {
   grants: () => call<{ grants: Grant[] }>('/api/admin/grants').then(r => r.grants),
   mint: (input: MintInput) => post<{ grant: Grant; token: string }>('/api/admin/grants', input),
   revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
+  disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
+  enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),
   activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),
   log: (limit = 60) => call<{ events: StoredEvent[] }>(`/api/admin/log?limit=${limit}`).then(r => r.events),
   requests: () => call<{ requests: AccessRequest[] }>('/api/admin/requests?status=pending').then(r => r.requests),

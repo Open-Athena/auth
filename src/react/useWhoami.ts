@@ -49,7 +49,16 @@ export function useWhoami<T extends Whoami = Whoami>(
   const query = useQuery<T | null>({
     queryKey: [...WHOAMI_KEY, source.kind, endpoint],
     enabled: enabled && !stubbed,
-    staleTime,
+    /**
+     * Fresh while signed in, always stale while signed out. Someone sitting on
+     * the wall may have just redeemed a link *in another tab* — the cookie is
+     * browser-wide, so this tab only has to look again — while a signed-in page
+     * has no such reason to re-probe. Together with `refetchOnWindowFocus` this
+     * replaces the "I just opened a link — retry" button, which was a
+     * workaround wearing a feature's clothes.
+     */
+    staleTime: q => (q.state.data == null ? 0 : staleTime),
+    refetchOnWindowFocus: true,
     retry: false,
     queryFn: async () => {
       const res = await fetch(endpoint, { credentials: 'include', headers: { accept: 'application/json' } })

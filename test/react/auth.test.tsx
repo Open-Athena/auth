@@ -20,6 +20,7 @@ const realFetch = globalThis.fetch
 const SSO: AppWhoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'] }
 const GRANT: AppWhoami = {
   kind: 'grant',
+  id: 'gTESTgrant01',
   name: 'Bob Smith',
   subject: null,
   email: 'bob@example.com',
@@ -38,10 +39,15 @@ afterEach(() => {
 })
 
 describe('displayName', () => {
-  it('prefers the grant name, then a subject, then the email', () => {
+  it('prefers the person over the memo, then the email', () => {
     const subjectOnly = { ...GRANT, name: null, subject: { first: 'Bob', last: 'Smith' } }
     const emailOnly = { ...GRANT, name: null, subject: null }
+    // The case that motivated the ordering: `name` is an admin's memo about the
+    // link, `subject` is who it was minted for. Preferring the memo rendered
+    // "Private link for Q3 board packet".
+    const both = { ...GRANT, name: 'Q3 board packet', subject: { first: 'Bob', last: 'Smith' } }
     expect([
+      displayName(both),
       displayName(GRANT),
       displayName(subjectOnly),
       displayName(emailOnly),
@@ -50,7 +56,17 @@ describe('displayName', () => {
       displayName({ email: 'e@x.test' }),
       displayName(null),
       displayName(undefined),
-    ]).toEqual(['Bob Smith', 'Bob Smith', 'bob@example.com', 'staff@openathena.ai', 'Edge User', 'e@x.test', null, null])
+    ]).toEqual([
+      'Bob Smith',
+      'Bob Smith',
+      'Bob Smith',
+      'bob@example.com',
+      'staff@openathena.ai',
+      'Edge User',
+      'e@x.test',
+      null,
+      null,
+    ])
   })
 })
 
@@ -336,6 +352,74 @@ describe('signing out', () => {
   })
 })
 
+describe('an anonymous link', () => {
+  const ANON: AppWhoami = { ...GRANT, name: null, subject: null, email: null }
+
+  it('still discloses that access is logged, without inventing a name', () => {
+    // The case where the visitor is least identifiable is the case where the
+    // logging is least expected — dropping the notice here would silence the
+    // disclosure exactly where it matters most.
+    const { container } = renderWithQuery(<AccessNotice whoami={ANON} />)
+    expect(container.textContent).toBe('Private link · access is logged')
+  })
+
+  it('keeps the chip, so sign-out is still reachable', () => {
+    renderWithQuery(<WhoamiChip whoami={ANON} classNames={{ name: 'nm' }} />)
+    expect([
+      document.querySelector('.nm')?.textContent,
+      screen.getByRole('button', { name: 'Sign out' }) !== null,
+    ]).toEqual(['Anonymous link', true])
+  })
+
+  it('renders nothing at all when there is no identity', () => {
+    const { container } = renderWithQuery(
+      <>
+        <AccessNotice whoami={null} />
+        <WhoamiChip whoami={null} />
+      </>,
+    )
+    expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('noticing a sign-in from another tab', () => {
+  it('re-probes on window focus while signed out, and not while signed in', async () => {
+    // The cookie is browser-wide, so a tab sitting on the wall only has to look
+    // again after the *other* tab redeemed a link. This is what replaced the
+    // "I just opened a link — retry" button.
+    let identity: AppWhoami | null = null
+    const calls: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return identity
+        ? new Response(JSON.stringify(identity), { status: 200, headers: { 'content-type': 'application/json' } })
+        : new Response(null, { status: 401 })
+    }) as typeof globalThis.fetch
+
+    renderWithQuery(
+      <AuthGate<AppWhoami> source={{ kind: 'app' }} signIn={<p>APP:wall</p>}>
+        {w => <p>APP:{displayName(w)}</p>}
+      </AuthGate>,
+    )
+    await waitFor(() => expect(screen.getByText('APP:wall')).toBeDefined())
+    const afterFirst = calls.length
+
+    // The other tab redeems; this one gets focus back.
+    identity = GRANT
+    window.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(screen.getByText('APP:Bob Smith')).toBeDefined())
+    expect(calls.length).toBeGreaterThan(afterFirst)
+
+    // Now signed in: focus must not re-probe, since `staleTime` applies again.
+    const afterSignIn = calls.length
+    window.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('focus'))
+    await new Promise(r => setTimeout(r, 50))
+    expect(calls.length).toBe(afterSignIn)
+  })
+})
+
 describe('Avatar', () => {
   it('takes the first and last initial, code-point-safe', () => {
     // `Array.from` rather than `[0]`: an astral-plane first character would
@@ -364,7 +448,8 @@ describe('Avatar', () => {
     expect([img.getAttribute('src'), img.getAttribute('referrerpolicy'), img.getAttribute('alt')]).toEqual([
       'https://cdn.test/bob.png',
       'no-referrer',
-      'Bob Smith',
+      // The subject's name, not the memo `Bob Smith` on the grant.
+      'Bob',
     ])
   })
 })

@@ -78,8 +78,9 @@ function Console({ whoami }: { whoami: AppWhoami }) {
     const days = Number(f.get('days'))
     const max = Number(f.get('max'))
     mint.mutate({
-      name: String(f.get('name') || '').trim() || 'Unnamed link',
-      note: String(f.get('note') || ''),
+      name: String(f.get('name') || '').trim() || null,
+      first: String(f.get('first') || '').trim(),
+      last: String(f.get('last') || '').trim(),
       scopes: ['reports'],
       maxRedeems: max > 0 ? max : null,
       expiresInS: days > 0 ? days * 86400 : null,
@@ -103,12 +104,19 @@ function Console({ whoami }: { whoami: AppWhoami }) {
         <h2>Mint a share link</h2>
         <form className="mint" onSubmit={submit}>
           <label>
-            Name it after the recipient
-            <input name="name" placeholder="Bob Smith (donor)" required />
+            Memo <span className="muted">(what is this link for?)</span>
+            {/* Pre-filled and optional: minting should cost one click. It's a
+                note to whoever reads this table later, not a recipient's name —
+                the recipient's identity is the fields below, when you want it. */}
+            <input name="name" defaultValue={`test-${Math.floor(Date.now() / 1000)}`} />
           </label>
           <label>
-            Note <span className="muted">(why does this exist?)</span>
-            <input name="note" placeholder="Q3 board packet" />
+            Recipient <span className="muted">(optional — puts a name on the page)</span>
+            <input name="first" placeholder="Ada" autoComplete="off" />
+          </label>
+          <label>
+            <span className="muted">Last name</span>
+            <input name="last" placeholder="Lovelace" autoComplete="off" />
           </label>
           <label>
             Expires in

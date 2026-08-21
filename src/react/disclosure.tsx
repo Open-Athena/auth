@@ -22,13 +22,18 @@ export interface AccessNoticeProps {
  * betrayed by discovering the log later, and it empirically dampens casual
  * forwarding harder than technical controls do, because the recipient now knows
  * the link is attributable to them.
+ *
+ * An unnamed link still gets the notice, without the name. Dropping it there
+ * would silence the disclosure in exactly the case where the visitor is least
+ * identifiable and the logging is least expected — which is the promise above,
+ * broken quietly.
  */
 export function AccessNotice({ whoami, logged = true, viewCount = null, className, children }: AccessNoticeProps) {
+  if (!whoami) return null
   const name = displayName(whoami)
-  if (!name) return null
   return (
     <p className={className}>
-      Private link for {name}
+      {name ? `Private link for ${name}` : 'Private link'}
       {logged && ' · access is logged'}
       {viewCount !== null && ` · you've viewed this ${viewCount} ${viewCount === 1 ? 'time' : 'times'}`}
       {children}
