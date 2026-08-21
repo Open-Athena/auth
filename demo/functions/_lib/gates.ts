@@ -14,6 +14,20 @@ import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore } from '@open-a
 export interface Env {
   DB: D1Database
   SESSION_SECRET?: string
+  /** Sending-only Resend key. Absent = the demo shows links instead of mailing them. */
+  RESEND_API_KEY?: string
+  /** `Name <addr@verified-domain>`. */
+  MAIL_FROM?: string
+  /**
+   * Comma-separated recipient domains the demo will actually mail.
+   *
+   * Empty by default, and that default is load-bearing: a public form that
+   * emails *any* address someone types is an unsolicited-mail cannon pointed
+   * at third parties, and the free tier's 100/day would let one visitor burn
+   * the quota and the sending domain's reputation with it. Addresses outside
+   * this list get the link on screen, which is what the demo has always done.
+   */
+  MAIL_DOMAINS?: string
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_AUD?: string
   STAFF_DOMAIN?: string

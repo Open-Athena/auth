@@ -102,11 +102,17 @@ export function Home() {
   )
 }
 
+interface SignUpResult {
+  url?: string
+  sent?: boolean
+  email?: string
+}
+
 function SignUp() {
-  const [url, setUrl] = useState<string | null>(null)
+  const [result, setResult] = useState<SignUpResult | null>(null)
   const signUp = useMutation({
-    mutationFn: (email: string) => post<{ url: string }>('/api/signup', { email }),
-    onSuccess: r => setUrl(r.url),
+    mutationFn: (email: string) => post<SignUpResult>('/api/signup', { email }),
+    onSuccess: setResult,
   })
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -121,8 +127,12 @@ function SignUp() {
       <p className="muted small">
         This demo accepts <em>any</em> address — that's a one-line policy (<code>anyEmailPolicy</code>), and a real
         deployment swaps it for a domain, an allowlist, or an approval queue. There's no password and no account row:
-        the link is what proves the address, so it normally arrives in the inbox. This demo hands it to you directly,
-        which is the one dishonest step on this page.
+        the link <em>is</em> what proves the address, because it arrives in the inbox.
+      </p>
+      <p className="muted small">
+        Mail only actually goes to a short list of domains here — a public form that emails whatever address a stranger
+        types is a spam cannon pointed at other people. Everyone else gets the link on screen, which proves nothing and
+        is the one step a real deployment doesn't take.
       </p>
       <form className="row" onSubmit={submit}>
         <input className="input" name="email" type="email" required placeholder="you@example.com" />
@@ -131,9 +141,16 @@ function SignUp() {
         </button>
       </form>
       {signUp.error && <p className="err small">{(signUp.error as Error).message}</p>}
-      {url && (
+      {result?.sent && (
         <p className="ok small">
-          Your link: <a href={url}>{url}</a>
+          Sent to <strong>{result.email}</strong> — check your inbox. That link is the proof of address; nothing was
+          shown here on purpose.
+        </p>
+      )}
+      {result?.url && (
+        <p className="ok small">
+          Your link: <a href={result.url}>{result.url}</a>{' '}
+          <span className="muted">(shown here because this address isn't on the demo's mail list)</span>
         </p>
       )}
     </section>
