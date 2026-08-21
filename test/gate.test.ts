@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createGate, isActive } from '../src/core/gate.js'
+import { canRedeem, createGate, sessionValid } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
-import { hasScope } from '../src/core/types.js'
+import { type Grant, hasScope } from '../src/core/types.js'
 import { type MemoryAudit, type MemoryStore, logged, memoryAudit, memoryStore } from './memory-store.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -54,7 +54,9 @@ describe('mint', () => {
       sessionTtlS: null,
       createdAt: NOW_S,
       createdBy: 'boss@openathena.ai',
+      disabledAt: null,
       revokedAt: null,
+      expiryEndsSessions: true,
       firstUsedAt: null,
       lastUsedAt: null,
     })
@@ -351,28 +353,47 @@ describe('touch', () => {
   })
 })
 
-describe('isActive', () => {
-  it('ignores redemption caps — those are spent at redeem time only', () => {
-    const base = {
-      id: 'x',
-      name: null,
-      note: null,
-      subject: null,
-      email: null,
-      scopes: ['internal'],
-      redeems: 5,
-      maxRedeems: 1,
-      sessionTtlS: null,
-      createdAt: NOW_S,
-      createdBy: 'boss@openathena.ai',
-      firstUsedAt: null,
-      lastUsedAt: null,
-    }
-    expect([
-      isActive({ ...base, expiresAt: null, revokedAt: null }, NOW_S),
-      isActive({ ...base, expiresAt: NOW_S + 1, revokedAt: null }, NOW_S),
-      isActive({ ...base, expiresAt: NOW_S, revokedAt: null }, NOW_S),
-      isActive({ ...base, expiresAt: null, revokedAt: NOW_S }, NOW_S),
-    ]).toEqual([true, true, false, false])
+describe('canRedeem / sessionValid', () => {
+  const base: Grant = {
+    id: 'x',
+    name: null,
+    note: null,
+    subject: null,
+    email: null,
+    scopes: ['internal'],
+    redeems: 5,
+    maxRedeems: 1,
+    expiresAt: null,
+    sessionTtlS: null,
+    createdAt: NOW_S,
+    createdBy: 'boss@openathena.ai',
+    disabledAt: null,
+    revokedAt: null,
+    expiryEndsSessions: true,
+    firstUsedAt: null,
+    lastUsedAt: null,
+  }
+
+  /** Every state a grant can be in, against both questions. */
+  const CASES: [string, Partial<Grant>, boolean, boolean][] = [
+    //                                                              redeem  session
+    ['fresh', {}, true, true],
+    // The cap is spent in SQL at redeem time, so it shows up in neither
+    // predicate — `redeems: 5, maxRedeems: 1` above is already exhausted.
+    ['exhausted', {}, true, true],
+    ['not yet expired', { expiresAt: NOW_S + 1 }, true, true],
+    ['expired', { expiresAt: NOW_S }, false, false],
+    // The whole point of the flag: expiry closes the door without emptying
+    // the room.
+    ['expired, expiryEndsSessions off', { expiresAt: NOW_S, expiryEndsSessions: false }, false, true],
+    ['disabled', { disabledAt: NOW_S }, false, true],
+    ['revoked', { revokedAt: NOW_S }, false, false],
+    ['revoked and disabled', { revokedAt: NOW_S, disabledAt: NOW_S }, false, false],
+  ]
+
+  it('answers the two questions differently, and that difference is the feature', () => {
+    expect(CASES.map(([label, over]) => [label, canRedeem({ ...base, ...over }, NOW_S), sessionValid({ ...base, ...over }, NOW_S)])).toEqual(
+      CASES.map(([label, , redeem, session]) => [label, redeem, session]),
+    )
   })
 })

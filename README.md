@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 187 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 206 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -109,6 +109,18 @@ export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflare
 `ssoSessionHandler` is the same thing for a deployment that can mint sessions but not verify them — the auth store lives in another worker, so there's no gate to hand it. It takes `{ secret, teamDomain, aud, cookieName }` and mints for any Access-verified email; the gate that later verifies the cookie re-derives scopes from `policy` on every request, so authorization isn't being skipped, just deferred to where it can be answered.
 
 **Revocation is instant.** Grant-backed sessions re-join their grant row on every request, so `gate.revoke(id)` kills every session that link ever minted — no waiting out a cookie TTL. That property is what makes the social story work: assume links get forwarded, and design so forwarding is *visible and revocable* rather than prevented.
+
+**Three verbs, not one**, because "stop handing this out" and "throw everyone out" are different actions:
+
+| | new redemptions | sessions already minted |
+|---|---|---|
+| `disable(id)` / `enable(id)` | ✗ | untouched — and reversible |
+| `revoke(id)` | ✗ | dead on their next request, permanently |
+| `expiresAt` passing | ✗ | dead, unless `expiryEndsSessions: false` |
+
+`expiryEndsSessions` defaults to true — the data-room reading, where "expires Friday" means access ends Friday. Set it false and `expiresAt` becomes purely a redemption window, with each session then living out its own `sessionTtlS`; that's the `maxRedeems: 1` intuition generalised, where a link stops being redeemable the moment it's used without logging anybody out.
+
+`gate.update(id, patch)` changes a link's terms after the fact — expiry, cap, TTL, memo — so extending a deadline doesn't mean minting and re-sending a second link. (`sessionTtlS` is baked into the cookie at redeem, so it only affects future redemptions.)
 
 **The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
 

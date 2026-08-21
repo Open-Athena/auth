@@ -33,7 +33,7 @@ import {
   verifySession,
 } from './session.js'
 import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js'
-import { ALL_SCOPES, type Auth, type Grant, type NewGrant, type Subject } from './types.js'
+import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 
 export interface GateOptions {
@@ -75,7 +75,11 @@ export interface GateOptions {
   }
 }
 
-export type RedeemFailure = 'bad-token' | 'revoked' | 'expired' | 'exhausted'
+export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted'
+
+/** Why a grant was refused — checked in the order an admin would explain it. */
+const denyReason = (grant: Grant): RedeemFailure =>
+  grant.revokedAt ? 'revoked' : grant.disabledAt ? 'disabled' : 'expired'
 
 export type RequestAccessResult =
   /** Policy matched: a grant was minted and handed to `notify` immediately. */
@@ -97,10 +101,34 @@ export interface MintResult {
 
 const sec = (nowMs: number): number => Math.floor(nowMs / 1000)
 
-/** Active = not revoked, not expired. Redemption caps are checked only at redeem time. */
-export function isActive(grant: Grant, nowS: number): boolean {
-  return grant.revokedAt === null && (grant.expiresAt === null || grant.expiresAt > nowS)
+/**
+ * Two different questions, deliberately separated (see migration 0007).
+ *
+ * `canRedeem` — may this link mint a *new* session? Blocked by revoke, by
+ * disable, and by expiry. (Redemption caps are checked in SQL, at redeem time,
+ * so two concurrent opens can't both pass a `maxRedeems: 1` check.)
+ *
+ * `sessionValid` — may a session already minted from this link keep working?
+ * Blocked by revoke always, and by expiry only when the link says so. Disabling
+ * never touches it: "stop handing this out" is not "throw everyone out".
+ */
+export function canRedeem(grant: Grant, nowS: number): boolean {
+  return grant.revokedAt === null && grant.disabledAt === null && !isExpired(grant, nowS)
 }
+
+export function sessionValid(grant: Grant, nowS: number): boolean {
+  if (grant.revokedAt !== null) return false
+  return !(grant.expiryEndsSessions && isExpired(grant, nowS))
+}
+
+const isExpired = (grant: Grant, nowS: number): boolean => grant.expiresAt !== null && grant.expiresAt <= nowS
+
+/**
+ * @deprecated Ambiguous now that redemption and session validity can differ —
+ * it answers the `canRedeem` question. Kept so an adopter's import doesn't
+ * break mid-upgrade.
+ */
+export const isActive = canRedeem
 
 function grantAuth(grant: Grant): Auth {
   return { kind: 'grant', grant, admin: false, scopes: grant.scopes }
@@ -166,8 +194,11 @@ export function createGate(opts: GateOptions) {
         await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS)
         return null
       }
-      if (!isActive(grant, nowS)) {
-        await logWithRequest(req, { event: 'deny', grantId: grant.id, reason: grant.revokedAt ? 'revoked' : 'expired' }, nowS)
+      // A presented token is the *link* being used, not a session being
+      // resumed, so disabling blocks it: "stop letting new people in" has to
+      // include the person still pasting the raw link into curl.
+      if (!canRedeem(grant, nowS)) {
+        await logWithRequest(req, { event: 'deny', grantId: grant.id, reason: denyReason(grant) }, nowS)
         return null
       }
       await store.touch(grant.id, nowS, touchIntervalS)
@@ -191,9 +222,15 @@ export function createGate(opts: GateOptions) {
     }
 
     // Re-join the grant every request: this is what makes revocation instant.
+    // `sessionValid`, not `canRedeem` — a disabled link keeps its existing
+    // sessions alive, and an expired one only ends them if it was minted to.
     const grant = await store.byId(parsed.value)
-    if (!grant || !isActive(grant, nowS)) {
-      await logWithRequest(req, { event: 'deny', grantId: parsed.value, sessionSub: sub, reason: grant?.revokedAt ? 'revoked' : 'expired' }, nowS)
+    if (!grant || !sessionValid(grant, nowS)) {
+      await logWithRequest(
+        req,
+        { event: 'deny', grantId: parsed.value, sessionSub: sub, reason: grant ? denyReason(grant) : 'expired' },
+        nowS,
+      )
       return null
     }
     await store.touch(grant.id, nowS, touchIntervalS)
@@ -226,11 +263,10 @@ export function createGate(opts: GateOptions) {
     }
     const grant = await store.redeem(existing.id, nowS)
     if (!grant) {
-      const reason: RedeemFailure = existing.revokedAt
-        ? 'revoked'
-        : existing.expiresAt !== null && existing.expiresAt <= nowS
-          ? 'expired'
-          : 'exhausted'
+      // The SQL guard failed. Re-read the row we already have to say *why*,
+      // rather than making the store report it: `exhausted` is the residual
+      // case, i.e. the guard failed for a reason the row can't otherwise show.
+      const reason: RedeemFailure = canRedeem(existing, nowS) ? 'exhausted' : denyReason(existing)
       await logWithRequest(req, { event: 'deny', grantId: existing.id, reason }, nowS)
       return { ok: false, reason }
     }
@@ -278,7 +314,9 @@ export function createGate(opts: GateOptions) {
       sessionTtlS: draft.sessionTtlS ?? null,
       createdAt: nowS,
       createdBy: draft.createdBy,
+      disabledAt: null,
       revokedAt: null,
+      expiryEndsSessions: draft.expiryEndsSessions ?? true,
       firstUsedAt: null,
       lastUsedAt: null,
     }
@@ -417,6 +455,44 @@ export function createGate(opts: GateOptions) {
     return ok
   }
 
+  /**
+   * Stop handing out new sessions, without touching the people already inside.
+   * The softer half of `revoke`, and the reversible one — which is why it is
+   * worth having: an admin who suspects a link has leaked can stop the bleeding
+   * without logging out the person legitimately reading the page.
+   */
+  async function disable(id: string, nowMs = Date.now()): Promise<boolean> {
+    const nowS = sec(nowMs)
+    const ok = await store.setDisabled(id, nowS)
+    if (ok) await log({ ts: nowS, event: 'disable', grantId: id })
+    return ok
+  }
+
+  /** Undo `disable`. Does not resurrect a revoked link — revocation is final. */
+  async function enable(id: string, nowMs = Date.now()): Promise<boolean> {
+    const nowS = sec(nowMs)
+    const ok = await store.setDisabled(id, null)
+    if (ok) await log({ ts: nowS, event: 'enable', grantId: id })
+    return ok
+  }
+
+  /**
+   * Change a link's terms after minting. There is no reason expiry, redemption
+   * cap or session TTL should be immutable — an admin extending a deadline
+   * shouldn't have to mint a second link and re-send it.
+   *
+   * `sessionTtlS` is the exception worth knowing about: it is baked into the
+   * cookie at redeem time, so changing it only affects future redemptions.
+   */
+  async function update(id: string, patch: GrantPatch, nowMs = Date.now()): Promise<Grant | null> {
+    const nowS = sec(nowMs)
+    const grant = await store.update(id, patch)
+    // Logged because changing a link's terms is exactly the sort of thing the
+    // ledger exists to show: "who extended this, and when".
+    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(patch).sort().join(',') || null })
+    return grant
+  }
+
   /** The JSON an app hands its frontend. Never includes tokens or hashes. */
   function whoami(auth: Auth) {
     return auth.kind === 'sso'
@@ -439,6 +515,9 @@ export function createGate(opts: GateOptions) {
     signOut,
     mint,
     revoke,
+    disable,
+    enable,
+    update,
     logView,
     whoami,
     isAdmin,

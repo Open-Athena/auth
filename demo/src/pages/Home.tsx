@@ -7,9 +7,12 @@ export function Home() {
         <code>@open-athena/auth</code>
       </h1>
       <p className="lede">
-        Share a sensitive dashboard with a named person via a link — and know what happened. Sessions and SSO are table
-        stakes; the share links and the access log are the point.
+        Auth and logging utilities:
       </p>
+      <ul>
+        <li>SSO, email allowlists, magic links</li>
+        <li>"Anyone with the link can view" links (with optional redemption-limits, TTLs, user metadata and event auditing)</li>
+      </ul>
 
       <div className="cards">
         <Link to="/admin" className="card">

@@ -6,10 +6,12 @@
  * in core so there is one copy of it per rule, not one per backend.
  */
 import type { AccessRequest, RequestStatus } from './requests.js'
-import type { Grant, NewGrant } from './types.js'
+import type { Grant, GrantPatch, NewGrant } from './types.js'
 
 export interface GrantListOpts {
   includeRevoked?: boolean
+  /** Default true, matching `includeRevoked`: a disabled link is still history. */
+  includeDisabled?: boolean
   /**
    * Only grants minted by this identity. Multi-tenant apps (and the demo's
    * per-visitor sandbox) use it to keep one admin out of another's links.
@@ -37,6 +39,13 @@ export interface GrantStore {
   touch(id: string, nowS: number, minIntervalS: number): Promise<void>
   /** Returns false if the grant was already revoked or does not exist. */
   revoke(id: string, nowS: number): Promise<boolean>
+  /**
+   * Set or clear `disabled_at`. Returns false if the grant doesn't exist or is
+   * revoked — revocation is final, so re-enabling past it must not be possible.
+   */
+  setDisabled(id: string, nowS: number | null): Promise<boolean>
+  /** Apply a patch; returns the updated grant, or null if there is no such grant. */
+  update(id: string, patch: GrantPatch): Promise<Grant | null>
   list(opts?: GrantListOpts): Promise<Grant[]>
 }
 

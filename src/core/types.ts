@@ -27,7 +27,16 @@ export interface Grant {
   sessionTtlS: number | null
   createdAt: number
   createdBy: string
+  /** Set = no new redemptions; sessions already minted keep working. */
+  disabledAt: number | null
+  /** Set = no new redemptions, *and* every session it minted dies. */
   revokedAt: number | null
+  /**
+   * Whether `expiresAt` also ends sessions already minted. Default true, which
+   * is the data-room reading of "expires Friday". False makes `expiresAt` a
+   * redemption window only, and a session then lives out its own `sessionTtlS`.
+   */
+  expiryEndsSessions: boolean
   firstUsedAt: number | null
   lastUsedAt: number | null
 }
@@ -41,7 +50,19 @@ export interface NewGrant {
   maxRedeems?: number | null
   expiresAt?: number | null
   sessionTtlS?: number | null
+  /** Default true — see `Grant.expiryEndsSessions`. */
+  expiryEndsSessions?: boolean
   createdBy: string
+}
+
+/** The knobs an admin can change after minting. Everything else is immutable. */
+export interface GrantPatch {
+  name?: string | null
+  note?: string | null
+  expiresAt?: number | null
+  maxRedeems?: number | null
+  sessionTtlS?: number | null
+  expiryEndsSessions?: boolean
 }
 
 export type Auth =

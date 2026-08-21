@@ -44,6 +44,7 @@ export function memoryGrantStore(): MemoryGrantStore {
       const g = rows.get(id)
       if (!g) return null
       if (g.revokedAt !== null) return null
+      if (g.disabledAt !== null) return null
       if (g.expiresAt !== null && g.expiresAt <= nowS) return null
       if (g.maxRedeems !== null && g.redeems >= g.maxRedeems) return null
       const next: Grant = { ...g, redeems: g.redeems + 1, firstUsedAt: g.firstUsedAt ?? nowS, lastUsedAt: nowS }
@@ -62,9 +63,34 @@ export function memoryGrantStore(): MemoryGrantStore {
       rows.set(id, { ...g, revokedAt: nowS })
       return true
     },
+    async setDisabled(id, nowS) {
+      const g = rows.get(id)
+      // Revocation is final: a revoked link can never be re-enabled.
+      if (!g || g.revokedAt !== null) return false
+      rows.set(id, { ...g, disabledAt: nowS })
+      return true
+    },
+    async update(id, patch) {
+      const g = rows.get(id)
+      if (!g) return null
+      const next: Grant = { ...g }
+      if ('name' in patch) next.name = patch.name ?? null
+      if ('note' in patch) next.note = patch.note ?? null
+      if ('expiresAt' in patch) next.expiresAt = patch.expiresAt ?? null
+      if ('maxRedeems' in patch) next.maxRedeems = patch.maxRedeems ?? null
+      if ('sessionTtlS' in patch) next.sessionTtlS = patch.sessionTtlS ?? null
+      if ('expiryEndsSessions' in patch) next.expiryEndsSessions = patch.expiryEndsSessions ?? true
+      rows.set(id, next)
+      return next
+    },
     async list(opts?: GrantListOpts) {
       return [...rows.values()]
-        .filter(g => (opts?.includeRevoked || g.revokedAt === null) && (opts?.createdBy === undefined || g.createdBy === opts.createdBy))
+        .filter(
+          g =>
+            (opts?.includeRevoked || g.revokedAt === null) &&
+            (opts?.includeDisabled !== false || g.disabledAt === null) &&
+            (opts?.createdBy === undefined || g.createdBy === opts.createdBy),
+        )
         .sort((a, b) => b.createdAt - a.createdAt)
     },
   }

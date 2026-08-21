@@ -122,6 +122,66 @@ describe('link lifecycle', () => {
     expect((await app('/api/auth/whoami', { cookie: cookie! })).status).toBe(401)
   })
 
+  it('disable stops new redemptions and leaves the people already inside alone', async () => {
+    // The distinction `disable` exists for: an admin who thinks a link leaked
+    // can stop the bleeding without logging out the person legitimately
+    // reading the page.
+    const { grant, token } = await link()
+    const { cookie } = await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })
+
+    await gate.disable(grant.id)
+    const reopened = await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })
+    expect([reopened.status, reopened.body]).toEqual([401, { error: 'invalid link', reason: 'disabled' }])
+    expect((await app('/api/data', { cookie: cookie! })).status).toBe(200)
+
+    // And it is reversible, unlike revoke.
+    await gate.enable(grant.id)
+    expect((await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })).status).toBe(200)
+  })
+
+  it('a presented token is the link itself, so disabling does block it', async () => {
+    const { grant, token } = await link()
+    expect((await app(`/api/data?key=${token}`)).status).toBe(200)
+    await gate.disable(grant.id)
+    expect((await app(`/api/data?key=${token}`)).status).toBe(401)
+  })
+
+  it('revoke is final: a revoked link cannot be enabled back into service', async () => {
+    const { grant, token } = await link()
+    await gate.revoke(grant.id)
+    expect(await gate.enable(grant.id)).toBe(false)
+    expect((await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })).status).toBe(401)
+  })
+
+  it('`expiryEndsSessions: false` makes expiry a redemption window, not a curfew', async () => {
+    const nowS = Math.floor(Date.now() / 1000)
+    const { grant, token } = await link({ expiresAt: nowS + 3600, expiryEndsSessions: false })
+    const { cookie } = await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })
+
+    await db.prepare('UPDATE grants SET expires_at = ? WHERE id = ?').bind(nowS - 1, grant.id).run()
+    // No new sessions...
+    const after = await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })
+    expect([after.status, after.body]).toEqual([401, { error: 'invalid link', reason: 'expired' }])
+    // ...but the one already minted lives out its own TTL.
+    expect((await app('/api/data', { cookie: cookie! })).status).toBe(200)
+
+    // Revocation still overrides it — that is the difference between the two.
+    await gate.revoke(grant.id)
+    expect((await app('/api/data', { cookie: cookie! })).status).toBe(401)
+  })
+
+  it('an admin can change a link\'s terms after minting', async () => {
+    const nowS = Math.floor(Date.now() / 1000)
+    const { grant, token } = await link({ maxRedeems: 1 })
+    expect((await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })).status).toBe(200)
+    expect((await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })).status).toBe(401)
+
+    // Raising the cap revives the link without re-minting or re-sending it.
+    const updated = await gate.update(grant.id, { maxRedeems: 3, expiresAt: nowS + 60 })
+    expect([updated!.maxRedeems, updated!.expiresAt]).toEqual([3, nowS + 60])
+    expect((await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })).status).toBe(200)
+  })
+
   it('counts redemptions, not requests', async () => {
     const { grant, token } = await link()
     const { cookie } = await app('/api/auth/exchange', { method: 'POST', body: JSON.stringify({ token }) })

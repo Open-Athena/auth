@@ -11,7 +11,7 @@ import type { AuditQuery } from './store.js'
 import type { Gate } from './gate.js'
 import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
 import { cleanSubject } from './requests.js'
-import { hasScope } from './types.js'
+import { type GrantPatch, hasScope } from './types.js'
 
 export interface RouteOptions {
   /** Default `/api/auth`. */
@@ -189,6 +189,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           maxRedeems: number | null
           expiresInS: number | null
           sessionTtlS: number | null
+          expiryEndsSessions: boolean
         }>(req)
         if (!b.scopes?.length) return json({ error: 'scopes required' }, 400)
         // Unlike the request form, the supplier here is an admin, so an avatar
@@ -205,6 +206,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           maxRedeems: b.maxRedeems ?? null,
           expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
           sessionTtlS: b.sessionTtlS ?? null,
+          expiryEndsSessions: b.expiryEndsSessions ?? true,
           createdBy: creatorOf(a),
         })
         // The only time the raw token is ever visible.
@@ -216,6 +218,32 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
         return json({ ok: await gate.revoke(id) })
+      }
+
+      // Disable/enable are the reversible half: they stop new redemptions and
+      // leave anyone already reading the page alone.
+      if (id && (seg[2] === 'disable' || seg[2] === 'enable') && method === 'POST') {
+        const owned = await ownedGrant(id, a)
+        if (owned instanceof Response) return owned
+        return json({ ok: seg[2] === 'disable' ? await gate.disable(id) : await gate.enable(id) })
+      }
+
+      if (id && seg.length === 2 && method === 'PATCH') {
+        const owned = await ownedGrant(id, a)
+        if (owned instanceof Response) return owned
+        const b = await body<GrantPatch>(req)
+        // Whitelisted, not spread: a PATCH body is admin-supplied but still
+        // untrusted structure, and `scopes`/`createdBy` are not negotiable
+        // after minting.
+        const patch: GrantPatch = {}
+        if ('name' in b) patch.name = b.name ?? null
+        if ('note' in b) patch.note = b.note ?? null
+        if ('expiresAt' in b) patch.expiresAt = b.expiresAt ?? null
+        if ('maxRedeems' in b) patch.maxRedeems = b.maxRedeems ?? null
+        if ('sessionTtlS' in b) patch.sessionTtlS = b.sessionTtlS ?? null
+        if ('expiryEndsSessions' in b) patch.expiryEndsSessions = !!b.expiryEndsSessions
+        const grant = await gate.update(id, patch)
+        return grant ? json({ grant }) : json({ error: 'not found' }, 404)
       }
 
       if (id && seg[2] === 'activity' && method === 'GET') {
