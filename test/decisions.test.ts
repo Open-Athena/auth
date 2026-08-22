@@ -153,7 +153,7 @@ describe('gate.decide', () => {
 
 describe('reversal', () => {
   it('deny-wins: a deny takes back the grant, it does not merely relabel the row', async () => {
-    const gate = build()
+    const gate = build({ reversal: 'deny-wins' })
     const { approve, deny } = await pending(gate)
     await gate.decide(approve, { commit: true, nowMs: T0 })
     const granted = events.find(e => e.kind === 'access-granted')
@@ -174,7 +174,7 @@ describe('reversal', () => {
   })
 
   it('deny-wins: an approve never overrides a deny', async () => {
-    const gate = build()
+    const gate = build({ reversal: 'deny-wins' })
     const { approve, deny } = await pending(gate)
     await gate.decide(deny, { commit: true, nowMs: T0 })
 
@@ -184,8 +184,8 @@ describe('reversal', () => {
     expect(events.filter(e => e.kind === 'access-granted').length).toBe(0)
   })
 
-  it('first-wins: nothing reverses', async () => {
-    const gate = build({ reversal: 'first-wins' })
+  it('first-wins is the default: nothing reverses, and no window is consulted', async () => {
+    const gate = build()
     const { approve, deny } = await pending(gate)
     await gate.decide(approve, { commit: true, nowMs: T0 })
 
@@ -209,7 +209,7 @@ describe('reversal', () => {
   })
 
   it('stops reversing once the window closes', async () => {
-    const gate = build({ reversalWindowS: 600 })
+    const gate = build({ reversal: 'deny-wins', reversalWindowS: 600 })
     const { approve, deny } = await pending(gate)
     await gate.decide(approve, { commit: true, nowMs: T0 })
 
@@ -218,7 +218,7 @@ describe('reversal', () => {
 
     // A fresh request, decided and then left alone past the window.
     events = []
-    const gate2 = build({ reversalWindowS: 600 })
+    const gate2 = build({ reversal: 'deny-wins', reversalWindowS: 600 })
     const b = await pending(gate2)
     await gate2.decide(b.approve, { commit: true, nowMs: T0 })
     const outside = await gate2.decide(b.deny, { commit: true, nowMs: T0 + 601_000 })

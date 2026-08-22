@@ -80,15 +80,15 @@ For the **opposite verb**, three configurable modes (`decisionLinks.reversal`):
 
 | mode | behaviour |
 |---|---|
-| `deny-wins` *(default)* | A deny within `reversalWindowS` overrides an earlier approve. An approve never overrides a deny. |
-| `first-wins` | The first decision is final; the opposite verb renders the outcome and changes nothing. |
+| `first-wins` *(default)* | The first decision is final; the opposite verb renders the outcome and changes nothing. `reversalWindowS` is unused. |
+| `deny-wins` | A deny within `reversalWindowS` overrides an earlier approve. An approve never overrides a deny. |
 | `last-wins` | Either verb overrides the other, within the window. |
 
-Default is `deny-wins` because the two errors are not symmetric: an accidental
-approve is a security incident, an accidental deny is an inconvenience someone
-fixes by asking again. `reversalWindowS` defaults to **1 hour** — long enough to
-notice a fat-finger, short enough that a stale mail can't yank access from
-someone who has been working all week.
+Default is `first-wins`: one rule, no clock. A misclick is not unrecoverable
+under it, just fixed elsewhere — an accidental approve by revoking the grant in
+the admin UI, an accidental deny by approving the re-request. That beats a
+second, time-dependent rule that only helps whoever clicks twice within the
+hour. `reversalWindowS` defaults to 1 hour for the modes that consult it.
 
 **A reversal must revoke, not just relabel.** By the time a deny lands, the
 approve has already mailed a working magic link. `request.grantId` records which
@@ -134,7 +134,7 @@ until `decisionLinks` is present.
 createGate({
   decisionLinks: {
     ttlS: 7 * 86400,               // link validity
-    reversal: 'deny-wins',         // | 'first-wins' | 'last-wins'
+    reversal: 'first-wins',        // | 'deny-wins' | 'last-wins'
     reversalWindowS: 3600,
     requireAuth: false,
     appName: 'this site',
@@ -172,10 +172,11 @@ emailNotify({
 - [ ] A token for request A rejected on request B.
 - [ ] Expired token → the same page as a forged one.
 - [ ] Same verb twice → "already", no second grant, no second mail.
+- [ ] `first-wins` (default): neither verb reverses, and no window is consulted.
 - [ ] `deny-wins`: deny after approve revokes the minted grant; a live session
       dies on its next request.
 - [ ] `deny-wins`: approve after deny changes nothing.
-- [ ] `first-wins` / `last-wins` behave as tabulated.
+- [ ] `last-wins` behaves as tabulated.
 - [ ] Outside `reversalWindowS`, no mode reverses.
 - [ ] `requireAuth: true` rejects an unauthenticated POST.
 - [ ] `decidedBy` is `'email-link'`, never a fabricated identity.

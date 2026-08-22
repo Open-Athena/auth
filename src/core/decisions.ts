@@ -22,14 +22,21 @@ export type DecisionVerb = 'approve' | 'deny'
 /** How a second, opposite decision is treated. See `reversalWindowS`. */
 export type ReversalMode =
   /**
-   * Default. A deny within the window overrides an earlier approve; an approve
-   * never overrides a deny. The asymmetry is the point: an accidental approve
-   * is a security incident, an accidental deny is an inconvenience someone
-   * fixes by asking again.
+   * Default. The first decision is final, and `reversalWindowS` is unused —
+   * one rule, no clock.
+   *
+   * A misclick is not unrecoverable under this mode, it is just fixed
+   * somewhere else: an accidental approve is undone by revoking the grant in
+   * the admin UI, an accidental deny by approving the re-request. That is a
+   * better trade than a second, time-dependent rule that only applies to
+   * whoever clicks twice within the hour.
+   */
+  | 'first-wins'
+  /**
+   * A deny within the window overrides an earlier approve; an approve never
+   * overrides a deny.
    */
   | 'deny-wins'
-  /** The first decision is final. */
-  | 'first-wins'
   /** Either verb overrides the other, within the window. */
   | 'last-wins'
 
@@ -39,8 +46,7 @@ export interface DecisionLinkOptions {
   reversal?: ReversalMode
   /**
    * How long after a decision the opposite verb may still reverse it. Default
-   * 1 hour: long enough to catch a fat-finger, short enough that a stale mail
-   * can't yank access from someone who has been working all week.
+   * 1 hour. Ignored under `first-wins`, which is the default mode.
    */
   reversalWindowS?: number
   /**

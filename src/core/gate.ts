@@ -514,7 +514,7 @@ export function createGate(opts: GateOptions) {
       return done ? { kind: 'decided', verb, request: done, reversed: false } : settled()
     }
 
-    if (!mayReverse(request, verb, cfg.reversal ?? 'deny-wins', cfg.reversalWindowS ?? DEFAULT_REVERSAL_WINDOW_S, nowS))
+    if (!mayReverse(request, verb, cfg.reversal ?? 'first-wins', cfg.reversalWindowS ?? DEFAULT_REVERSAL_WINDOW_S, nowS))
       return { kind: 'already', verb, request }
 
     if (verb === 'approve') {
