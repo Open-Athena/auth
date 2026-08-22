@@ -48,6 +48,14 @@ export interface EmailNotifyOptions {
   /** Where an admin reviews the queue, linked from the notification. */
   adminUrl?: string
   /**
+   * Builds the URL for an approve/deny link. Required for those buttons to
+   * appear; without it a gate configured with `decisionLinks` still mints
+   * tokens, but the notification has nowhere to point them.
+   *
+   * The app owns its URL space, so it owns this — same reasoning as `linkFor`.
+   */
+  decideUrlFor?: (token: string) => string
+  /**
    * Gates *recipient* delivery, and nothing else.
    *
    * A deployment often can't or shouldn't mail every address someone types —
@@ -92,6 +100,7 @@ export function emailNotify(opts: EmailNotifyOptions): Notify {
     appName = 'this site',
     linkFor,
     adminUrl,
+    decideUrlFor,
     deliverTo = () => true,
     onUndelivered = () => {},
     onError = () => {},
@@ -133,6 +142,11 @@ export function emailNotify(opts: EmailNotifyOptions): Notify {
       case 'access-requested': {
         if (!adminTo) return null
         const { email, name, note } = event.request
+        const who = name ? `${name} <${email}>` : email
+        const links =
+          event.decision && decideUrlFor
+            ? { approve: decideUrlFor(event.decision.approve), deny: decideUrlFor(event.decision.deny) }
+            : null
         return {
           to: adminTo,
           subject: `Access request from ${email}`,
@@ -140,10 +154,12 @@ export function emailNotify(opts: EmailNotifyOptions): Notify {
           // admin wants to do first.
           replyTo: email,
           text: [
-            `${name ? `${name} <${email}>` : email} asked for access to ${appName}.`,
+            `${who} asked for access to ${appName}.`,
             ...(note ? [``, `They said: ${note}`] : []),
-            ...(adminUrl ? [``, `Approve or deny: ${adminUrl}`] : []),
+            ...(links ? [``, `Approve: ${links.approve}`, `Deny:    ${links.deny}`] : []),
+            ...(adminUrl ? [``, `All requests: ${adminUrl}`] : []),
           ].join('\n'),
+          ...(links ? { html: requestHtml(who, note, links, appName, adminUrl) } : {}),
         }
       }
 
@@ -157,3 +173,32 @@ export function emailNotify(opts: EmailNotifyOptions): Notify {
 }
 
 const greeting = (name: string | null): string => (name ? `Hi ${name.split(' ')[0]},` : 'Hi,')
+
+/**
+ * Inline styles only, and a table for the buttons: mail clients strip `<style>`
+ * blocks and Outlook ignores most of flexbox. Ugly, and the only thing that
+ * renders the same in Gmail, Apple Mail and Outlook.
+ */
+function requestHtml(
+  who: string,
+  note: string | null,
+  links: { approve: string; deny: string },
+  appName: string,
+  adminUrl?: string,
+): string {
+  const btn = (href: string, label: string, bg: string) =>
+    `<a href="${esc(href)}" style="display:inline-block; padding:10px 22px; margin-right:10px; border-radius:6px; background:${bg}; color:#fff; font-weight:600; text-decoration:none">${label}</a>`
+  return [
+    `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif; font-size:15px; line-height:1.5; color:#111">`,
+    `<p><strong>${esc(who)}</strong> asked for access to ${esc(appName)}.</p>`,
+    note ? `<blockquote style="margin:0 0 16px; padding:8px 14px; border-left:3px solid #ddd; color:#444">${esc(note)}</blockquote>` : '',
+    `<p style="margin:24px 0">${btn(links.approve, 'Approve', '#1a7f37')}${btn(links.deny, 'Deny', '#a40e26')}</p>`,
+    `<p style="font-size:13px; color:#666">You'll get a confirmation page before anything is decided.${
+      adminUrl ? ` <a href="${esc(adminUrl)}" style="color:#666">All requests</a>.` : ''
+    }</p>`,
+    `</div>`,
+  ].join('')
+}
+
+const esc = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')

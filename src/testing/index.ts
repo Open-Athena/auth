@@ -123,6 +123,13 @@ export function memoryRequestStore(): MemoryRequestStore {
       rows.set(id, next)
       return next
     },
+    async reverse(id, { from, status, decidedBy, grantId, nowS }) {
+      const r = rows.get(id)
+      if (!r || r.status !== from) return null
+      const next: AccessRequest = { ...r, status: status as RequestStatus, decidedAt: nowS, decidedBy, grantId }
+      rows.set(id, next)
+      return next
+    },
     async list(opts?: RequestListOpts) {
       return [...rows.values()]
         .filter(r => !opts?.status || r.status === opts.status)

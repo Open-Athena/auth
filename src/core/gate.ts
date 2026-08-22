@@ -33,6 +33,17 @@ import {
   verifySession,
 } from './session.js'
 import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js'
+import {
+  DEFAULT_DECISION_TTL_S,
+  DEFAULT_REVERSAL_WINDOW_S,
+  type DecisionLinkOptions,
+  type DecisionVerb,
+  type DecisionView,
+  EMAIL_LINK_ACTOR,
+  mayReverse,
+  mintDecisionTokens,
+  readDecisionToken,
+} from './decisions.js'
 import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 
@@ -66,6 +77,11 @@ export interface GateOptions {
   /** Where approvals and notifications go. Default: nowhere. */
   notify?: Notify
   rateLimit?: RateLimit
+  /**
+   * Enables approve/deny links in the `access-requested` notification, so an
+   * admin can decide from their mail client. Absent = feature off.
+   */
+  decisionLinks?: DecisionLinkOptions
   /** Shape of the grant minted when a request is approved. */
   approvalGrant?: {
     scopes?: string[]
@@ -410,7 +426,10 @@ export function createGate(opts: GateOptions) {
 
     await requests.insert(request, meta.ipHash)
     await log({ ts: nowS, ...meta, event: 'request', sessionSub: emailSub(email) })
-    await notify({ kind: 'access-requested', request })
+    const decision = opts.decisionLinks
+      ? await mintDecisionTokens(request.id, opts.secret, nowMs, opts.decisionLinks.ttlS ?? DEFAULT_DECISION_TTL_S)
+      : undefined
+    await notify({ kind: 'access-requested', request, decision })
     return { status: 'pending', request }
   }
 
@@ -446,6 +465,95 @@ export function createGate(opts: GateOptions) {
     })
     if (request) await notify({ kind: 'access-denied', request })
     return request
+  }
+
+  /**
+   * Resolve a decision link. The whole state machine, in one place.
+   *
+   * `commit` is the GET/POST split, and it is load-bearing rather than
+   * stylistic: mail scanners fetch every URL in a message, so a read-only
+   * `commit: false` pass is what stops Outlook Safe Links from approving
+   * requests on an admin's behalf.
+   *
+   * Kept a plain function returning a plain view so a Slack action handler is a
+   * thin caller rather than a second copy of these rules.
+   */
+  async function decide(
+    token: string,
+    o: { commit?: boolean; actor?: string | null; nowMs?: number } = {},
+  ): Promise<DecisionView> {
+    const cfg = opts.decisionLinks
+    if (!cfg) return { kind: 'invalid' }
+    const nowMs = o.nowMs ?? Date.now()
+    const parsed = await readDecisionToken(token, opts.secret, nowMs)
+    if (!parsed) return { kind: 'invalid' }
+    const { verb, requestId } = parsed
+
+    const requests = requestStore()
+    const request = await requests.byId(requestId)
+    if (!request) return { kind: 'invalid' }
+    if (!o.commit) return { kind: 'confirm', verb, request, token }
+    if (cfg.requireAuth && !o.actor) return { kind: 'unauthorized', token }
+
+    const actor = o.actor ?? EMAIL_LINK_ACTOR
+    const nowS = sec(nowMs)
+
+    // Lost a race, or clicked a verb this mode won't honour. Either way the
+    // answer is the same: show what happened, change nothing.
+    const settled = async (): Promise<DecisionView> => {
+      const fresh = await requests.byId(requestId)
+      return fresh ? { kind: 'already', verb, request: fresh } : { kind: 'invalid' }
+    }
+
+    if (request.status === 'pending') {
+      if (verb === 'approve') {
+        const done = await approveRequest(requestId, actor, {}, nowMs)
+        return done ? { kind: 'decided', verb, request: done.request, reversed: false } : settled()
+      }
+      const done = await denyRequest(requestId, actor, nowMs)
+      return done ? { kind: 'decided', verb, request: done, reversed: false } : settled()
+    }
+
+    if (!mayReverse(request, verb, cfg.reversal ?? 'deny-wins', cfg.reversalWindowS ?? DEFAULT_REVERSAL_WINDOW_S, nowS))
+      return { kind: 'already', verb, request }
+
+    if (verb === 'approve') {
+      // Mint before the compare-and-swap, revoke if the swap loses — the same
+      // ordering `approveRequest` uses, for the same reason: a grant that
+      // nothing points at must not stay usable.
+      const scopes = opts.approvalGrant?.scopes ?? []
+      const { grant, token: fresh } = await grantFor(request, scopes, actor, nowMs)
+      const updated = await requests.reverse(requestId, {
+        from: request.status,
+        status: 'approved',
+        decidedBy: actor,
+        grantId: grant.id,
+        nowS,
+      })
+      if (!updated) {
+        await store.revoke(grant.id, nowS)
+        return settled()
+      }
+      await notify({ kind: 'access-granted', request: updated, grant, token: fresh })
+      return { kind: 'decided', verb, request: updated, reversed: true }
+    }
+
+    const updated = await requests.reverse(requestId, {
+      from: request.status,
+      status: 'denied',
+      decidedBy: actor,
+      // Kept, not cleared: which grant was minted is the useful half of the
+      // audit trail once it has been taken back.
+      grantId: request.grantId,
+      nowS,
+    })
+    if (!updated) return settled()
+    // The reversal that matters. By now the approve has already mailed a working
+    // link, so flipping a status column without revoking would leave the grant
+    // live and the page claiming otherwise.
+    if (request.grantId) await revoke(request.grantId, nowMs)
+    await notify({ kind: 'access-denied', request: updated })
+    return { kind: 'decided', verb, request: updated, reversed: true }
   }
 
   async function revoke(id: string, nowMs = Date.now()): Promise<boolean> {
@@ -535,6 +643,7 @@ export function createGate(opts: GateOptions) {
     requestAccess,
     approveRequest,
     denyRequest,
+    decide,
     list: (o?: GrantListOpts) => store.list(o),
     listRequests: (o?: RequestListOpts) => requestStore().list(o),
   }

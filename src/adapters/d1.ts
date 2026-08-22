@@ -262,6 +262,18 @@ export function d1RequestStore(db: D1Database): RequestStore {
       return row ? toRequest(row) : null
     },
 
+    async reverse(id, { from, status, decidedBy, grantId, nowS }) {
+      const row = await db
+        .prepare(
+          `UPDATE access_requests SET status = ?, decided_at = ?, decided_by = ?, grant_id = ?
+            WHERE id = ? AND status = ?
+            RETURNING ${REQ_COLS}`,
+        )
+        .bind(status, nowS, decidedBy, grantId, id, from)
+        .first<RequestRow>()
+      return row ? toRequest(row) : null
+    },
+
     async list(opts) {
       const where = opts?.status ? 'WHERE status = ?' : ''
       const binds = opts?.status ? [opts.status] : []

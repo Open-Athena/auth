@@ -11,6 +11,17 @@ export {
 export type { AvatarSource, ResolveAvatarOptions } from './core/avatar.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
+export { renderDecisionPage } from './core/decision-page.js'
+export type { DecisionPageOptions } from './core/decision-page.js'
+export {
+  DEFAULT_DECISION_TTL_S,
+  DEFAULT_REVERSAL_WINDOW_S,
+  EMAIL_LINK_ACTOR,
+  mayReverse,
+  mintDecisionTokens,
+  readDecisionToken,
+} from './core/decisions.js'
+export type { DecisionLinkOptions, DecisionVerb, DecisionView, ReversalMode } from './core/decisions.js'
 export { emailNotify } from './core/email.js'
 export type { EmailMessage, EmailNotifyOptions, SendEmail, SendResult } from './core/email.js'
 export { verifyRs256Jwt } from './core/jwt.js'

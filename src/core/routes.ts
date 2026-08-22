@@ -6,6 +6,8 @@
  * Everything here is presentation-free JSON: the wall, the admin table and the
  * copy around them are per-app and get vendored, per share-links §6.
  */
+import { type DecisionPageOptions, renderDecisionPage } from './decision-page.js'
+import type { DecisionView } from './decisions.js'
 import type { Auth } from './types.js'
 import type { AuditQuery } from './store.js'
 import type { Gate } from './gate.js'
@@ -37,6 +39,10 @@ export interface RouteOptions {
   scopeToCreator?: (auth: Auth) => string | undefined
   /** Hidden form field that only a bot fills in. Default `website`. */
   honeypotField?: string
+  /** Replaces the built-in approve/deny page wholesale. */
+  decisionPage?: (view: DecisionView, opts: DecisionPageOptions) => Response
+  /** Shown in the approve/deny page's copy. */
+  decisionAppName?: string
   /**
    * Enables `POST <basePath>/avatar`, which resolves a Gravatar/GitHub/explicit
    * avatar for the admin UI to preview *before* minting. Only ever fetches
@@ -69,6 +75,19 @@ async function body<T>(req: Request): Promise<Partial<T>> {
   return (await req.json().catch(() => ({}))) as Partial<T>
 }
 
+/**
+ * The decision page posts a real `<form>`, so this endpoint has to read
+ * `application/x-www-form-urlencoded` as well as JSON — a mail client is not
+ * going to send `fetch` with a JSON body.
+ */
+async function formOrJson(req: Request): Promise<Record<string, string>> {
+  const ct = req.headers.get('content-type') ?? ''
+  if (ct.includes('json')) return (await req.json().catch(() => ({}))) as Record<string, string>
+  const form = await req.formData().catch(() => null)
+  if (!form) return {}
+  return Object.fromEntries([...form.entries()].map(([k, v]) => [k, String(v)]))
+}
+
 const defaultCreator = (auth: Auth): string => (auth.kind === 'sso' ? auth.email : `g:${auth.grant.id}`)
 
 export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
@@ -80,6 +99,8 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     scopeToCreator,
     honeypotField = 'website',
     avatarLookup = false,
+    decisionPage,
+    decisionAppName,
   } = opts
 
   return async function handle(req: Request): Promise<Response | null> {
@@ -159,6 +180,23 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (res.status === 'rate-limited') return json({ status: 'rate-limited', error: 'too many requests; try later' }, 429)
       // Never echo the request id or token back to an unauthenticated submitter.
       return json({ status: res.status })
+    }
+
+    // Decision links, reached from a mail client. GET renders a confirmation
+    // page and commits nothing — mail scanners (Outlook Safe Links, corporate
+    // gateways, antivirus) fetch every URL in a message, and a GET that decided
+    // would let them approve requests in an admin's name. POST commits.
+    if (rest === '/decide' && (method === 'GET' || method === 'POST')) {
+      const token =
+        method === 'GET' ? (url.searchParams.get('t') ?? '') : ((await formOrJson(req)).t ?? '')
+      const view = await gate.decide(token, {
+        commit: method === 'POST',
+        // Only ever an authenticated admin; `requireAuth` decides whether the
+        // absence of one is fatal.
+        actor: auth && hasScope(auth, adminScope) && auth.kind === 'sso' ? auth.email : null,
+      })
+      const render = decisionPage ?? renderDecisionPage
+      return render(view, { appName: decisionAppName, action: `${basePath}/decide` })
     }
 
     // ---- admin --------------------------------------------------------------

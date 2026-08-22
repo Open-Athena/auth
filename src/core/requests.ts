@@ -38,8 +38,12 @@ export interface AccessRequest {
 export type Notify = (event: NotifyEvent) => Promise<void>
 
 export type NotifyEvent =
-  /** Someone is waiting on an admin. */
-  | { kind: 'access-requested'; request: AccessRequest }
+  /**
+   * Someone is waiting on an admin. `decision` is present when the gate is
+   * configured with `decisionLinks`, and carries one bearer token per verb so
+   * the notification can be acted on without visiting the app.
+   */
+  | { kind: 'access-requested'; request: AccessRequest; decision?: { approve: string; deny: string } }
   /** A grant exists for them; `token` appears here and nowhere else, ever again. */
   | { kind: 'access-granted'; request: AccessRequest; grant: Grant; token: string }
   | { kind: 'access-denied'; request: AccessRequest }

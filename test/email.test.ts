@@ -103,7 +103,7 @@ describe('emailNotify', () => {
       '',
       'They said: reviewing Q3',
       '',
-      'Approve or deny: https://app.test/admin',
+      'All requests: https://app.test/admin',
     ])
   })
 

@@ -64,6 +64,18 @@ export interface RequestStore {
     id: string,
     decision: { status: RequestStatus; decidedBy: string; grantId: string | null; nowS: number },
   ): Promise<AccessRequest | null>
+  /**
+   * Overwrite an existing decision, guarded on the status it is replacing.
+   *
+   * Separate from `decide` because that one is guarded on `status = 'pending'`
+   * — the property that keeps two admins clicking approve at once from minting
+   * two grants. Reversal needs the same compare-and-swap against a *decided*
+   * row, so it gets its own method rather than loosening that guard.
+   */
+  reverse(
+    id: string,
+    decision: { from: RequestStatus; status: RequestStatus; decidedBy: string; grantId: string | null; nowS: number },
+  ): Promise<AccessRequest | null>
   list(opts?: RequestListOpts): Promise<AccessRequest[]>
   /** Rate-limit support: requests from this email or IP since `sinceS`. */
   countSince(sinceS: number, by: { email?: string; ipHash?: string | null }): Promise<number>
