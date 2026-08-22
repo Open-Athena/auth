@@ -13,6 +13,11 @@
  * 100/day quota — and the sending domain's reputation with it — in a minute.
  * Everyone else gets the link on screen, with the UI saying plainly that
  * handing it back is the one step a real deployment doesn't do.
+ *
+ * That allowlist gates *delivery to the requester* and nothing else. Admin
+ * notifications go out either way, via `emailNotify`'s `deliverTo` — mailing a
+ * stranger is the risk, mailing ourselves never is, and a sign-up from outside
+ * our domains is precisely the one an admin wants to hear about.
  */
 import { anyEmailPolicy, createGate, emailNotify } from '@open-athena/auth'
 import { d1AuditSink, d1GrantStore, d1RequestStore } from '@open-athena/auth/d1'
@@ -41,6 +46,7 @@ export const onRequestPost = async ({ request, env }: Ctx): Promise<Response> =>
   const { secret } = gates(env, request)
   const origin = new URL(request.url).origin
   const linkFor = (token: string) => `${origin}/dashboard?key=${token}`
+  const canSend = Boolean(env.RESEND_API_KEY && env.MAIL_FROM)
   const send = mailable(email, env)
 
   let delivered: string | null = null
@@ -56,12 +62,18 @@ export const onRequestPost = async ({ request, env }: Ctx): Promise<Response> =>
     cookieName: VIEW_COOKIE,
     policy: anyEmailPolicy([VIEW_SCOPE]),
     approvalGrant: { scopes: [VIEW_SCOPE], expiresInS: 7 * 86400 },
-    notify: send
+    notify: canSend
       ? emailNotify({
           send: resendEmail({ apiKey: env.RESEND_API_KEY! }),
           from: env.MAIL_FROM!,
+          adminTo: env.MAIL_ADMIN_TO,
           appName: 'the @open-athena/auth demo',
           linkFor,
+          adminUrl: `${origin}/admin`,
+          deliverTo: addr => mailable(addr, env),
+          onUndelivered: e => {
+            delivered = e.token
+          },
           onError: e => {
             mailError = e
           },

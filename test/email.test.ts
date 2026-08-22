@@ -8,6 +8,8 @@ import { resendEmail } from '../src/adapters/resend.js'
 import { type EmailMessage, emailNotify } from '../src/core/email.js'
 import { createGate } from '../src/core/gate.js'
 import { anyEmailPolicy, domainPolicy } from '../src/core/policy.js'
+import type { Grant } from '../src/core/types.js'
+import type { AccessRequest } from '../src/core/requests.js'
 import { memoryAudit, memoryRequestStore, memoryStore } from './memory-store.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -46,6 +48,21 @@ const req = () => new Request('https://app.test/request', { headers: { 'CF-Conne
 beforeEach(() => {
   sent = []
   fail = null
+})
+
+const GRANT = { id: 'g1' } as unknown as Grant
+
+const pending = (email: string): AccessRequest => ({
+  id: 'r1',
+  email,
+  name: null,
+  subject: null,
+  note: null,
+  createdAt: 0,
+  status: 'pending',
+  decidedAt: null,
+  decidedBy: null,
+  grantId: null,
 })
 
 describe('emailNotify', () => {
@@ -106,6 +123,33 @@ describe('emailNotify', () => {
     // A denial notice confirms to a prober that the address exists and that a
     // human looked, and carries nothing actionable for a real requester.
     expect(sent).toEqual([])
+  })
+
+  it('withholds the link from an address it will not mail, and hands back the token instead', async () => {
+    // The allowlist case: a public form must not mail every address a stranger
+    // types. `onUndelivered` is what lets the caller show the link on screen.
+    const undelivered: string[] = []
+    const n = notify({
+      adminTo: 'boss@openathena.ai',
+      deliverTo: addr => addr.endsWith('@openathena.ai'),
+      onUndelivered: e => undelivered.push(e.token),
+    })
+    await n({ kind: 'access-granted', request: pending('stranger@elsewhere.test'), grant: GRANT, token: 'tok_abc' })
+
+    expect(sent).toEqual([])
+    expect(undelivered).toEqual(['tok_abc'])
+  })
+
+  it('tells the admin about a request it would never mail the requester about', async () => {
+    // The regression this guards: gating admin notifications on the same
+    // predicate as recipient delivery drops exactly the requests worth seeing —
+    // the ones from outside your own domains.
+    const n = notify({ adminTo: 'boss@openathena.ai', deliverTo: () => false })
+    await n({ kind: 'access-requested', request: pending('stranger@elsewhere.test') })
+
+    expect(sent.map(m => [m.to, m.replyTo, m.subject])).toEqual([
+      ['boss@openathena.ai', 'stranger@elsewhere.test', 'Access request from stranger@elsewhere.test'],
+    ])
   })
 
   it('surfaces a send failure without failing the sign-up that triggered it', async () => {

@@ -48,6 +48,28 @@ export interface EmailNotifyOptions {
   /** Where an admin reviews the queue, linked from the notification. */
   adminUrl?: string
   /**
+   * Gates *recipient* delivery, and nothing else.
+   *
+   * A deployment often can't or shouldn't mail every address someone types —
+   * a staging instance that only mails staff, a public demo that would
+   * otherwise be an unsolicited-mail cannon aimed at third parties. Returning
+   * false suppresses the `access-granted` mail to that address.
+   *
+   * Admin notifications are deliberately *not* subject to this. Mailing a
+   * stranger is the risk; mailing yourself never is, and the requests most
+   * worth hearing about are exactly the ones from outside your own domains.
+   * Gating both on one predicate silently drops those.
+   *
+   * Default: everyone.
+   */
+  deliverTo?: (email: string) => boolean
+  /**
+   * Called instead of sending, when `deliverTo` returns false. The token is on
+   * the event; an app that wants to show the link on screen rather than mail it
+   * takes it from here.
+   */
+  onUndelivered?: (event: Extract<NotifyEvent, { kind: 'access-granted' }>) => void
+  /**
    * Called when a send fails. Default: swallow. A failed notification must not
    * fail the request that triggered it — the grant is already minted, and
    * throwing here would turn "the mail didn't go out" into "sign-up is broken".
@@ -63,9 +85,23 @@ export interface EmailNotifyOptions {
  * admin who approved it, and not into a log line.
  */
 export function emailNotify(opts: EmailNotifyOptions): Notify {
-  const { send, from, adminTo, appName = 'this site', linkFor, adminUrl, onError = () => {} } = opts
+  const {
+    send,
+    from,
+    adminTo,
+    appName = 'this site',
+    linkFor,
+    adminUrl,
+    deliverTo = () => true,
+    onUndelivered = () => {},
+    onError = () => {},
+  } = opts
 
   return async (event: NotifyEvent): Promise<void> => {
+    if (event.kind === 'access-granted' && !deliverTo(event.request.email)) {
+      onUndelivered(event)
+      return
+    }
     const msg = compose(event)
     if (!msg) return
     const res = await send({ from, ...msg }).catch(e => ({ ok: false as const, error: String(e) }))

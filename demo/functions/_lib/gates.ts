@@ -28,6 +28,13 @@ export interface Env {
    * this list get the link on screen, which is what the demo has always done.
    */
   MAIL_DOMAINS?: string
+  /**
+   * Where access requests are announced. Unset = no admin mail.
+   *
+   * Deliberately independent of `MAIL_DOMAINS`: this address is the operator's
+   * own, so there is no stranger to protect from it.
+   */
+  MAIL_ADMIN_TO?: string
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_AUD?: string
   STAFF_DOMAIN?: string
