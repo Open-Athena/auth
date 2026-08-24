@@ -6,9 +6,11 @@
  * in core so there is one copy of it per rule, not one per backend.
  */
 import type { AccessRequest, RequestStatus } from './requests.js';
-import type { Grant, NewGrant } from './types.js';
+import type { Grant, GrantPatch, NewGrant } from './types.js';
 export interface GrantListOpts {
     includeRevoked?: boolean;
+    /** Default true, matching `includeRevoked`: a disabled link is still history. */
+    includeDisabled?: boolean;
     /**
      * Only grants minted by this identity. Multi-tenant apps (and the demo's
      * per-visitor sandbox) use it to keep one admin out of another's links.
@@ -35,6 +37,13 @@ export interface GrantStore {
     touch(id: string, nowS: number, minIntervalS: number): Promise<void>;
     /** Returns false if the grant was already revoked or does not exist. */
     revoke(id: string, nowS: number): Promise<boolean>;
+    /**
+     * Set or clear `disabled_at`. Returns false if the grant doesn't exist or is
+     * revoked — revocation is final, so re-enabling past it must not be possible.
+     */
+    setDisabled(id: string, nowS: number | null): Promise<boolean>;
+    /** Apply a patch; returns the updated grant, or null if there is no such grant. */
+    update(id: string, patch: GrantPatch): Promise<Grant | null>;
     list(opts?: GrantListOpts): Promise<Grant[]>;
 }
 export interface RequestListOpts {
@@ -48,6 +57,21 @@ export interface RequestStore {
     insert(request: AccessRequest, ipHash: string | null): Promise<void>;
     /** Records the decision; returns null if the row was already decided by someone else. */
     decide(id: string, decision: {
+        status: RequestStatus;
+        decidedBy: string;
+        grantId: string | null;
+        nowS: number;
+    }): Promise<AccessRequest | null>;
+    /**
+     * Overwrite an existing decision, guarded on the status it is replacing.
+     *
+     * Separate from `decide` because that one is guarded on `status = 'pending'`
+     * — the property that keeps two admins clicking approve at once from minting
+     * two grants. Reversal needs the same compare-and-swap against a *decided*
+     * row, so it gets its own method rather than loosening that guard.
+     */
+    reverse(id: string, decision: {
+        from: RequestStatus;
         status: RequestStatus;
         decidedBy: string;
         grantId: string | null;

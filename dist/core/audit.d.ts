@@ -1,4 +1,4 @@
-export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'revoke' | 'request' | 'view' | 'signin' | 'signout';
+export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'disable' | 'enable' | 'update' | 'revoke' | 'request' | 'view' | 'signin' | 'signout';
 export interface AccessEvent {
     ts: number;
     event: AccessEventKind;
@@ -12,9 +12,10 @@ export interface AccessEvent {
     country?: string | null;
     referer?: string | null;
     /**
-     * Event detail. On `deny`: `expired`, `revoked`, `exhausted`, `bad-token`,
-     * `not-allowed`. On `mint`: the actor, when it isn't an email (`policy`) and
-     * so can't be a `sessionSub`.
+     * Event detail. On `deny`: `expired`, `revoked`, `disabled`, `exhausted`,
+     * `bad-token`, `not-allowed`. On `mint`: the actor, when it isn't an email
+     * (`policy`) and so can't be a `sessionSub`. On `update`: the comma-separated
+     * field names that changed, so the ledger shows *what* was altered.
      */
     reason?: string | null;
 }

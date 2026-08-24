@@ -11,7 +11,8 @@ import { type AuditSink } from './audit.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
 import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js';
-import { ALL_SCOPES, type Auth, type Grant, type NewGrant } from './types.js';
+import { type DecisionLinkOptions, type DecisionView } from './decisions.js';
+import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js';
 export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
@@ -42,6 +43,11 @@ export interface GateOptions {
     /** Where approvals and notifications go. Default: nowhere. */
     notify?: Notify;
     rateLimit?: RateLimit;
+    /**
+     * Enables approve/deny links in the `access-requested` notification, so an
+     * admin can decide from their mail client. Absent = feature off.
+     */
+    decisionLinks?: DecisionLinkOptions;
     /** Shape of the grant minted when a request is approved. */
     approvalGrant?: {
         scopes?: string[];
@@ -50,7 +56,7 @@ export interface GateOptions {
         sessionTtlS?: number | null;
     };
 }
-export type RedeemFailure = 'bad-token' | 'revoked' | 'expired' | 'exhausted';
+export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
 export type RequestAccessResult = 
 /** Policy matched: a grant was minted and handed to `notify` immediately. */
 {
@@ -82,8 +88,25 @@ export interface MintResult {
     /** The raw token. Returned exactly once — only its hash is stored. */
     token: string;
 }
-/** Active = not revoked, not expired. Redemption caps are checked only at redeem time. */
-export declare function isActive(grant: Grant, nowS: number): boolean;
+/**
+ * Two different questions, deliberately separated (see migration 0007).
+ *
+ * `canRedeem` — may this link mint a *new* session? Blocked by revoke, by
+ * disable, and by expiry. (Redemption caps are checked in SQL, at redeem time,
+ * so two concurrent opens can't both pass a `maxRedeems: 1` check.)
+ *
+ * `sessionValid` — may a session already minted from this link keep working?
+ * Blocked by revoke always, and by expiry only when the link says so. Disabling
+ * never touches it: "stop handing this out" is not "throw everyone out".
+ */
+export declare function canRedeem(grant: Grant, nowS: number): boolean;
+export declare function sessionValid(grant: Grant, nowS: number): boolean;
+/**
+ * @deprecated Ambiguous now that redemption and session validity can differ —
+ * it answers the `canRedeem` question. Kept so an adopter's import doesn't
+ * break mid-upgrade.
+ */
+export declare const isActive: typeof canRedeem;
 export declare function createGate(opts: GateOptions): {
     authenticate: (req: Request, nowMs?: number, { logView: shouldLogView }?: {
         logView?: boolean;
@@ -96,19 +119,24 @@ export declare function createGate(opts: GateOptions): {
     signOut: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string>;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
+    disable: (id: string, nowMs?: number) => Promise<boolean>;
+    enable: (id: string, nowMs?: number) => Promise<boolean>;
+    update: (id: string, patch: GrantPatch, nowMs?: number) => Promise<Grant | null>;
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
     whoami: (auth: Auth) => {
         kind: "sso";
         email: string;
         admin: boolean;
         scopes: string[];
+        id?: undefined;
         name?: undefined;
         subject?: undefined;
         expiresAt?: undefined;
     } | {
         kind: "grant";
+        id: string;
         name: string | null;
-        subject: import("./types.js").Subject | null;
+        subject: Subject | null;
         email: string | null;
         scopes: string[];
         admin: boolean;
@@ -116,10 +144,17 @@ export declare function createGate(opts: GateOptions): {
     };
     isAdmin: (email: string) => boolean;
     cookieName: string;
+    /**
+     * The HMAC key, for adapters that need to sign something alongside a
+     * session — the OIDC adapter's `state`, say. Not a widening of exposure:
+     * anyone holding this object can already `signIn` as any address.
+     */
+    secret: string;
     requestAccess: (input: {
         email: string;
         name?: string | null;
         note?: string | null;
+        subject?: Subject | null;
     }, req: Request, nowMs?: number) => Promise<RequestAccessResult>;
     approveRequest: (id: string, approvedBy: string, override?: {
         scopes?: string[];
@@ -129,6 +164,11 @@ export declare function createGate(opts: GateOptions): {
         token: string;
     } | null>;
     denyRequest: (id: string, deniedBy: string, nowMs?: number) => Promise<AccessRequest | null>;
+    decide: (token: string, o?: {
+        commit?: boolean;
+        actor?: string | null;
+        nowMs?: number;
+    }) => Promise<DecisionView>;
     list: (o?: GrantListOpts) => Promise<Grant[]>;
     listRequests: (o?: RequestListOpts) => Promise<AccessRequest[]>;
 };

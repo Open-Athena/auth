@@ -1,5 +1,5 @@
 import { formatScopes, parseScopes } from '../core/types.js';
-const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, revoked_at, first_used_at, last_used_at';
+const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, first_used_at, last_used_at';
 function parseSubject(json) {
     if (!json)
         return null;
@@ -25,7 +25,9 @@ const toGrant = (r) => ({
     sessionTtlS: r.session_ttl,
     createdAt: r.created_at,
     createdBy: r.created_by,
+    disabledAt: r.disabled_at,
     revokedAt: r.revoked_at,
+    expiryEndsSessions: r.expiry_ends_sessions !== 0,
     firstUsedAt: r.first_used_at,
     lastUsedAt: r.last_used_at,
 });
@@ -42,9 +44,9 @@ export function d1GrantStore(db) {
         async insert(g, tokenHash) {
             await db
                 .prepare(`INSERT INTO grants (id, token_hash, name, note, subject_json, email, scopes, max_redeems, redeems,
-                               expires_at, session_ttl, created_at, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`)
-                .bind(g.id, tokenHash, g.name, g.note, g.subject ? JSON.stringify(g.subject) : null, g.email, formatScopes(g.scopes), g.maxRedeems, g.expiresAt, g.sessionTtlS, g.createdAt, g.createdBy)
+                               expires_at, session_ttl, created_at, created_by, expiry_ends_sessions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`)
+                .bind(g.id, tokenHash, g.name, g.note, g.subject ? JSON.stringify(g.subject) : null, g.email, formatScopes(g.scopes), g.maxRedeems, g.expiresAt, g.sessionTtlS, g.createdAt, g.createdBy, g.expiryEndsSessions ? 1 : 0)
                 .run();
         },
         async redeem(id, nowS) {
@@ -58,6 +60,7 @@ export function d1GrantStore(db) {
                   last_used_at = ?
             WHERE id = ?
               AND revoked_at IS NULL
+              AND disabled_at IS NULL
               AND (expires_at IS NULL OR expires_at > ?)
               AND (max_redeems IS NULL OR redeems < max_redeems)
             RETURNING ${COLS}`)
@@ -75,11 +78,47 @@ export function d1GrantStore(db) {
             const res = await db.prepare(`UPDATE grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(nowS, id).run();
             return (res.meta?.changes ?? 0) > 0;
         },
+        async setDisabled(id, nowS) {
+            // Guarded on `revoked_at IS NULL`: revocation is final, so a disabled
+            // link can be re-enabled but a revoked one can never be resurrected.
+            const res = await db
+                .prepare(`UPDATE grants SET disabled_at = ? WHERE id = ? AND revoked_at IS NULL`)
+                .bind(nowS, id)
+                .run();
+            return (res.meta?.changes ?? 0) > 0;
+        },
+        async update(id, patch) {
+            const cols = {};
+            if ('name' in patch)
+                cols.name = patch.name ?? null;
+            if ('note' in patch)
+                cols.note = patch.note ?? null;
+            if ('expiresAt' in patch)
+                cols.expires_at = patch.expiresAt ?? null;
+            if ('maxRedeems' in patch)
+                cols.max_redeems = patch.maxRedeems ?? null;
+            if ('sessionTtlS' in patch)
+                cols.session_ttl = patch.sessionTtlS ?? null;
+            if ('expiryEndsSessions' in patch)
+                cols.expiry_ends_sessions = patch.expiryEndsSessions ? 1 : 0;
+            const entries = Object.entries(cols);
+            // An empty patch is a read, not a no-op write: callers get the row back
+            // either way, so `update(id, {})` doesn't have to be special-cased.
+            if (!entries.length)
+                return await this.byId(id);
+            const row = await db
+                .prepare(`UPDATE grants SET ${entries.map(([c]) => `${c} = ?`).join(', ')} WHERE id = ? RETURNING ${COLS}`)
+                .bind(...entries.map(([, v]) => v), id)
+                .first();
+            return row ? toGrant(row) : null;
+        },
         async list(opts) {
             const where = [];
             const binds = [];
             if (!opts?.includeRevoked)
                 where.push('revoked_at IS NULL');
+            if (opts?.includeDisabled === false)
+                where.push('disabled_at IS NULL');
             if (opts?.createdBy !== undefined) {
                 where.push('created_by = ?');
                 binds.push(opts.createdBy);
@@ -92,11 +131,12 @@ export function d1GrantStore(db) {
         },
     };
 }
-const REQ_COLS = 'id, email, name, note, created_at, status, decided_at, decided_by, grant_id';
+const REQ_COLS = 'id, email, name, subject_json, note, created_at, status, decided_at, decided_by, grant_id';
 const toRequest = (r) => ({
     id: r.id,
     email: r.email,
     name: r.name,
+    subject: parseSubject(r.subject_json),
     note: r.note,
     createdAt: r.created_at,
     status: r.status,
@@ -119,9 +159,9 @@ export function d1RequestStore(db) {
         },
         async insert(r, ipHash) {
             await db
-                .prepare(`INSERT INTO access_requests (id, email, name, note, created_at, status, decided_at, decided_by, grant_id, ip_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                .bind(r.id, r.email, r.name, r.note, r.createdAt, r.status, r.decidedAt, r.decidedBy, r.grantId, ipHash)
+                .prepare(`INSERT INTO access_requests (id, email, name, subject_json, note, created_at, status, decided_at, decided_by, grant_id, ip_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .bind(r.id, r.email, r.name, r.subject ? JSON.stringify(r.subject) : null, r.note, r.createdAt, r.status, r.decidedAt, r.decidedBy, r.grantId, ipHash)
                 .run();
         },
         async decide(id, { status, decidedBy, grantId, nowS }) {
@@ -132,6 +172,15 @@ export function d1RequestStore(db) {
             WHERE id = ? AND status = 'pending'
             RETURNING ${REQ_COLS}`)
                 .bind(status, nowS, decidedBy, grantId, id)
+                .first();
+            return row ? toRequest(row) : null;
+        },
+        async reverse(id, { from, status, decidedBy, grantId, nowS }) {
+            const row = await db
+                .prepare(`UPDATE access_requests SET status = ?, decided_at = ?, decided_by = ?, grant_id = ?
+            WHERE id = ? AND status = ?
+            RETURNING ${REQ_COLS}`)
+                .bind(status, nowS, decidedBy, grantId, id, from)
                 .first();
             return row ? toRequest(row) : null;
         },

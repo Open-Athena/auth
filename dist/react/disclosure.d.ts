@@ -20,6 +20,11 @@ export interface AccessNoticeProps {
  * betrayed by discovering the log later, and it empirically dampens casual
  * forwarding harder than technical controls do, because the recipient now knows
  * the link is attributable to them.
+ *
+ * An unnamed link still gets the notice, without the name. Dropping it there
+ * would silence the disclosure in exactly the case where the visitor is least
+ * identifiable and the logging is least expected — which is the promise above,
+ * broken quietly.
  */
 export declare function AccessNotice({ whoami, logged, viewCount, className, children }: AccessNoticeProps): import("react").JSX.Element | null;
 export interface WatermarkProps {

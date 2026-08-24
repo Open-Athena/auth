@@ -1,8 +1,13 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js';
 export { nullAudit, requestMeta } from './core/audit.js';
+export { MAX_INLINE_AVATAR_BYTES, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, resolveAvatar, } from './core/avatar.js';
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js';
-export { ALL_SCOPES, createGate, isActive } from './core/gate.js';
-export { DEFAULT_RATE_LIMIT, isEmailish, noopNotify } from './core/requests.js';
+export { renderDecisionPage } from './core/decision-page.js';
+export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './core/decisions.js';
+export { emailNotify } from './core/email.js';
+export { verifyRs256Jwt } from './core/jwt.js';
+export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
+export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';
 export { authRoutes } from './core/routes.js';
 export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
 export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, } from './core/session.js';

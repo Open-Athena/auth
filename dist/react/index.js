@@ -1,4 +1,5 @@
 export { AuthGate } from './AuthGate.js';
+export { Avatar, initialsOf } from './Avatar.js';
 export { AccessNotice, Watermark } from './disclosure.js';
 export { exchangeKeyParam, hasKeyParam, useKeyExchange } from './exchange.js';
 export { RequestAccessForm } from './RequestAccessForm.js';

@@ -1,3 +1,17 @@
+/**
+ * Cloudflare Access as an SSO IdP — the *only* CF-gated path in the Tier-2
+ * shape. Everything else is public at the edge; this endpoint trades an Access
+ * identity for a first-party session cookie and bounces back.
+ *
+ * We verify the RS256 `Cf-Access-Jwt-Assertion` ourselves rather than trusting
+ * `Cf-Access-Authenticated-User-Email`, for two reasons: the friendly header is
+ * not forwarded through Pages origin-to-origin proxying, and full verification
+ * keeps the identity trustworthy even if the edge gating is later
+ * misconfigured or removed.
+ *
+ * Peers of this file: Google/GitHub OIDC, WorkOS, or no IdP at all
+ * (share-links-only). None of them touch `core`.
+ */
 import type { Gate } from '../core/gate.js';
 /**
  * Verify an Access JWT against the Zero Trust team's public certs and return

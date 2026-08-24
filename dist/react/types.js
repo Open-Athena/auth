@@ -3,7 +3,14 @@ export const DEFAULT_ENDPOINTS = {
     app: '/api/auth/whoami',
 };
 /**
- * Best available human label: the grant's name, then its subject, then an email.
+ * Best available human label: the *person* first, then the link's memo, then an
+ * email.
+ *
+ * Subject before name, because they answer different questions. `name` is an
+ * admin's memo — "Q3 board packet", "test-1756800000" — written for the table
+ * it appears in, while `subject` is who the link was minted *for*. Preferring
+ * the memo meant a link with both rendered "Private link for Q3 board packet",
+ * which is the wrong noun in the wrong sentence.
  *
  * `EdgeWhoami`'s index signature makes the union un-narrowable by `kind` alone
  * (every member structurally admits a `kind` field), so this reads fields off a
@@ -16,7 +23,7 @@ export function displayName(whoami) {
     if (w.kind === 'grant') {
         const subject = w.subject ?? {};
         const full = [subject.first, subject.last].filter(Boolean).join(' ');
-        return w.name ?? (full || null) ?? subject.email ?? w.email ?? null;
+        return full || w.name || subject.email || w.email || null;
     }
     if (w.kind === 'sso')
         return w.email ?? null;

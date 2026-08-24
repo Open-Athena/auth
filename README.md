@@ -18,7 +18,7 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 177 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 231 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
@@ -32,9 +32,9 @@ Backend kernel, request-access, the HTTP route surface, the React primitives, an
 ```
 src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
 src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
-src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / disclosure — unstyled
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / disclosure — unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
-migrations/     grants, access_log, access_requests, access_log_daily, dedupe index
+migrations/     grants, access_log, access_requests, access_log_daily, dedupe index, request subject
 demo/           a working Tier-2 app on Pages + Functions + D1
 ```
 
@@ -106,13 +106,64 @@ import { ssoHandler } from '@open-athena/auth/cf-access'
 export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflareaccess.com', aud: env.ACCESS_AUD })
 ```
 
+**Or skip Access entirely.** `@open-athena/auth/oidc` signs people in against an OIDC provider directly, so the hosted chooser and its generic copy are replaced by a page you own:
+
+```ts
+import { GOOGLE, oidcCallback, oidcStart } from '@open-athena/auth/oidc'
+
+const cfg = { gate, clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET,
+              redirectUri: 'https://app.example.org/auth/google/callback' }
+export const start = oidcStart(cfg)        // -> /auth/google
+export const callback = oidcCallback(cfg)  // -> /auth/google/callback
+```
+
+Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
+
+A verified address that policy rejects redirects with `?denied=<email>` rather than 403ing, which is what lets an app pre-fill request-access with an address the *provider* vouched for instead of one the visitor typed.
+
+There's also a seat argument: every Access-authenticated user consumes a Cloudflare Zero Trust seat, while share links never touch Access at all. A growing allowlist hits that ceiling; this is the way off it.
+
 `ssoSessionHandler` is the same thing for a deployment that can mint sessions but not verify them — the auth store lives in another worker, so there's no gate to hand it. It takes `{ secret, teamDomain, aud, cookieName }` and mints for any Access-verified email; the gate that later verifies the cookie re-derives scopes from `policy` on every request, so authorization isn't being skipped, just deferred to where it can be answered.
 
 **Revocation is instant.** Grant-backed sessions re-join their grant row on every request, so `gate.revoke(id)` kills every session that link ever minted — no waiting out a cookie TTL. That property is what makes the social story work: assume links get forwarded, and design so forwarding is *visible and revocable* rather than prevented.
 
+**Three verbs, not one**, because "stop handing this out" and "throw everyone out" are different actions:
+
+| | new redemptions | sessions already minted |
+|---|---|---|
+| `disable(id)` / `enable(id)` | ✗ | untouched — and reversible |
+| `revoke(id)` | ✗ | dead on their next request, permanently |
+| `expiresAt` passing | ✗ | dead, unless `expiryEndsSessions: false` |
+
+`expiryEndsSessions` defaults to true — the data-room reading, where "expires Friday" means access ends Friday. Set it false and `expiresAt` becomes purely a redemption window, with each session then living out its own `sessionTtlS`; that's the `maxRedeems: 1` intuition generalised, where a link stops being redeemable the moment it's used without logging anybody out.
+
+`gate.update(id, patch)` changes a link's terms after the fact — expiry, cap, TTL, memo — so extending a deadline doesn't mean minting and re-sending a second link. (`sessionTtlS` is baked into the cookie at redeem, so it only affects future redemptions.)
+
 **The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
 
+**Magic links / passwordless sign-up.** `anyEmailPolicy` auto-approves any address, mints a grant bound to it, and hands it to `notify` — which becomes a real sign-in flow once `notify` can send mail:
+
+```ts
+import { emailNotify } from '@open-athena/auth'
+import { resendEmail } from '@open-athena/auth/resend'
+
+notify: emailNotify({
+  send: resendEmail({ apiKey: env.RESEND_API_KEY }),
+  from: 'Reports <auth@example.org>',
+  adminTo: 'boss@example.org',                                  // access-requested goes here
+  linkFor: token => `https://reports.example.org/?key=${token}`,
+})
+```
+
+No password store and no account table: **delivery is the verification.** A link sent to the claimed address proves mailbox control; a link handed straight back to whoever typed the address proves nothing — which is why the demo, having no ESP, is explicit that showing you the link is the one dishonest step on the page.
+
+The `access-granted` message is the only place a token is ever rendered, and it goes to the bound address alone — not to the admin who approved it, not into a log, and not into the subject line. Denials send nothing: a denial notice confirms to a prober that the address exists and that a human looked, and carries nothing actionable for a real requester.
+
+`SendEmail` is one method, so Postmark or SES is a sibling file rather than a refactor. (MailChannels' free Workers integration ended in 2024, so an ESP is a real dependency now.)
+
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
+
+**Request access** collects an address, and optionally a person: `<RequestAccessForm askName="split" />` posts first/last, stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the watermark says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
 
 **On the frontend**, `@open-athena/auth/react` ships the logic and leaves the presentation to you — every string and class is a prop, and no CSS is bundled:
 

@@ -6,9 +6,12 @@
  * Everything here is presentation-free JSON: the wall, the admin table and the
  * copy around them are per-app and get vendored, per share-links §6.
  */
+import { type DecisionPageOptions } from './decision-page.js';
+import type { DecisionView } from './decisions.js';
 import type { Auth } from './types.js';
 import type { AuditQuery } from './store.js';
 import type { Gate } from './gate.js';
+import { type ResolveAvatarOptions } from './avatar.js';
 export interface RouteOptions {
     /** Default `/api/auth`. */
     basePath?: string;
@@ -33,5 +36,18 @@ export interface RouteOptions {
     scopeToCreator?: (auth: Auth) => string | undefined;
     /** Hidden form field that only a bot fills in. Default `website`. */
     honeypotField?: string;
+    /** Replaces the built-in approve/deny page wholesale. */
+    decisionPage?: (view: DecisionView, opts: DecisionPageOptions) => Response;
+    /** Shown in the approve/deny page's copy. */
+    decisionAppName?: string;
+    /**
+     * Enables `POST <basePath>/avatar`, which resolves a Gravatar/GitHub/explicit
+     * avatar for the admin UI to preview *before* minting. Only ever fetches
+     * gravatar.com and github.com, so it is not a general fetch proxy.
+     *
+     * Off by default: it makes an outbound request per call, which a deployment
+     * should opt into rather than discover.
+     */
+    avatarLookup?: boolean | ResolveAvatarOptions;
 }
 export declare function authRoutes(gate: Gate, opts?: RouteOptions): (req: Request) => Promise<Response | null>;

@@ -6,12 +6,17 @@ import { displayName } from './types.js';
  * betrayed by discovering the log later, and it empirically dampens casual
  * forwarding harder than technical controls do, because the recipient now knows
  * the link is attributable to them.
+ *
+ * An unnamed link still gets the notice, without the name. Dropping it there
+ * would silence the disclosure in exactly the case where the visitor is least
+ * identifiable and the logging is least expected — which is the promise above,
+ * broken quietly.
  */
 export function AccessNotice({ whoami, logged = true, viewCount = null, className, children }) {
-    const name = displayName(whoami);
-    if (!name)
+    if (!whoami)
         return null;
-    return (_jsxs("p", { className: className, children: ["Private link for ", name, logged && ' · access is logged', viewCount !== null && ` · you've viewed this ${viewCount} ${viewCount === 1 ? 'time' : 'times'}`, children] }));
+    const name = displayName(whoami);
+    return (_jsxs("p", { className: className, children: [name ? `Private link for ${name}` : 'Private link', logged && ' · access is logged', viewCount !== null && ` · you've viewed this ${viewCount} ${viewCount === 1 ? 'time' : 'times'}`, children] }));
 }
 /**
  * The data-room convention: render the recipient's name across the page so
