@@ -133,6 +133,22 @@ footer {
   }
 }
 
+.also {
+  li {
+    margin: 0.6em 0;
+  }
+  strong {
+    font-weight: 600;
+  }
+}
+
+.src {
+  white-space: nowrap;
+  code {
+    font-size: 0.85em;
+  }
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));

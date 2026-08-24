@@ -98,7 +98,50 @@ export function Home() {
         Scope note: this is <em>gating</em> — sessions, SSO hand-off, share links, request-access, audit. It is not a
         general-purpose auth framework: no password store, no OAuth server, no RBAC engine.
       </p>
+
+      <h2>Not acted out here</h2>
+      <p>
+        This page is deliberately two clicks deep. The rest of the library is real and tested, but exercising it end to
+        end would need an admin inbox, an IdP, or a week of traffic — so it's described rather than demonstrated:
+      </p>
+      <ul className="also">
+        <li>
+          <strong>Approve or deny from the notification.</strong> Swap <code>anyEmailPolicy</code> for a reviewing one
+          and a request stays pending: the admin address gets a mail with two buttons, the click lands on a confirm page
+          (because mail scanners follow links), and a second click is a no-op that says which way it already went and
+          when. <Src f="core/decisions.ts" />
+        </li>
+        <li>
+          <strong>OIDC without Cloudflare Access.</strong> Sign in against Google or any issuer directly — same session,
+          same revocation, and no Zero Trust seat per user, which is the ceiling an allowlist eventually hits.{' '}
+          <Src f="adapters/oidc.ts" />
+        </li>
+        <li>
+          <strong>Notify anywhere.</strong> Requests are one event type, not an email feature; apps wire the same sink
+          to a Slack webhook, an ESP, or a <code>mailto:</code> prefill. <Src f="core/requests.ts" />
+        </li>
+        <li>
+          <strong>An access log that answers "did Bob open this?"</strong> Every gated request is a natural emit point,
+          so views join to the grant that admitted them, with self-identifying bots filtered out and view rows deduped
+          per session/path/hour. <Src f="core/audit.ts" />
+        </li>
+        <li>
+          <strong>Policy, in one function.</strong> A policy is <code>(email) =&gt; scopes | null</code> — a domain
+          match, a DB-backed allowlist, or both composed — so the decision worth reviewing is one file, not a condition
+          sprayed across route handlers. <Src f="core/policy.ts" />
+        </li>
+      </ul>
     </div>
+  )
+}
+
+const REPO = 'https://github.com/Open-Athena/auth/blob/main/src/'
+
+function Src({ f }: { f: string }) {
+  return (
+    <a className="src" href={`${REPO}${f}`}>
+      <code>{f}</code>
+    </a>
   )
 }
 
