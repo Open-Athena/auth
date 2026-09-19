@@ -342,3 +342,41 @@ export function d1AuditSink(db) {
         },
     };
 }
+const toProfile = (r) => ({
+    email: r.email,
+    first: r.first,
+    last: r.last,
+    avatar: r.avatar,
+    avatarSrc: r.avatar_src ?? null,
+    updatedAt: r.updated_at,
+});
+/** Apply `migrations/0008_profiles.sql` first. */
+export function d1ProfileStore(db) {
+    return {
+        async get(email) {
+            const row = await db
+                .prepare(`SELECT email, first, last, avatar, avatar_src, updated_at FROM profiles WHERE email = ?`)
+                .bind(email)
+                .first();
+            return row ? toProfile(row) : null;
+        },
+        async put(profile) {
+            // Upsert: a profile is a property of the person, edited in place, not an
+            // append-only log.
+            await db
+                .prepare(`INSERT INTO profiles (email, first, last, avatar, avatar_src, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(email) DO UPDATE SET
+             first = excluded.first,
+             last = excluded.last,
+             avatar = excluded.avatar,
+             avatar_src = excluded.avatar_src,
+             updated_at = excluded.updated_at`)
+                .bind(profile.email, profile.first, profile.last, profile.avatar, profile.avatarSrc, profile.updatedAt)
+                .run();
+        },
+        async del(email) {
+            await db.prepare(`DELETE FROM profiles WHERE email = ?`).bind(email).run();
+        },
+    };
+}

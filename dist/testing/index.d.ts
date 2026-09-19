@@ -10,8 +10,10 @@
  * Not for production: no persistence, no concurrency safety.
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js';
+import type { AssetStore, StoredAsset } from '../core/assets.js';
+import type { Profile } from '../core/profile.js';
 import type { AccessRequest } from '../core/requests.js';
-import type { GrantStore, RequestStore } from '../core/store.js';
+import type { GrantStore, ProfileStore, RequestStore } from '../core/store.js';
 import type { Grant } from '../core/types.js';
 export interface MemoryGrantStore extends GrantStore {
     /** Live rows, for assertions the interface doesn't expose. */
@@ -24,6 +26,14 @@ export interface MemoryRequestStore extends RequestStore {
     rows: Map<string, AccessRequest>;
 }
 export declare function memoryRequestStore(): MemoryRequestStore;
+export interface MemoryProfileStore extends ProfileStore {
+    rows: Map<string, Profile>;
+}
+export declare function memoryProfileStore(): MemoryProfileStore;
+export interface MemoryAssetStore extends AssetStore {
+    rows: Map<string, StoredAsset>;
+}
+export declare function memoryAssetStore(): MemoryAssetStore;
 export interface MemoryAudit extends AuditSink {
     events: AccessEvent[];
 }

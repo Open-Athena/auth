@@ -1,6 +1,8 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js';
 export { nullAudit, requestMeta } from './core/audit.js';
-export { MAX_INLINE_AVATAR_BYTES, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, resolveAvatar, } from './core/avatar.js';
+export { InvalidImageError, MAX_AVATAR_DIMENSION, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, resolveAvatar, validateUploadedImage, } from './core/avatar.js';
+export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js';
+export { MAX_PROFILE_NAME, cleanName } from './core/profile.js';
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js';
 export { renderDecisionPage } from './core/decision-page.js';
 export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './core/decisions.js';

@@ -65,6 +65,7 @@ export type Auth = {
     email: string;
     admin: boolean;
     scopes: string[];
+    subject: Subject | null;
 } | {
     kind: 'grant';
     grant: Grant;

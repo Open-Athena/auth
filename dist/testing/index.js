@@ -1,3 +1,4 @@
+import { generateId } from '../core/tokens.js';
 export function memoryGrantStore() {
     const rows = new Map();
     const hashes = new Map();
@@ -124,6 +125,38 @@ export function memoryRequestStore() {
         async countSince(sinceS, by) {
             return [...rows.values()].filter(r => r.createdAt >= sinceS &&
                 (by.email !== undefined ? r.email === by.email : by.ipHash != null && ips.get(r.id) === by.ipHash)).length;
+        },
+    };
+}
+export function memoryProfileStore() {
+    const rows = new Map();
+    return {
+        rows,
+        async get(email) {
+            return rows.get(email) ?? null;
+        },
+        async put(profile) {
+            rows.set(profile.email, { ...profile });
+        },
+        async del(email) {
+            rows.delete(email);
+        },
+    };
+}
+export function memoryAssetStore() {
+    const rows = new Map();
+    return {
+        rows,
+        async put(bytes, type) {
+            const id = generateId();
+            rows.set(id, { bytes, type });
+            return id;
+        },
+        async get(id) {
+            return rows.get(id) ?? null;
+        },
+        async del(id) {
+            rows.delete(id);
         },
     };
 }

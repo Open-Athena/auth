@@ -8,9 +8,11 @@
  * story (assume forwarding; make it visible and revocable) actually work.
  */
 import { type AuditSink } from './audit.js';
+import { type AssetStore } from './assets.js';
+import { type Profile } from './profile.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
-import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js';
+import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from './store.js';
 import { type DecisionLinkOptions, type DecisionView } from './decisions.js';
 import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js';
 export interface GateOptions {
@@ -55,6 +57,39 @@ export interface GateOptions {
         maxRedeems?: number | null;
         sessionTtlS?: number | null;
     };
+    /**
+     * Self-set profiles (name + avatar). Without it, `getProfile`/`putProfile`
+     * report unconfigured and every SSO `subject` is null (initials, as today).
+     */
+    profiles?: ProfileStore;
+    /**
+     * Where uploaded avatar bytes live when too big to inline. Without it,
+     * avatars inline as `data:` URIs capped at `MAX_INLINE_AVATAR_BYTES`.
+     */
+    assets?: AssetStore;
+    /**
+     * Let a share-link (grant) session edit its own profile. Default false: a
+     * link's face is the admin's anti-forwarding signal, and a *forwarded* link
+     * rewriting whose identity it shows is exactly the hazard to avoid. Even when
+     * true, only an email-bound grant qualifies — an anonymous link has no
+     * principal to key a profile by.
+     */
+    allowGrantSelfEdit?: boolean;
+    /**
+     * Reject a profile edit within this many seconds of the last one — a durable,
+     * per-principal throttle (the row's `updatedAt`), no counter store needed.
+     * Default 0 (off).
+     */
+    profileMinEditIntervalS?: number;
+    /**
+     * Byte cap for an *uploaded* avatar when an `AssetStore` is bound (larger
+     * faces live out of the row). Default 256 KB. Inlined sources (url/github/
+     * gravatar, and uploads with no asset store) stay capped at
+     * `MAX_INLINE_AVATAR_BYTES`.
+     */
+    profileUploadMaxBytes?: number;
+    /** Injectable fetch for server-side avatar copying (url/github/gravatar). Default global. */
+    fetch?: typeof globalThis.fetch;
 }
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
 export type RequestAccessResult = 
@@ -88,6 +123,50 @@ export interface MintResult {
     /** The raw token. Returned exactly once — only its hash is stored. */
     token: string;
 }
+/**
+ * How a caller supplies an avatar to `putProfile`. Every source is copied
+ * server-side (`resolveAvatar`/`validateUploadedImage`) — a live remote URL is
+ * never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
+ */
+export type AvatarInput = {
+    upload: Uint8Array;
+} | {
+    url: string;
+} | {
+    github: string;
+} | {
+    gravatar: true;
+} | null | undefined;
+export interface ProfileInput {
+    first?: string | null;
+    last?: string | null;
+    avatar?: AvatarInput;
+}
+export type PutProfileResult = {
+    ok: true;
+    profile: Profile;
+}
+/** No profile store bound. */
+ | {
+    ok: false;
+    reason: 'unconfigured';
+}
+/** A bare/grant session that may not self-edit. */
+ | {
+    ok: false;
+    reason: 'forbidden';
+}
+/** Edited again within `profileMinEditIntervalS`. */
+ | {
+    ok: false;
+    reason: 'rate-limited';
+}
+/** The supplied avatar bytes/url/handle were not an acceptable image. */
+ | {
+    ok: false;
+    reason: 'invalid-avatar';
+    detail: string;
+};
 /**
  * Two different questions, deliberately separated (see migration 0007).
  *
@@ -128,9 +207,9 @@ export declare function createGate(opts: GateOptions): {
         email: string;
         admin: boolean;
         scopes: string[];
+        subject: Subject | null;
         id?: undefined;
         name?: undefined;
-        subject?: undefined;
         expiresAt?: undefined;
     } | {
         kind: "grant";
@@ -142,6 +221,8 @@ export declare function createGate(opts: GateOptions): {
         admin: boolean;
         expiresAt: number | null;
     };
+    getProfile: (auth: Auth) => Promise<Profile | null>;
+    putProfile: (auth: Auth, input: ProfileInput, nowMs?: number) => Promise<PutProfileResult>;
     isAdmin: (email: string) => boolean;
     cookieName: string;
     /**

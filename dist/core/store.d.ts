@@ -5,6 +5,7 @@
  * in SQL to be race-free. Every other rule (expiry, revocation, scopes) stays
  * in core so there is one copy of it per rule, not one per backend.
  */
+import type { Profile } from './profile.js';
 import type { AccessRequest, RequestStatus } from './requests.js';
 import type { Grant, GrantPatch, NewGrant } from './types.js';
 export interface GrantListOpts {
@@ -83,6 +84,18 @@ export interface RequestStore {
         email?: string;
         ipHash?: string | null;
     }): Promise<number>;
+}
+/**
+ * Self-set profiles, keyed by the principal's verified email. Pure row I/O:
+ * the gate resolves the avatar (to a `data:` URI or `asset://` ref) and cleans
+ * the name before handing a finished `Profile` to `put`, so a backend never has
+ * to know how an avatar was sourced.
+ */
+export interface ProfileStore {
+    get(email: string): Promise<Profile | null>;
+    /** Upsert the row for `profile.email`. */
+    put(profile: Profile): Promise<void>;
+    del(email: string): Promise<void>;
 }
 /** What an admin view needs to answer "what happened to Bob's link?". */
 export interface GrantActivity {

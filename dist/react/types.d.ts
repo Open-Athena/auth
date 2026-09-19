@@ -20,6 +20,8 @@ export interface SsoWhoami {
     email: string;
     admin: boolean;
     scopes: string[];
+    /** The principal's self-set profile, or null (initials). Carried so `<Avatar>`/`displayName` render staff faces without a render-side change. */
+    subject: Subject | null;
 }
 export interface GrantWhoami {
     kind: 'grant';

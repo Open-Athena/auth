@@ -17,7 +17,13 @@ export interface WhoamiChipProps {
         src?: string | null;
         size?: number;
     };
-    classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar', string>>;
+    /**
+     * Make the avatar + name a click target — "click your face to edit it". When
+     * set, they render as a `<button>` calling this, so an app can open a
+     * `<ProfilePanel>` without wiring its own hit area.
+     */
+    onOpenProfile?: () => void;
+    classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar' | 'identity', string>>;
 }
 /** Header chip: who you are, and how to stop being them. */
-export declare function WhoamiChip({ whoami, logoutEndpoint, signOutLabel, anonymousLabel, onSignedOut, avatar, classNames, }: WhoamiChipProps): import("react").JSX.Element | null;
+export declare function WhoamiChip({ whoami, logoutEndpoint, signOutLabel, anonymousLabel, onSignedOut, avatar, onOpenProfile, classNames, }: WhoamiChipProps): import("react").JSX.Element | null;

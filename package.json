@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.2449b71",
+  "version": "0.1.0-dist.c75580b",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -36,6 +36,10 @@
     "./oidc": {
       "types": "./dist/adapters/oidc.d.ts",
       "default": "./dist/adapters/oidc.js"
+    },
+    "./r2": {
+      "types": "./dist/adapters/r2.d.ts",
+      "default": "./dist/adapters/r2.js"
     }
   },
   "peerDependencies": {

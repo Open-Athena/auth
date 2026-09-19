@@ -59,3 +59,33 @@ export declare function githubAvatarUrl(handle: string, size?: number): string;
  * answer, not a failure: `<Avatar>` falls back to initials.
  */
 export declare function resolveAvatar(source: AvatarSource, { size, inline, maxBytes, fetch }?: ResolveAvatarOptions): Promise<string | null>;
+/** Base64-encode raw image bytes into a `data:` URI. Not URL-safe base64 — a data URI wants standard. */
+export declare function bytesToDataUri(type: string, bytes: Uint8Array): string;
+/** Thrown by {@link validateUploadedImage} when raw bytes are not an acceptable image. */
+export declare class InvalidImageError extends Error {
+    constructor(message: string);
+}
+export interface ValidatedImage {
+    /** The sniffed content type — `image/png`, `image/jpeg`, `image/webp`, `image/gif`. */
+    type: string;
+    bytes: Uint8Array;
+}
+/** Largest edge a self-set avatar may claim, so a decoder isn't handed a bomb. */
+export declare const MAX_AVATAR_DIMENSION = 8192;
+/**
+ * Accept raw uploaded bytes as an avatar, or throw {@link InvalidImageError}.
+ *
+ * The content type is decided by **magic-number sniff**, never a caller-supplied
+ * header: a `text/html` polyglot labelled `image/png`, or an SVG (which is
+ * scriptable), must not pass. Only `image/{png,jpeg,webp,gif}` are recognized,
+ * and each is parsed far enough to read its dimensions — a real header, not four
+ * lucky bytes followed by garbage — which are then range-checked.
+ *
+ * v1 does **not** re-encode or strip EXIF (that needs an image codec in a
+ * Worker); sniff-and-cap already closes the SVG-script and mislabel holes, which
+ * are the ones that turn an avatar into an attack. Re-encode is a later add if a
+ * consumer needs GPS/metadata stripped.
+ */
+export declare function validateUploadedImage(bytes: Uint8Array, { maxBytes }?: {
+    maxBytes?: number;
+}): ValidatedImage;
