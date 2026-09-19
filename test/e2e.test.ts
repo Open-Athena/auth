@@ -9,7 +9,7 @@
  * the eight things it verified by hand during adoption, which is precisely the
  * argument for pinning them in CI (see specs/auth-upstream-followups.md §3).
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { d1AuditSink, d1GrantStore } from '../src/adapters/d1.js'
 import { createGate } from '../src/core/gate.js'
 import { adminPolicy } from '../src/core/policy.js'
@@ -79,7 +79,15 @@ const logRows = async (): Promise<LogRow[]> =>
 const link = (over: Partial<NewGrant> = {}) =>
   gate.mint({ name: 'Bob', scopes: ['reports'], createdBy: ADMIN, ...over })
 
+// Pin the wall clock so multi-step flows share one instant. Without it,
+// `counts redemptions, not requests` does two redemptions and asserts
+// `last_used_at === first_used_at`, which only holds when both land in the same
+// second — a ~1-in-20 second-boundary flake. Fake only `Date` (real timers).
+const NOW = Date.parse('2026-08-16T00:00:00Z')
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   db = testDb()
   gate = createGate({
     store: d1GrantStore(db),
@@ -89,6 +97,10 @@ beforeEach(() => {
     policy: adminPolicy([ADMIN]),
   })
   app = mountApp()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('link lifecycle', () => {
