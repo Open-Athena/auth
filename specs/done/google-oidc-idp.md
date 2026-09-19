@@ -5,10 +5,10 @@
 ## Status (2026-09-19)
 
 - **Ask 1 — shipped** (`src/adapters/oidc.ts`, commit `68bab91`), under generic names rather than `googleAuthUrl`/`googleCallback`: `oidcStart(opts)` and `oidcCallback(opts)`, both taking `OidcOptions { gate, clientId, clientSecret, redirectUri, provider? = GOOGLE, authParams?, … }`. `GOOGLE` is a preset `OidcProvider`; `hd` rides in via `authParams`. State is HMAC'd with the gate secret (`oidc:` prefix, mutually inert with `e:`/`g:` session subjects) and the nonce is double-submitted (signed state + short-lived cookie), exactly as the spec asked. `email_verified` is required. Covered by `test/oidc.test.ts`. So the two-Function consumer shape (`/auth/google` + `/auth/google/callback`) is available today — `oidcStart`/`oidcCallback` are the handlers.
-- **Ask 2 — to build** (email codes). Decided 2026-09-19: **required**, not punted — non-Google accounts must be able to access sites, so `core/email-codes.ts` (magic link + short code, pluggable `sendEmail`) is in scope, not just the interim admin-mediated grant. This is the biggest single piece of remaining work (pending-auth table, an ESP adapter, deliverability).
-- **Ask 3 — to build** (Google-first `react/` sign-in panel). Decided: yes; it's the FE spine the rest hangs off.
-- **Ask 4 — to build** (Google One Tap / FedCM; added 2026-09-19). Decided: yes, **button-first** (rendered "Sign in with Google" over the auto-surfacing prompt — no surprise overlay, no display caps), sequenced after Ask 3 since One Tap degrades to it.
-- **OAuth client provisioning — new work item** (see "OAuth client provisioning" below). Per-deployment client, and investigate IaC to remove the console-click wall for adopters.
+- **Ask 2 — shipped** (`src/core/email-codes.ts` + migration `0009_pending_auth.sql`). See "As-built" below.
+- **Ask 3 — shipped** (`src/react/SignInPanel.tsx` reworked Google-first, `src/react/EmailCodeForm.tsx`). See "As-built".
+- **Ask 4 — shipped** (`googleOneTapNonce`/`googleOneTapVerify` in `src/adapters/oidc.ts`, `src/react/GoogleOneTap.tsx`). Button-first, as decided. See "As-built".
+- **OAuth client provisioning — still open** (see "OAuth client provisioning" below and `specs/oauth-client-iac.md`). Per-deployment client; the spike found no IaC path, so a thin adoption CLI is the plan. The package code (Asks 2–4) ships and is fully tested without a live client.
 
 ## Why
 
@@ -56,6 +56,18 @@ This is strictly additive — it reuses everything Ask 1 already built and never
 - The Client ID is public by design (it's in the page); the secret stays server-side and is only used by the redirect flow's code exchange, not here.
 
 **Why it's worth it:** it removes the two-page bounce for the common case (a signed-in Google user gets a one-tap prompt on first visit), which is the single biggest friction point Ask 3's "why" section is about. The cost is the client-side GSI dependency + FedCM's browser-support matrix + nonce/origin plumbing.
+
+## As-built (2026-09-19)
+
+All three Asks shipped; `pnpm typecheck`, `pnpm test` (291, +24), `pnpm build`, and the demo typecheck are green.
+
+**Ask 2 — `core/email-codes.ts` + `PendingAuthStore`.** `emailCodeAuth(opts)` returns mountable handlers (`start`, `verifyLink`, `verifyCode`, `poll`) in the OIDC-adapter style, rather than being wired into `authRoutes` — it keeps `core/routes.ts` untouched and lets a consumer mount at its own paths. One `pending_auth` row backs a magic link (hashed token) and a 6-digit code (hashed `email:code`); the row is single-use via an atomic `consume` CAS (`d1PendingAuthStore`) and short-lived. `gate.admits(email)` was added — a mint-free policy check — so `start` mails only allowed addresses while returning an identical `{status:'sent', id}` to everyone (the no-oracle property, tested). Rate-limited per address via `store.countSince`.
+
+- *Deviations / choices:* **verifyLink signs in the clicking browser; verifyCode mints into the original tab.** The spec's "the original tab polls (or accepts the code) and mints in place" is realized by the *code* (the true cross-device rescue); `poll` is a coarse status signal (`pending`/`used`/`expired`) only, and deliberately does **not** mint — handing a session to anyone holding the non-secret `id` would make `id` a bearer credential. Per-**IP** rate-limiting was not added (per-email + per-row attempt cap only); adding it means an `ip_hash` column, a straightforward follow-up. A not-allowed `start` does slightly less work than an allowed one (no insert/send), a minor timing signal well below the response-shape oracle the tests close.
+
+**Ask 4 — One Tap.** `googleOneTapVerify` reuses `oidcCallback`'s id_token verify exactly (`verifyRs256Jwt`, `email_verified`, `aud`). Nonce binding accepts the raw nonce **or** any SHA-256 encoding (base64url/base64/hex) of it — current GSI returns the raw nonce; the hashed forms cover the older HTML-API behaviour, and all derive from our HMAC-signed nonce so accepting several encodings widens compatibility without weakening the binding. `g_csrf_token` is not implemented: it's only needed for GSI's `login_uri` form-POST mode, and `<GoogleOneTap>` uses the JS-callback mode (we POST JSON ourselves), where our own nonce is the CSRF defence.
+
+**Ask 3 — `SignInPanel`.** Reworked in place (back-compat: the old `signInUrl` still renders). Primary "Continue with Google" redirect, secondary `<EmailCodeForm>`, then request-access; `deniedEmail()` reads `?denied=` and pre-fills the verified address into both fallbacks. The email probe's constant response shape lives server-side in Ask 2; the FE always offers request-access alongside, so a not-allowed user has a path without the server ever confirming allowlist membership.
 
 ## Sequencing
 
