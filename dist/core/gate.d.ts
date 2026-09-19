@@ -195,6 +195,7 @@ export declare function createGate(opts: GateOptions): {
         auth: Auth;
         cookie: string;
     } | null>;
+    admits: (email: string) => Promise<string[] | null>;
     signOut: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string>;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;

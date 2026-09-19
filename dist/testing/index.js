@@ -143,6 +143,46 @@ export function memoryProfileStore() {
         },
     };
 }
+export function memoryPendingAuthStore() {
+    const rows = new Map();
+    return {
+        rows,
+        async insert(row) {
+            rows.set(row.id, { ...row });
+        },
+        async byId(id) {
+            const row = rows.get(id);
+            return row ? { ...row } : null;
+        },
+        async byTokenHash(tokenHash) {
+            for (const row of rows.values())
+                if (row.tokenHash === tokenHash)
+                    return { ...row };
+            return null;
+        },
+        async consume(id, nowS) {
+            const row = rows.get(id);
+            if (!row || row.consumedAt !== null)
+                return null;
+            row.consumedAt = nowS;
+            return { ...row };
+        },
+        async bumpAttempts(id) {
+            const row = rows.get(id);
+            if (!row)
+                return 0;
+            row.attempts += 1;
+            return row.attempts;
+        },
+        async countSince(email, sinceS) {
+            let n = 0;
+            for (const row of rows.values())
+                if (row.email === email && row.createdAt >= sinceS)
+                    n++;
+            return n;
+        },
+    };
+}
 export function memoryAssetStore() {
     const rows = new Map();
     return {

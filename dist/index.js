@@ -7,6 +7,7 @@ export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js';
 export { renderDecisionPage } from './core/decision-page.js';
 export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './core/decisions.js';
 export { emailNotify } from './core/email.js';
+export { emailCodeAuth } from './core/email-codes.js';
 export { verifyRs256Jwt } from './core/jwt.js';
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';

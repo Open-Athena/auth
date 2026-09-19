@@ -11,9 +11,10 @@
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js';
 import type { AssetStore, StoredAsset } from '../core/assets.js';
+import type { PendingAuth } from '../core/email-codes.js';
 import type { Profile } from '../core/profile.js';
 import type { AccessRequest } from '../core/requests.js';
-import type { GrantStore, ProfileStore, RequestStore } from '../core/store.js';
+import type { GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
 import type { Grant } from '../core/types.js';
 export interface MemoryGrantStore extends GrantStore {
     /** Live rows, for assertions the interface doesn't expose. */
@@ -30,6 +31,10 @@ export interface MemoryProfileStore extends ProfileStore {
     rows: Map<string, Profile>;
 }
 export declare function memoryProfileStore(): MemoryProfileStore;
+export interface MemoryPendingAuthStore extends PendingAuthStore {
+    rows: Map<string, PendingAuth>;
+}
+export declare function memoryPendingAuthStore(): MemoryPendingAuthStore;
 export interface MemoryAssetStore extends AssetStore {
     rows: Map<string, StoredAsset>;
 }

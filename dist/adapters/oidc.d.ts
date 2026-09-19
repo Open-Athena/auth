@@ -1,28 +1,3 @@
-/**
- * Sign in with an OIDC provider directly, instead of putting Cloudflare Access
- * in front of the app as an IdP.
- *
- * Requested by marin-gcs-usage (`specs/google-oidc-idp.md`) for two reasons
- * worth recording: Access's hosted chooser is generic and unstylable, and —
- * the harder constraint — every Access-authenticated user consumes a Zero
- * Trust seat, which is a ceiling a growing allowlist eventually hits. Share
- * links never touched Access, which is why they never had that problem.
- *
- * Generic rather than Google-only: an issuer is four URLs, and `GOOGLE` is a
- * preset rather than a special case. Only the authorization-code flow, only
- * confidential clients (server-side, with a secret) — that's what a Worker or
- * Pages Function is.
- *
- * The two things that make this safe are both storage-free:
- *
- * - **state** is HMAC'd with the gate secret and carries the `next` path plus a
- *   nonce, so nothing has to be persisted between the two requests;
- * - **the nonce is double-submitted** — it rides in the signed state *and* in a
- *   short-lived cookie, and both must agree. Without that, a signed state an
- *   attacker minted from their own sign-in would be replayable against someone
- *   else's browser, which is login-CSRF: the victim ends up silently signed in
- *   as the attacker.
- */
 import type { Gate } from '../core/gate.js';
 export interface OidcProvider {
     authUrl: string;
@@ -69,5 +44,51 @@ export declare function oidcStart(opts: OidcOptions): ({ request }: {
  * are only useful to whoever is probing.
  */
 export declare function oidcCallback(opts: OidcOptions): ({ request }: {
+    request: Request;
+}) => Promise<Response>;
+/**
+ * Google One Tap / FedCM — the same identity as the redirect flow, without the
+ * two-page bounce. The browser hands us a Google-signed **id_token** in the
+ * page (via GSI), the FE POSTs it here, and we verify it exactly as
+ * `oidcCallback` does — this is that handler's second half (verify id_token →
+ * `signIn`) exposed as a credential-in endpoint instead of a code-in one.
+ *
+ * The replay defence is the same storage-free trick as the redirect `state`:
+ * `googleOneTapNonce` mints an HMAC-signed nonce, the page feeds it to GSI, and
+ * the id_token comes back carrying it. Because the nonce is signed with the gate
+ * secret, only a nonce *we* issued (and not yet expired) can satisfy a verify —
+ * no server-side pending-nonce table required.
+ */
+export interface OneTapNonceOptions {
+    gate: Gate;
+    /** How long the minted nonce is valid. Default 300s. */
+    ttlS?: number;
+}
+/**
+ * `GET` handler → `{ nonce }`. The page passes `nonce` to
+ * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
+ * `googleOneTapVerify`. The value is opaque and single-window; it is not a
+ * bearer credential (it authorizes nothing without a Google-signed id_token
+ * that embeds it).
+ */
+export declare function googleOneTapNonce(opts: OneTapNonceOptions): (_ctx?: {
+    request?: Request;
+}) => Promise<Response>;
+export interface OneTapVerifyOptions {
+    gate: Gate;
+    /** The OAuth client id; must equal the id_token `aud`. */
+    clientId: string;
+    provider?: OidcProvider;
+    fetch?: typeof globalThis.fetch;
+}
+/**
+ * `POST {credential, nonce}` handler. `credential` is a Google id_token, `nonce`
+ * the value from `googleOneTapNonce`. On success the session is signed into
+ * *this* response (`200`) — the page is already where it wants to be, so unlike
+ * the redirect flow there is nothing to redirect to. A verified-but-not-allowed
+ * identity returns `401 {denied: <email>}` so the FE can pre-fill request-access
+ * with the Google-verified address.
+ */
+export declare function googleOneTapVerify(opts: OneTapVerifyOptions): ({ request }: {
     request: Request;
 }) => Promise<Response>;

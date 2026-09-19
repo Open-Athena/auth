@@ -14,6 +14,8 @@ export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, ma
 export type { DecisionLinkOptions, DecisionVerb, DecisionView, ReversalMode } from './core/decisions.js';
 export { emailNotify } from './core/email.js';
 export type { EmailMessage, EmailNotifyOptions, SendEmail, SendResult } from './core/email.js';
+export { emailCodeAuth } from './core/email-codes.js';
+export type { EmailCodeOptions, PendingAuth } from './core/email-codes.js';
 export { verifyRs256Jwt } from './core/jwt.js';
 export type { VerifyJwtOptions } from './core/jwt.js';
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
@@ -26,7 +28,7 @@ export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/po
 export type { EmailPolicy } from './core/policy.js';
 export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, } from './core/session.js';
 export type { CookieOpts, SessionClaims } from './core/session.js';
-export type { AuditQuery, GrantActivity, GrantDraft, GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore, StoredEvent, } from './core/store.js';
+export type { AuditQuery, GrantActivity, GrantDraft, GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore, StoredEvent, } from './core/store.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';
 export { formatScopes, hasScope, parseScopes } from './core/types.js';
 export type { Auth, Grant, NewGrant, GrantPatch, Subject } from './core/types.js';

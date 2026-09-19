@@ -5,6 +5,7 @@
  * in SQL to be race-free. Every other rule (expiry, revocation, scopes) stays
  * in core so there is one copy of it per rule, not one per backend.
  */
+import type { PendingAuth } from './email-codes.js';
 import type { Profile } from './profile.js';
 import type { AccessRequest, RequestStatus } from './requests.js';
 import type { Grant, GrantPatch, NewGrant } from './types.js';
@@ -96,6 +97,26 @@ export interface ProfileStore {
     /** Upsert the row for `profile.email`. */
     put(profile: Profile): Promise<void>;
     del(email: string): Promise<void>;
+}
+/**
+ * Pending email-code sign-ins (`core/email-codes.ts`). Pure row I/O; the flow
+ * logic — hashing, expiry, attempt caps, single-use — lives in core, so a
+ * backend implements only storage and the one atomic `consume`.
+ */
+export interface PendingAuthStore {
+    insert(row: PendingAuth): Promise<void>;
+    byId(id: string): Promise<PendingAuth | null>;
+    byTokenHash(tokenHash: string): Promise<PendingAuth | null>;
+    /**
+     * Atomically stamp `consumed_at` iff it is still null. Returns the row when
+     * this call won the claim, else null — the single-use guarantee, in SQL, so a
+     * clicked link and a typed code can't both mint a session.
+     */
+    consume(id: string, nowS: number): Promise<PendingAuth | null>;
+    /** Increment the wrong-guess counter; returns the new count. */
+    bumpAttempts(id: string): Promise<number>;
+    /** Rate-limit support: rows created for this address at or after `sinceS`. */
+    countSince(email: string, sinceS: number): Promise<number>;
 }
 /** What an admin view needs to answer "what happened to Bob's link?". */
 export interface GrantActivity {

@@ -15,6 +15,12 @@ export interface RequestAccessFormProps {
     askName?: boolean | 'split';
     askNote?: boolean;
     notePlaceholder?: string;
+    /**
+     * Pre-fill the email field — e.g. the Google-verified address after a denied
+     * sign-in, so approval acts on an address Google vouched for rather than one
+     * that was typed. Not read-only: the person may still correct it.
+     */
+    defaultEmail?: string;
     onSubmitted?: (state: RequestState) => void;
     classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'button' | 'message', string>>;
     labels?: Partial<Record<'email' | 'name' | 'first' | 'last' | 'note' | 'submit' | 'submitting', string>>;
@@ -24,4 +30,4 @@ export interface RequestAccessFormProps {
  * visible string and class is a prop, because the wall's copy is exactly the
  * part each app needs to own.
  */
-export declare function RequestAccessForm({ endpoint, honeypotField, askName, askNote, notePlaceholder, onSubmitted, classNames, labels, }: RequestAccessFormProps): import("react").JSX.Element;
+export declare function RequestAccessForm({ endpoint, honeypotField, askName, askNote, notePlaceholder, defaultEmail, onSubmitted, classNames, labels, }: RequestAccessFormProps): import("react").JSX.Element;
