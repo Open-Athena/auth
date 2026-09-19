@@ -57,6 +57,7 @@ describe('mint', () => {
       disabledAt: null,
       revokedAt: null,
       expiryEndsSessions: true,
+      sessionsInvalidBefore: null,
       firstUsedAt: null,
       lastUsedAt: null,
     })
@@ -371,6 +372,7 @@ describe('canRedeem / sessionValid', () => {
     disabledAt: null,
     revokedAt: null,
     expiryEndsSessions: true,
+    sessionsInvalidBefore: null,
     firstUsedAt: null,
     lastUsedAt: null,
   }
@@ -396,5 +398,79 @@ describe('canRedeem / sessionValid', () => {
     expect(CASES.map(([label, over]) => [label, canRedeem({ ...base, ...over }, NOW_S), sessionValid({ ...base, ...over }, NOW_S)])).toEqual(
       CASES.map(([label, , redeem, session]) => [label, redeem, session]),
     )
+  })
+})
+
+describe('rotate', () => {
+  it('re-keys the link — old token stops redeeming, new token works, subject/scopes/expiry intact', async () => {
+    const g = gate()
+    const { grant, token } = await g.mint(
+      { scopes: ['internal'], name: 'Bob', subject: { first: 'Bob' }, expiresAt: NOW_S + 86400, createdBy: 'boss@openathena.ai' },
+      NOW,
+    )
+    const rot = await g.rotate(grant.id, {}, NOW + 1000)
+    expect(rot).not.toBeNull()
+    const { grant: after, token: fresh } = rot!
+    // Same identity, new token.
+    expect(fresh).toMatch(/^[A-Za-z0-9_-]{32}$/)
+    expect(fresh).not.toBe(token)
+    expect([after.id, after.name, after.scopes, after.subject, after.expiresAt]).toEqual([
+      grant.id,
+      'Bob',
+      ['internal'],
+      { first: 'Bob' },
+      NOW_S + 86400,
+    ])
+    // Old link is dead; new one redeems.
+    expect(await g.redeem(token, req('/a'), NOW + 2000)).toEqual({ ok: false, reason: 'bad-token' })
+    expect((await g.redeem(fresh, req('/b'), NOW + 2000)).ok).toBe(true)
+  })
+
+  it('re-key only: a session minted from the old link keeps working', async () => {
+    const g = gate()
+    const { grant, token } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
+    const redeemed = await g.redeem(token, req(), NOW)
+    const cookie = cookiePair((redeemed as { cookie: string }).cookie)
+
+    await g.rotate(grant.id, {}, NOW + 1000)
+    expect((await g.authenticate(withCookie(cookie), NOW + 2000))?.kind).toBe('grant')
+  })
+
+  it('endSessions: boots a session minted before the rotation, but the new token still mints a working one', async () => {
+    const g = gate()
+    const { grant, token } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
+    const old = await g.redeem(token, req(), NOW)
+    const oldCookie = cookiePair((old as { cookie: string }).cookie)
+
+    const { token: fresh } = (await g.rotate(grant.id, { endSessions: true }, NOW + 1000))!
+    // The pre-rotation session is booted on its next request.
+    expect(await g.authenticate(withCookie(oldCookie), NOW + 2000)).toBeNull()
+    // A session minted from the fresh token post-rotation is fine.
+    const next = await g.redeem(fresh, req(), NOW + 2000)
+    const newCookie = cookiePair((next as { cookie: string }).cookie)
+    expect((await g.authenticate(withCookie(newCookie), NOW + 3000))?.kind).toBe('grant')
+  })
+
+  it('logs the booted session as a `rotated` deny, distinct from revoke', async () => {
+    const g = gate()
+    const { grant, token } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
+    const redeemed = await g.redeem(token, req(), NOW)
+    const cookie = cookiePair((redeemed as { cookie: string }).cookie)
+    await g.rotate(grant.id, { endSessions: true }, NOW + 1000)
+    await g.authenticate(withCookie(cookie), NOW + 2000)
+    expect(logged(audit.events).map(e => [e.event, e.reason])).toEqual([
+      ['mint', null],
+      ['redeem', null],
+      ['rotate', 'end-sessions'],
+      ['deny', 'rotated'],
+    ])
+  })
+
+  it('refuses a revoked grant (revocation is terminal)', async () => {
+    const g = gate()
+    const { grant } = await g.mint({ scopes: ['internal'], createdBy: 'boss@openathena.ai' }, NOW)
+    await g.revoke(grant.id, NOW)
+    expect(await g.rotate(grant.id, {}, NOW + 1000)).toBeNull()
+    expect(await g.rotate('no-such-grant', {}, NOW)).toBeNull()
   })
 })

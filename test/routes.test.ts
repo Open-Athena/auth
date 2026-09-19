@@ -311,6 +311,27 @@ describe('per-creator sandboxing', () => {
     const byAlice = await h(new Request(url(`/grants/${grant.id}/revoke`), { method: 'POST', headers: { Cookie: alice } }))
     expect(byAlice!.status).toBe(200)
   })
+
+  it('rotate is admin+owner-gated and re-keys the caller’s own grant, returning the token once', async () => {
+    const { gate: g, handle: h } = sandboxed()
+    const [alice, bob] = await Promise.all([as(g, 'alice@demo.test'), as(g, 'bob@demo.test')])
+    const minted = await h(
+      new Request(url('/grants'), { method: 'POST', headers: { Cookie: alice }, body: JSON.stringify({ name: 'a', scopes: ['x'] }) }),
+    )
+    const { grant, token } = await minted!.json<{ grant: { id: string }; token: string }>()
+
+    // Anonymous → 401; someone else's grant → 404 (id stays unconfirmed).
+    expect((await h(new Request(url(`/grants/${grant.id}/rotate`), { method: 'POST' })))!.status).toBe(401)
+    expect((await h(new Request(url(`/grants/${grant.id}/rotate`), { method: 'POST', headers: { Cookie: bob } })))!.status).toBe(404)
+
+    // The owner re-keys: 200, a fresh token, same id.
+    const res = await h(new Request(url(`/grants/${grant.id}/rotate`), { method: 'POST', headers: { Cookie: alice } }))
+    expect(res!.status).toBe(200)
+    const rekeyed = await res!.json<{ id: string; token: string }>()
+    expect(rekeyed.id).toBe(grant.id)
+    expect(rekeyed.token).toMatch(/^[A-Za-z0-9_-]{32}$/)
+    expect(rekeyed.token).not.toBe(token)
+  })
 })
 
 describe('access log routes', () => {

@@ -4,6 +4,7 @@ import { d1AuditSink, d1GrantStore } from '../src/adapters/d1.js'
 import type { AuditSink } from '../src/core/audit.js'
 import { createGate } from '../src/core/gate.js'
 import type { GrantStore } from '../src/core/store.js'
+import { hashToken } from '../src/core/tokens.js'
 import type { Grant } from '../src/core/types.js'
 import { testDb } from './d1-shim.js'
 
@@ -109,6 +110,28 @@ describe('revoke', () => {
       false,
       false,
     ])
+  })
+})
+
+describe('rotate', () => {
+  it('swaps token_hash, stamps the epoch only when asked, and refuses a revoked grant', async () => {
+    const { grant, token } = await gate().mint({ scopes: ['x'], createdBy: 'boss@openathena.ai' }, NOW)
+    const oldHash = await hashToken(token)
+
+    // Plain re-key: token_hash changes, epoch stays null (COALESCE keeps it).
+    const rekeyed = await store.rotate(grant.id, 'new-hash-1', null)
+    expect([rekeyed?.id, rekeyed?.sessionsInvalidBefore]).toEqual([grant.id, null])
+    expect(await store.byTokenHash(oldHash)).toBeNull()
+    expect((await store.byTokenHash('new-hash-1'))?.id).toBe(grant.id)
+
+    // endSessions: stamps the epoch; a later plain re-key must not clear it.
+    expect((await store.rotate(grant.id, 'new-hash-2', NOW_S + 5))?.sessionsInvalidBefore).toBe(NOW_S + 5)
+    expect((await store.rotate(grant.id, 'new-hash-3', null))?.sessionsInvalidBefore).toBe(NOW_S + 5)
+
+    // Revocation is terminal.
+    await store.revoke(grant.id, NOW_S)
+    expect(await store.rotate(grant.id, 'new-hash-4', null)).toBeNull()
+    expect(await store.rotate('nope', 'h', null)).toBeNull()
   })
 })
 

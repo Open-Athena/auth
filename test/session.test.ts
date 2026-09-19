@@ -9,6 +9,7 @@ import {
   sessionCookie,
   signSession,
   verifySession,
+  verifySessionClaims,
 } from '../src/core/session.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -21,12 +22,25 @@ describe('signSession / verifySession', () => {
     expect(await verifySession(cookie, SECRET, NOW)).toBe('e:a@openathena.ai')
   })
 
-  it('encodes v/sub/exp claims and an HMAC, with exp = now + ttl', async () => {
+  it('exposes iat via verifySessionClaims, and reads a legacy cookie without iat as iat 0', async () => {
+    const cookie = await signSession('g:abc', SECRET, NOW, 3600)
+    expect(await verifySessionClaims(cookie, SECRET, NOW)).toEqual({ sub: 'g:abc', iat: NOW / 1000, exp: NOW / 1000 + 3600 })
+
+    // A cookie minted before `iat` existed: hand-forge `{v,sub,exp}` under a
+    // valid signature and confirm it decodes as iat 0 (the oldest reading).
+    const body = b64uEncode(new TextEncoder().encode(JSON.stringify({ v: 1, sub: 'g:abc', exp: NOW / 1000 + 3600 })))
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+    const sig = b64uEncode(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)))
+    expect(await verifySessionClaims(`${body}.${sig}`, SECRET, NOW)).toEqual({ sub: 'g:abc', iat: 0, exp: NOW / 1000 + 3600 })
+  })
+
+  it('encodes v/sub/iat/exp claims and an HMAC, with exp = iat + ttl', async () => {
     const cookie = await signSession('g:abc', SECRET, NOW, 3600)
     const [body, sig] = cookie.split('.')
     expect(JSON.parse(b64uDecodeString(body!))).toEqual({
       v: 1,
       sub: 'g:abc',
+      iat: NOW / 1000,
       exp: NOW / 1000 + 3600,
     })
     expect(sig).toMatch(/^[A-Za-z0-9_-]{43}$/)
