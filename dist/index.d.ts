@@ -26,7 +26,7 @@ export { authRoutes } from './core/routes.js';
 export type { RouteOptions } from './core/routes.js';
 export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
 export type { EmailPolicy } from './core/policy.js';
-export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, } from './core/session.js';
+export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, verifySessionClaims, } from './core/session.js';
 export type { CookieOpts, SessionClaims } from './core/session.js';
 export type { AuditQuery, GrantActivity, GrantDraft, GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore, StoredEvent, } from './core/store.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';

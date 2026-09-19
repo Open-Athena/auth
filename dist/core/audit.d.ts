@@ -1,4 +1,4 @@
-export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'disable' | 'enable' | 'update' | 'revoke' | 'request' | 'view' | 'signin' | 'signout';
+export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'disable' | 'enable' | 'update' | 'revoke' | 'rotate' | 'request' | 'view' | 'signin' | 'signout';
 export interface AccessEvent {
     ts: number;
     event: AccessEventKind;

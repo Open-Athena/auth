@@ -46,6 +46,15 @@ export interface GrantStore {
     setDisabled(id: string, nowS: number | null): Promise<boolean>;
     /** Apply a patch; returns the updated grant, or null if there is no such grant. */
     update(id: string, patch: GrantPatch): Promise<Grant | null>;
+    /**
+     * Re-key a grant: replace its `token_hash` (so the old raw link stops
+     * resolving) on the same row, keeping subject/scopes/expiry/audit intact.
+     * When `sessionsInvalidBefore` is non-null, also stamp the rotation epoch so
+     * sessions minted before it are booted; null leaves any existing epoch as-is
+     * and existing sessions untouched. Guarded on the grant existing and not
+     * revoked (revocation is terminal); returns the updated grant, or null.
+     */
+    rotate(id: string, newTokenHash: string, sessionsInvalidBefore: number | null): Promise<Grant | null>;
     list(opts?: GrantListOpts): Promise<Grant[]>;
 }
 export interface RequestListOpts {

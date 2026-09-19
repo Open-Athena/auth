@@ -199,6 +199,9 @@ export declare function createGate(opts: GateOptions): {
     signOut: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string>;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
+    rotate: (id: string, { endSessions }?: {
+        endSessions?: boolean;
+    }, nowMs?: number) => Promise<MintResult | null>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
     update: (id: string, patch: GrantPatch, nowMs?: number) => Promise<Grant | null>;

@@ -56,6 +56,21 @@ export function memoryGrantStore() {
             rows.set(id, { ...g, disabledAt: nowS });
             return true;
         },
+        async rotate(id, newTokenHash, sessionsInvalidBefore) {
+            const g = rows.get(id);
+            if (!g || g.revokedAt !== null)
+                return null;
+            // Drop the old token->id mapping so the old raw link stops resolving,
+            // then point the new hash at the same row.
+            for (const [h, gid] of hashes)
+                if (gid === id)
+                    hashes.delete(h);
+            hashes.set(newTokenHash, id);
+            // COALESCE semantics: a plain re-key (null) keeps any prior epoch.
+            const next = { ...g, sessionsInvalidBefore: sessionsInvalidBefore ?? g.sessionsInvalidBefore };
+            rows.set(id, next);
+            return next;
+        },
         async update(id, patch) {
             const g = rows.get(id);
             if (!g)

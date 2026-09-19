@@ -262,6 +262,17 @@ export function authRoutes(gate, opts = {}) {
                     return owned;
                 return json({ ok: await gate.revoke(id) });
             }
+            // Re-key a leaked link without losing its subject/scopes/expiry. Body
+            // `{ endSessions: true }` also boots sessions minted from the old link.
+            if (id && seg[2] === 'rotate' && method === 'POST') {
+                const owned = await ownedGrant(id, a);
+                if (owned instanceof Response)
+                    return owned;
+                const b = await body(req);
+                const res = await gate.rotate(id, { endSessions: !!b.endSessions });
+                // The only time the re-keyed raw token is ever visible.
+                return res ? json({ id, token: res.token }) : json({ error: 'not found' }, 404);
+            }
             // Disable/enable are the reversible half: they stop new redemptions and
             // leave anyone already reading the page alone.
             if (id && (seg[2] === 'disable' || seg[2] === 'enable') && method === 'POST') {
