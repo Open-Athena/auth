@@ -99,7 +99,24 @@ No Gravatar-by-default anywhere (the privacy note in `Avatar.tsx` stands) — it
 3. Drop `<ProfilePanel>` into the user menu; SSO users now get a real name/face, grant recipients keep the admin-set one.
 4. mgu already renders `subject.avatar` for grants, so the render side is a no-op — this only *adds* the SSO subject and the edit surface.
 
-## Open questions
+## As built (2026-09-19)
+
+Implemented to spec; the deviations worth knowing:
+
+- **Route path is `${basePath}/profile` (`/api/auth/profile`), not `/api/profile`.** The whole route surface lives under one `basePath` (`whoami`, `exchange`, `track`, …), and `authRoutes` returns `null` for anything outside it. Mounting profiles there keeps the surface coherent and the React default (`ProfilePanel` posts to `/api/auth/profile`) consistent. An adopter that wants a bare `/api/profile` mounts its own Function over the same `gate.getProfile`/`putProfile`.
+- **`Auth`'s SSO `subject` is required (`Subject | null`), not optional.** Always present (null = initials), so the FE never branches on its absence. Existing SSO-shape assertions gained `subject: null`.
+- **`AssetStore` lives in `core/assets.ts`** (with `assetUri`/`assetId` helpers), a sibling of `store.ts` rather than inside it.
+- **Only uploads use the asset store.** URL/GitHub/Gravatar sources are always inlined as `data:` URIs (≤ `MAX_INLINE_AVATAR_BYTES` = 64 KB) — they're small and it keeps those paths storage-free. A bound `AssetStore` raises the cap for *uploaded* bytes only (`profileUploadMaxBytes`, default 256 KB → `asset://<id>`); without one, uploads also inline and stay at 64 KB.
+- **A `fetch` is injectable on `GateOptions`** (for the server-side avatar copy), so the safety test can assert the live host is fetched exactly once (at write) and never on read.
+
+### Open questions — resolved
+
+- **Re-encode / EXIF strip: punted**, as the spec allowed. v1 is sniff-and-cap, which closes the SVG-script and mislabel holes (the ones that weaponize an avatar). Re-encode needs a wasm codec in a Worker; add it when a consumer needs GPS/metadata stripped.
+- **Abuse / rate limiting: partial, no new infra.** Total avatar bytes per principal is inherently capped (one avatar, byte-limited on every source). Edit rate is throttled by `profileMinEditIntervalS`, a *durable* min-interval check against the row's `updated_at` — no counter store. A true rolling edits/minute window (which *would* need a counter store) was deliberately not built; the min-interval throttle covers the abuse case the open question named.
+- **Grant self-edit for verified magic links: approximated.** There is no per-grant "verified" flag today, so `putProfile` treats a grant session as edit-eligible only when the app sets `allowGrantSelfEdit` *and* the grant is email-bound (`grant.email !== null`) — an anonymous/forwarded link has no principal to key a profile by. If an explicit verification signal is added later, gate on that instead.
+- **Moderation: out of scope** (unchanged) — the admin grid can view/clear a row.
+
+## Open questions (original)
 
 - **Re-encode / EXIF strip on upload.** Ideal (drops GPS/embedded junk, neutralizes polyglots) but needs an image codec in a Worker (wasm) — weigh against v1 shipping sniff-and-cap-without-re-encode, which already closes the SVG-script and mislabel holes. Punt the codec unless a consumer needs it.
 - **Abuse / rate limiting.** `PUT /api/profile` fetches a remote URL and/or stores bytes; cap edits/minute per principal and total avatar bytes per principal.
