@@ -84,7 +84,7 @@ describe('whoami', () => {
     const cookie = await asAdmin()
     expect(await call('/whoami', {}, cookie)).toMatchObject({
       status: 200,
-      body: { kind: 'sso', email: 'boss@openathena.ai', admin: true, scopes: ['*'] },
+      body: { kind: 'sso', email: 'boss@openathena.ai', admin: true, scopes: ['*'], subject: null },
     })
   })
 })

@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import {
+  InvalidImageError,
   MAX_INLINE_AVATAR_BYTES,
+  bytesToDataUri,
   githubAvatarUrl,
   gravatarUrl,
   isGithubHandle,
   isSafeAvatarUrl,
   resolveAvatar,
+  validateUploadedImage,
 } from '../src/core/avatar.js'
+
+/** A real 1×1 PNG (transparent), so the sniffer reads a genuine IHDR. */
+const PNG_1x1 = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='),
+  c => c.charCodeAt(0),
+)
+/** A minimal GIF89a header declaring 1×1 — enough for the dimension sniff. */
+const GIF_1x1 = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
+const bytesOf = (s: string): Uint8Array => new TextEncoder().encode(s)
 
 /** A fetch that answers from a table, and records what it was asked for. */
 function stubFetch(table: Record<string, { status?: number; type?: string; body?: Uint8Array }>) {
@@ -125,5 +137,42 @@ describe('resolveAvatar', () => {
       }
       expect(results).toEqual([null, null, null, null])
     })
+  })
+})
+
+describe('validateUploadedImage', () => {
+  it('accepts a real PNG and reports its sniffed type, bytes untouched', () => {
+    expect(validateUploadedImage(PNG_1x1)).toEqual({ type: 'image/png', bytes: PNG_1x1 })
+  })
+
+  it('accepts a GIF by its header, not a caller-supplied content type', () => {
+    expect(validateUploadedImage(GIF_1x1)).toEqual({ type: 'image/gif', bytes: GIF_1x1 })
+  })
+
+  it('throws on an SVG — a script container has no business as an avatar', () => {
+    expect(() => validateUploadedImage(bytesOf('<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>'))).toThrow(
+      InvalidImageError,
+    )
+  })
+
+  it('throws on a text file even when the caller would label it image/png', () => {
+    // The header is never consulted; only the magic bytes are. "hello" is not a
+    // PNG no matter what content type rode in with it.
+    expect(() => validateUploadedImage(bytesOf('hello, definitely not a png'))).toThrow(InvalidImageError)
+  })
+
+  it('throws when over the byte cap', () => {
+    expect(() => validateUploadedImage(PNG_1x1, { maxBytes: 10 })).toThrow(InvalidImageError)
+  })
+
+  it('throws on empty bytes', () => {
+    expect(() => validateUploadedImage(new Uint8Array(0))).toThrow(InvalidImageError)
+  })
+})
+
+describe('bytesToDataUri', () => {
+  it('round-trips bytes through a standard-base64 data URI', () => {
+    const uri = bytesToDataUri('image/png', new Uint8Array([1, 2, 3, 4]))
+    expect(uri).toBe(`data:image/png;base64,${btoa('\x01\x02\x03\x04')}`)
   })
 })

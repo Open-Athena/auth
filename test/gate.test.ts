@@ -247,15 +247,15 @@ describe('authenticate — SSO sessions', () => {
   it('signs in a policy-matched email and resolves its cookie', async () => {
     const g = gate()
     const signedIn = await g.signIn('staff@openathena.ai', req('/auth/sso'), NOW)
-    expect(signedIn?.auth).toEqual({ kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'] })
+    expect(signedIn?.auth).toEqual({ kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'], subject: null })
 
     const auth = await g.authenticate(withCookie(cookiePair(signedIn!.cookie)), NOW)
-    expect(g.whoami(auth!)).toEqual({ kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'] })
+    expect(g.whoami(auth!)).toEqual({ kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'], subject: null })
   })
 
   it('gives admins the wildcard scope, which satisfies every check', async () => {
     const signedIn = await gate().signIn('boss@openathena.ai', req(), NOW)
-    expect(signedIn?.auth).toEqual({ kind: 'sso', email: 'boss@openathena.ai', admin: true, scopes: ['*'] })
+    expect(signedIn?.auth).toEqual({ kind: 'sso', email: 'boss@openathena.ai', admin: true, scopes: ['*'], subject: null })
     expect(hasScope(signedIn!.auth, 'anything-at-all')).toBe(true)
   })
 

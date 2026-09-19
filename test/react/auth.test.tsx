@@ -17,7 +17,7 @@ import { renderWithQuery, setLocation, stubFetch } from './helpers.js'
 
 const realFetch = globalThis.fetch
 
-const SSO: AppWhoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'] }
+const SSO: AppWhoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'], subject: null }
 const GRANT: AppWhoami = {
   kind: 'grant',
   id: 'gTESTgrant01',
