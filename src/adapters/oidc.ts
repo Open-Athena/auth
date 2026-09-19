@@ -260,6 +260,13 @@ export interface OneTapVerifyOptions {
   /** The OAuth client id; must equal the id_token `aud`. */
   clientId: string
   provider?: OidcProvider
+  /**
+   * Expose *why* a verify was denied in an `x-onetap-reason` header. Off by
+   * default: the difference between "bad nonce" and "nonce mismatch" is only
+   * useful to whoever is probing (the same reasoning as `oidcCallback`'s opaque
+   * `deny`). Turn it on to debug a wiring problem, not in production.
+   */
+  debug?: boolean
   fetch?: typeof globalThis.fetch
 }
 
@@ -284,30 +291,31 @@ async function nonceForms(nonce: string): Promise<Set<string>> {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts: OneTapVerifyOptions) {
-  const { gate, clientId, provider = GOOGLE } = opts
+  const { gate, clientId, provider = GOOGLE, debug = false } = opts
   const doFetch = opts.fetch ?? globalThis.fetch
+  const deny = (why: string): Response => oneTapDeny(why, debug)
 
   return async ({ request }: { request: Request }): Promise<Response> => {
     const body = (await request.json().catch(() => ({}))) as { credential?: unknown; nonce?: unknown }
     const credential = typeof body.credential === 'string' ? body.credential : ''
     const nonce = typeof body.nonce === 'string' ? body.nonce : ''
-    if (!credential || !nonce) return oneTapDeny('missing credential or nonce')
+    if (!credential || !nonce) return deny('missing credential or nonce')
 
     // The nonce must be one we minted and that hasn't expired.
     const sub = await verifySession(nonce, gate.secret, Date.now())
-    if (!sub?.startsWith(ONETAP_PREFIX)) return oneTapDeny('bad nonce')
+    if (!sub?.startsWith(ONETAP_PREFIX)) return deny('bad nonce')
 
     const claims = await verifyRs256Jwt<IdTokenClaims>(credential, provider.jwksUrl, {
       issuer: provider.issuer,
       audience: clientId,
       fetch: doFetch,
     })
-    if (!claims) return oneTapDeny('credential failed verification')
+    if (!claims) return deny('credential failed verification')
     // The id_token must answer the nonce we handed the page.
     if (typeof claims.nonce !== 'string' || !(await nonceForms(nonce)).has(claims.nonce)) {
-      return oneTapDeny('nonce mismatch')
+      return deny('nonce mismatch')
     }
-    if (claims.email_verified !== true || typeof claims.email !== 'string') return oneTapDeny('no verified email')
+    if (claims.email_verified !== true || typeof claims.email !== 'string') return deny('no verified email')
 
     const signedIn = await gate.signIn(claims.email, request)
     if (!signedIn) {
@@ -327,8 +335,12 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
   }
 }
 
-const oneTapDeny = (why: string): Response =>
+const oneTapDeny = (why: string, debug: boolean): Response =>
   new Response(JSON.stringify({ ok: false }) + '\n', {
     status: 401,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-onetap-reason': why },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      ...(debug ? { 'x-onetap-reason': why } : {}),
+    },
   })

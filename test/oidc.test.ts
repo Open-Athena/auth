@@ -327,4 +327,23 @@ describe('googleOneTap', () => {
     const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce: 'forged' }), 'forged')
     expect(res.status).toBe(401)
   })
+
+  it('keeps a denial opaque by default, and names the reason only with debug', async () => {
+    const nonce = await mintNonce()
+    const cred = await idToken({ email: 'staff@openathena.ai', email_verified: false, nonce })
+
+    // Default: a bare 401, no reason header — the same opacity as `oidcCallback`.
+    const opaque = await verify(cred, nonce)
+    expect([opaque.status, opaque.headers.get('x-onetap-reason')]).toEqual([401, null])
+
+    // `debug: true` surfaces the reason for wiring diagnosis.
+    const shown = await googleOneTapVerify({ gate, clientId: CLIENT_ID, debug: true, fetch: providerFetch(null) })({
+      request: new Request('https://app.test/auth/google/onetap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credential: cred, nonce }),
+      }),
+    })
+    expect([shown.status, shown.headers.get('x-onetap-reason')]).toEqual([401, 'no verified email'])
+  })
 })
