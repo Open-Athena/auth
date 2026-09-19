@@ -181,6 +181,13 @@ export function memoryPendingAuthStore() {
                     n++;
             return n;
         },
+        async countSinceByIp(ipHash, sinceS) {
+            let n = 0;
+            for (const row of rows.values())
+                if (row.ipHash === ipHash && row.createdAt >= sinceS)
+                    n++;
+            return n;
+        },
     };
 }
 export function memoryAssetStore() {

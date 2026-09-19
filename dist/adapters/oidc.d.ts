@@ -79,6 +79,13 @@ export interface OneTapVerifyOptions {
     /** The OAuth client id; must equal the id_token `aud`. */
     clientId: string;
     provider?: OidcProvider;
+    /**
+     * Expose *why* a verify was denied in an `x-onetap-reason` header. Off by
+     * default: the difference between "bad nonce" and "nonce mismatch" is only
+     * useful to whoever is probing (the same reasoning as `oidcCallback`'s opaque
+     * `deny`). Turn it on to debug a wiring problem, not in production.
+     */
+    debug?: boolean;
     fetch?: typeof globalThis.fetch;
 }
 /**

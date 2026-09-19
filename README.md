@@ -117,6 +117,18 @@ export const start = oidcStart(cfg)        // -> /auth/google
 export const callback = oidcCallback(cfg)  // -> /auth/google/callback
 ```
 
+Provisioning the Google client is the one genuinely manual step, and not for lack of trying: Google exposes **no API** to create a "Web application" OAuth client or read its secret — it's Cloud-Console-only ([`specs/done/oauth-client-iac.md`](specs/done/oauth-client-iac.md) has the full spike). So instead of a nonexistent `terraform apply`, there's [`scripts/provision-oauth-client.mjs`](scripts/provision-oauth-client.mjs), which scripts the whole envelope around that click — orients `gcloud`, prints a deep link to the create form pre-filled with the exact field values, then captures the pasted id/secret straight into your Pages secrets (never echoing the secret). Default is a dry run:
+
+```bash
+scripts/provision-oauth-client.mjs \
+  --project oa-internal-450019 \
+  --app-origin https://your-app.pages.dev \
+  --redirect-uri https://your-app.pages.dev/auth/google/callback \
+  --pages-project your-app            # add --run to actually store the secrets
+```
+
+Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins — the CLI prints it as field 3.
+
 Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
 
 A verified address that policy rejects redirects with `?denied=<email>` rather than 403ing, which is what lets an app pre-fill request-access with an address the *provider* vouched for instead of one the visitor typed.

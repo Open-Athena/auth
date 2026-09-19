@@ -1,3 +1,27 @@
+/**
+ * Passwordless email sign-in for addresses that can't (or won't) use Google —
+ * the non-Google tail that CF Access's OTP used to serve for free.
+ *
+ * One pending-auth row backs two ways to prove control of an inbox, the Slack
+ * pattern:
+ *
+ *  - a **magic link** (`verifyLink`) — the happy path, signs in whatever
+ *    browser opens it;
+ *  - a **6-digit code** (`verifyCode`) — typed back into the original tab, which
+ *    is what rescues the cross-device case (the mail is on your phone, the tab
+ *    is on your laptop) and survives link-prefetching security scanners that
+ *    would consume a single-use URL before the human ever clicks it.
+ *
+ * Both the token and the code are stored hashed (SHA-256, like a grant token),
+ * the row is single-use and short-lived, and the code's guess count is capped.
+ * Nothing here is persisted beyond the row — the session it ultimately mints is
+ * an ordinary `gate.signIn`, so revocation, TTL and scopes are unchanged.
+ *
+ * These are mountable handlers (`({ request }) => Response`), the same shape as
+ * the OIDC adapter's `oidcStart`/`oidcCallback`, so a consumer wires them as
+ * Functions at whatever paths it likes.
+ */
+import { requestMeta } from './audit.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const enc = new TextEncoder();
@@ -30,6 +54,7 @@ export function emailCodeAuth(opts) {
     const { gate, store, send, from, linkFor, appName = 'this site', ttlS = 900, maxAttempts = 5, defaultNext = '/', nowMs = Date.now, } = opts;
     const windowS = opts.rateLimit?.windowS ?? 900;
     const maxPerEmail = opts.rateLimit?.maxPerEmail ?? 3;
+    const maxPerIp = opts.rateLimit?.maxPerIp ?? 10;
     const sec = (ms) => Math.floor(ms / 1000);
     /**
      * Begin a sign-in: mail a link + code to `email`, but only if the gate would
@@ -38,8 +63,13 @@ export function emailCodeAuth(opts) {
      * allowlist — a not-allowed address simply never receives mail, and its `id`
      * names a flow that no code will ever satisfy. The UI offers request-access
      * alongside, which is where a genuinely-not-allowed person goes.
+     *
+     * Pass `waitUntil` (the Pages Function context has it) so the mail send is
+     * scheduled rather than awaited: otherwise the admitted path blocks on
+     * delivery while the early-return paths don't, and that latency gap is itself
+     * a (coarse) allowlist oracle. Without it, delivery is awaited inline.
      */
-    async function start({ request }) {
+    async function start({ request, waitUntil, }) {
         const body = (await request.json().catch(() => ({})));
         const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
         // A malformed address is a client error, not an allowlist signal, so it may
@@ -48,8 +78,14 @@ export function emailCodeAuth(opts) {
             return json({ status: 'invalid-email' }, 400);
         const nowS = sec(nowMs());
         const constant = { status: 'sent', id: generateId() };
+        const { ipHash } = await requestMeta(request, gate.secret);
         const recent = await store.countSince(email, nowS - windowS);
         if (recent >= maxPerEmail)
+            return json(constant);
+        // Per-IP cap: only meaningful once an IP is known. Rows exist only for
+        // admitted addresses, so this bounds how fast one source can fan mail out
+        // across the allowlist, not anonymous probing (which sends nothing).
+        if (ipHash && (await store.countSinceByIp(ipHash, nowS - windowS)) >= maxPerIp)
             return json(constant);
         const scopes = await gate.admits(email);
         if (!scopes)
@@ -65,11 +101,12 @@ export function emailCodeAuth(opts) {
             expiresAt: nowS + ttlS,
             consumedAt: null,
             attempts: 0,
+            ipHash,
         };
         await store.insert(row);
         const minutes = Math.round(ttlS / 60);
         const link = linkFor(token);
-        await send({
+        const deliver = send({
             from,
             to: email,
             subject: `Your sign-in code for ${appName}`,
@@ -88,6 +125,12 @@ export function emailCodeAuth(opts) {
                 `If you didn't ask to sign in, you can ignore this email.`,
             ].join('\n'),
         }).catch(() => { });
+        // Scheduled (constant-latency) when the runtime gives us `waitUntil`, else
+        // awaited so the send still happens before the worker is torn down.
+        if (waitUntil)
+            waitUntil(deliver);
+        else
+            await deliver;
         return json(constant);
     }
     /**

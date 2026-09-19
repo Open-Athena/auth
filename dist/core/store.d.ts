@@ -117,6 +117,8 @@ export interface PendingAuthStore {
     bumpAttempts(id: string): Promise<number>;
     /** Rate-limit support: rows created for this address at or after `sinceS`. */
     countSince(email: string, sinceS: number): Promise<number>;
+    /** Rate-limit support: rows created from this hashed IP at or after `sinceS`. */
+    countSinceByIp(ipHash: string, sinceS: number): Promise<number>;
 }
 /** What an admin view needs to answer "what happened to Bob's link?". */
 export interface GrantActivity {

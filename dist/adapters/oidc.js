@@ -213,31 +213,32 @@ async function nonceForms(nonce) {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts) {
-    const { gate, clientId, provider = GOOGLE } = opts;
+    const { gate, clientId, provider = GOOGLE, debug = false } = opts;
     const doFetch = opts.fetch ?? globalThis.fetch;
+    const deny = (why) => oneTapDeny(why, debug);
     return async ({ request }) => {
         const body = (await request.json().catch(() => ({})));
         const credential = typeof body.credential === 'string' ? body.credential : '';
         const nonce = typeof body.nonce === 'string' ? body.nonce : '';
         if (!credential || !nonce)
-            return oneTapDeny('missing credential or nonce');
+            return deny('missing credential or nonce');
         // The nonce must be one we minted and that hasn't expired.
         const sub = await verifySession(nonce, gate.secret, Date.now());
         if (!sub?.startsWith(ONETAP_PREFIX))
-            return oneTapDeny('bad nonce');
+            return deny('bad nonce');
         const claims = await verifyRs256Jwt(credential, provider.jwksUrl, {
             issuer: provider.issuer,
             audience: clientId,
             fetch: doFetch,
         });
         if (!claims)
-            return oneTapDeny('credential failed verification');
+            return deny('credential failed verification');
         // The id_token must answer the nonce we handed the page.
         if (typeof claims.nonce !== 'string' || !(await nonceForms(nonce)).has(claims.nonce)) {
-            return oneTapDeny('nonce mismatch');
+            return deny('nonce mismatch');
         }
         if (claims.email_verified !== true || typeof claims.email !== 'string')
-            return oneTapDeny('no verified email');
+            return deny('no verified email');
         const signedIn = await gate.signIn(claims.email, request);
         if (!signedIn) {
             return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', {
@@ -255,7 +256,11 @@ export function googleOneTapVerify(opts) {
         });
     };
 }
-const oneTapDeny = (why) => new Response(JSON.stringify({ ok: false }) + '\n', {
+const oneTapDeny = (why, debug) => new Response(JSON.stringify({ ok: false }) + '\n', {
     status: 401,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-onetap-reason': why },
+    headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        ...(debug ? { 'x-onetap-reason': why } : {}),
+    },
 });
