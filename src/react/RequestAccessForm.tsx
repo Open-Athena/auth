@@ -18,6 +18,12 @@ export interface RequestAccessFormProps {
   askName?: boolean | 'split'
   askNote?: boolean
   notePlaceholder?: string
+  /**
+   * Pre-fill the email field — e.g. the Google-verified address after a denied
+   * sign-in, so approval acts on an address Google vouched for rather than one
+   * that was typed. Not read-only: the person may still correct it.
+   */
+  defaultEmail?: string
   onSubmitted?: (state: RequestState) => void
   classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'button' | 'message', string>>
   labels?: Partial<Record<'email' | 'name' | 'first' | 'last' | 'note' | 'submit' | 'submitting', string>>
@@ -41,6 +47,7 @@ export function RequestAccessForm({
   askName = true,
   askNote = true,
   notePlaceholder = 'Anything that helps us place you (optional)',
+  defaultEmail,
   onSubmitted,
   classNames = {},
   labels = {},
@@ -77,7 +84,15 @@ export function RequestAccessForm({
         <label className={classNames.label} htmlFor="oa-auth-email">
           {labels.email ?? 'Email'}
         </label>
-        <input className={classNames.input} id="oa-auth-email" name="email" type="email" required autoComplete="email" />
+        <input
+          className={classNames.input}
+          id="oa-auth-email"
+          name="email"
+          type="email"
+          required
+          autoComplete="email"
+          defaultValue={defaultEmail}
+        />
       </div>
 
       {askName === 'split' ? (
