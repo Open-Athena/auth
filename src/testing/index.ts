@@ -11,9 +11,10 @@
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js'
 import type { AssetStore, StoredAsset } from '../core/assets.js'
+import type { PendingAuth } from '../core/email-codes.js'
 import type { Profile } from '../core/profile.js'
 import type { AccessRequest, RequestStatus } from '../core/requests.js'
-import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from '../core/store.js'
+import type { GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore } from '../core/store.js'
 import { generateId } from '../core/tokens.js'
 import type { Grant } from '../core/types.js'
 
@@ -165,6 +166,45 @@ export function memoryProfileStore(): MemoryProfileStore {
     },
     async del(email) {
       rows.delete(email)
+    },
+  }
+}
+
+export interface MemoryPendingAuthStore extends PendingAuthStore {
+  rows: Map<string, PendingAuth>
+}
+
+export function memoryPendingAuthStore(): MemoryPendingAuthStore {
+  const rows = new Map<string, PendingAuth>()
+  return {
+    rows,
+    async insert(row) {
+      rows.set(row.id, { ...row })
+    },
+    async byId(id) {
+      const row = rows.get(id)
+      return row ? { ...row } : null
+    },
+    async byTokenHash(tokenHash) {
+      for (const row of rows.values()) if (row.tokenHash === tokenHash) return { ...row }
+      return null
+    },
+    async consume(id, nowS) {
+      const row = rows.get(id)
+      if (!row || row.consumedAt !== null) return null
+      row.consumedAt = nowS
+      return { ...row }
+    },
+    async bumpAttempts(id) {
+      const row = rows.get(id)
+      if (!row) return 0
+      row.attempts += 1
+      return row.attempts
+    },
+    async countSince(email, sinceS) {
+      let n = 0
+      for (const row of rows.values()) if (row.email === email && row.createdAt >= sinceS) n++
+      return n
     },
   }
 }

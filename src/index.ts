@@ -32,6 +32,8 @@ export {
 export type { DecisionLinkOptions, DecisionVerb, DecisionView, ReversalMode } from './core/decisions.js'
 export { emailNotify } from './core/email.js'
 export type { EmailMessage, EmailNotifyOptions, SendEmail, SendResult } from './core/email.js'
+export { emailCodeAuth } from './core/email-codes.js'
+export type { EmailCodeOptions, PendingAuth } from './core/email-codes.js'
 export { verifyRs256Jwt } from './core/jwt.js'
 export type { VerifyJwtOptions } from './core/jwt.js'
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js'
@@ -72,6 +74,7 @@ export type {
   GrantDraft,
   GrantListOpts,
   GrantStore,
+  PendingAuthStore,
   ProfileStore,
   RequestListOpts,
   RequestStore,

@@ -395,6 +395,15 @@ export function createGate(opts: GateOptions) {
     return { ok: true, grant, auth: grantAuth(grant), cookie }
   }
 
+  /**
+   * Would this address be admitted, and with what scopes? A pure policy check —
+   * no mint, no cookie, no log — so a flow can decide whether to *offer* sign-in
+   * (e.g. whether to mail an email-code) without the side effects of `signIn`.
+   */
+  async function admits(email: string): Promise<string[] | null> {
+    return policy(email)
+  }
+
   /** Mint a session for an identity an IdP just vouched for. Null if policy denies. */
   async function signIn(email: string, req: Request, nowMs = Date.now()): Promise<{ auth: Auth; cookie: string } | null> {
     const nowS = sec(nowMs)
@@ -825,6 +834,7 @@ export function createGate(opts: GateOptions) {
     authenticate,
     redeem,
     signIn,
+    admits,
     signOut,
     mint,
     revoke,

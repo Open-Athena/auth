@@ -7,9 +7,10 @@
  * Apply `migrations/0001_grants.sql` and `migrations/0002_access_log.sql` first.
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js'
+import type { PendingAuth } from '../core/email-codes.js'
 import type { AvatarSourceKind, Profile } from '../core/profile.js'
 import type { AccessRequest, RequestStatus } from '../core/requests.js'
-import type { AuditQuery, GrantStore, ProfileStore, RequestStore } from '../core/store.js'
+import type { AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js'
 import { type Grant, type Subject, formatScopes, parseScopes } from '../core/types.js'
 
 interface GrantRow {
@@ -532,6 +533,94 @@ export function d1ProfileStore(db: D1Database): ProfileStore {
 
     async del(email) {
       await db.prepare(`DELETE FROM profiles WHERE email = ?`).bind(email).run()
+    },
+  }
+}
+
+interface PendingAuthRow {
+  id: string
+  email: string
+  token_hash: string
+  code_hash: string
+  created_at: number
+  expires_at: number
+  consumed_at: number | null
+  attempts: number
+}
+
+const toPendingAuth = (r: PendingAuthRow): PendingAuth => ({
+  id: r.id,
+  email: r.email,
+  tokenHash: r.token_hash,
+  codeHash: r.code_hash,
+  createdAt: r.created_at,
+  expiresAt: r.expires_at,
+  consumedAt: r.consumed_at,
+  attempts: r.attempts,
+})
+
+const PENDING_COLS = `id, email, token_hash, code_hash, created_at, expires_at, consumed_at, attempts`
+
+export function d1PendingAuthStore(db: D1Database): PendingAuthStore {
+  const byId = async (id: string): Promise<PendingAuth | null> => {
+    const row = await db
+      .prepare(`SELECT ${PENDING_COLS} FROM pending_auth WHERE id = ?`)
+      .bind(id)
+      .first<PendingAuthRow>()
+    return row ? toPendingAuth(row) : null
+  }
+  return {
+    byId,
+
+    async byTokenHash(tokenHash) {
+      const row = await db
+        .prepare(`SELECT ${PENDING_COLS} FROM pending_auth WHERE token_hash = ?`)
+        .bind(tokenHash)
+        .first<PendingAuthRow>()
+      return row ? toPendingAuth(row) : null
+    },
+
+    async insert(row) {
+      await db
+        .prepare(
+          `INSERT INTO pending_auth (${PENDING_COLS})
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.email,
+          row.tokenHash,
+          row.codeHash,
+          row.createdAt,
+          row.expiresAt,
+          row.consumedAt,
+          row.attempts,
+        )
+        .run()
+    },
+
+    async consume(id, nowS) {
+      // Single-statement CAS: only the first caller flips `consumed_at`, so a
+      // clicked link and a typed code can never both mint a session.
+      const res = await db
+        .prepare(`UPDATE pending_auth SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`)
+        .bind(nowS, id)
+        .run()
+      return res.meta.changes === 1 ? byId(id) : null
+    },
+
+    async bumpAttempts(id) {
+      await db.prepare(`UPDATE pending_auth SET attempts = attempts + 1 WHERE id = ?`).bind(id).run()
+      const row = await db.prepare(`SELECT attempts FROM pending_auth WHERE id = ?`).bind(id).first<{ attempts: number }>()
+      return row?.attempts ?? 0
+    },
+
+    async countSince(email, sinceS) {
+      const row = await db
+        .prepare(`SELECT COUNT(*) AS n FROM pending_auth WHERE email = ? AND created_at >= ?`)
+        .bind(email, sinceS)
+        .first<{ n: number }>()
+      return row?.n ?? 0
     },
   }
 }
