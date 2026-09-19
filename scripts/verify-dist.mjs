@@ -13,12 +13,21 @@
  *   defaults: Open-Athena/auth, the current `dist` branch head
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const REPO = process.argv[2] ?? 'Open-Athena/auth'
 const REF = process.argv[3] ?? 'dist'
+
+// The migrations the source tree ships (this checkout, resolved off the script
+// location so cwd is irrelevant). The published package must carry exactly this
+// set — a dropped migration passes every source test (the shim discovers the
+// dir) but breaks a consumer who applies the package's `migrations/` with a
+// `no such column`. The check below asserts shipped-set === this set.
+const sourceMigrations = readdirSync(new URL('../migrations/', import.meta.url))
+  .filter(f => f.endsWith('.sql'))
+  .sort()
 
 /** Capture stdout. */
 const capture = (cmd, args, opts = {}) =>
@@ -46,13 +55,17 @@ import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
 import { ssoHandler, verifyAccessJwt } from '@open-athena/auth/cf-access'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { readdirSync, readFileSync } from 'node:fs'
 
-const req = createRequire(import.meta.url)
 const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/auth/package.json', import.meta.url), 'utf8'))
-const migrations = ['0001_grants', '0002_access_log', '0003_access_requests', '0004_access_log_daily', '0005_dedupe_by_event']
-  .map(m => readFileSync(req.resolve('@open-athena/auth/migrations/' + m + '.sql'), 'utf8'))
+// What the installed package actually carries, discovered (not listed) so a
+// dropped file is visible as a set difference against the source manifest.
+const migrationsDir = new URL('./node_modules/@open-athena/auth/migrations/', import.meta.url)
+const shippedMigrations = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()
+const expectedMigrations = ${JSON.stringify(sourceMigrations)}
+const grantsDdl = shippedMigrations.includes('0001_grants.sql')
+  ? readFileSync(new URL('0001_grants.sql', migrationsDir), 'utf8')
+  : ''
 
 const rows = new Map(), hashes = new Map()
 const store = {
@@ -85,7 +98,8 @@ const checks = {
   'peer deps declared':           ['react', '@tanstack/react-query'].every(d => d in (manifest.peerDependencies ?? {})),
   'peer deps optional':           ['react', '@tanstack/react-query'].every(d => manifest.peerDependenciesMeta?.[d]?.optional),
   'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler].every(f => typeof f === 'function'),
-  'migrations shipped':           migrations.length === 5 && migrations[0].includes('CREATE TABLE grants'),
+  'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
+  'migrations shipped':           shippedMigrations.length > 0 && grantsDdl.includes('CREATE TABLE grants'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,
   'redeem mints a session':       redeemed.ok === true,

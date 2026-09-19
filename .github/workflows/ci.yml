@@ -44,9 +44,13 @@ jobs:
           # letting the build output flatten to the branch root.
           preserve_dirs: dist
           # Migrations are public surface (`./migrations/*`) but aren't build
-          # output, so they have to be carried over explicitly.
-          extra_files: >-
-            migrations/0001_grants.sql,migrations/0002_access_log.sql,migrations/0003_access_requests.sql,migrations/0004_access_log_daily.sql,migrations/0005_dedupe_by_event.sql,README.md
+          # output, so they have to be carried over explicitly. Ship the whole
+          # directory (npm-dist `cp -r`s a dir entry) rather than a hand-kept
+          # file list — a list silently drops any migration added after it, and
+          # a consumer copying the package's migrations then hits `no such
+          # column` (`0006`/`0007` were dropped this way; `verify-dist` now
+          # fails the publish if the shipped set ever diverges from source).
+          extra_files: migrations,README.md
 
   # Install the published branch exactly as a consumer would, and use it.
   # The `test` job runs against `src/`, which says nothing about whether the
