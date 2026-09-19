@@ -8,7 +8,7 @@
  * signature check that stops checking fails here.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { GOOGLE, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
+import { GOOGLE, googleOneTapNonce, googleOneTapVerify, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
@@ -260,5 +260,71 @@ describe('oidcCallback', () => {
       request: new Request('https://app.test/auth/google/callback'),
     })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('googleOneTap', () => {
+  /** A fresh HMAC-signed nonce, as the page would fetch from `googleOneTapNonce`. */
+  async function mintNonce(): Promise<string> {
+    const res = await googleOneTapNonce({ gate })()
+    return ((await res.json()) as { nonce: string }).nonce
+  }
+
+  const verify = (credential: string, nonce: string) =>
+    googleOneTapVerify({ gate, clientId: CLIENT_ID, fetch: providerFetch(null) })({
+      request: new Request('https://app.test/auth/google/onetap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credential, nonce }),
+      }),
+    })
+
+  it('mints a nonce that is inert as a session cookie', async () => {
+    // Handed to the browser, so it must not double as a sign-in — same property
+    // as the redirect `state`.
+    const nonce = await mintNonce()
+    const auth = await gate.authenticate(new Request('https://app.test/', { headers: { Cookie: `oa_auth=${nonce}` } }))
+    expect(auth).toBe(null)
+  })
+
+  it('signs in a verified, allowed identity carrying our nonce', async () => {
+    const nonce = await mintNonce()
+    const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }), nonce)
+    expect([res.status, ((await res.json()) as { ok: boolean }).ok]).toEqual([200, true])
+    expect(setCookies(res).some(c => c.startsWith('oa_auth='))).toBe(true)
+  })
+
+  it('bounces a verified stranger with the address, and mints nothing', async () => {
+    const nonce = await mintNonce()
+    const res = await verify(await idToken({ email: 'stranger@example.com', email_verified: true, nonce }), nonce)
+    expect([res.status, await res.json()]).toEqual([401, { ok: false, denied: 'stranger@example.com' }])
+    expect(setCookies(res).some(c => c.startsWith('oa_auth='))).toBe(false)
+  })
+
+  it('refuses an unverified address', async () => {
+    const nonce = await mintNonce()
+    const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: false, nonce }), nonce)
+    expect(res.status).toBe(401)
+    expect(setCookies(res).some(c => c.startsWith('oa_auth='))).toBe(false)
+  })
+
+  it('refuses a credential minted for a different client', async () => {
+    const nonce = await mintNonce()
+    const res = await verify(
+      await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce, aud: 'someone-else' }),
+      nonce,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  it('refuses a credential answering a different nonce', async () => {
+    const nonce = await mintNonce()
+    const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce: 'other' }), nonce)
+    expect(res.status).toBe(401)
+  })
+
+  it('refuses a nonce we never minted', async () => {
+    const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce: 'forged' }), 'forged')
+    expect(res.status).toBe(401)
   })
 })

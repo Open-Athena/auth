@@ -23,6 +23,7 @@
  *   else's browser, which is login-CSRF: the victim ends up silently signed in
  *   as the attacker.
  */
+import { b64uEncode } from '../core/base64.js'
 import type { Gate } from '../core/gate.js'
 import { verifyRs256Jwt } from '../core/jwt.js'
 import { clearCookie, isSecureRequest, sessionCookie, signSession, verifySession } from '../core/session.js'
@@ -214,3 +215,120 @@ function readCookieValue(req: Request, name: string): string | null {
   }
   return null
 }
+
+/**
+ * Google One Tap / FedCM — the same identity as the redirect flow, without the
+ * two-page bounce. The browser hands us a Google-signed **id_token** in the
+ * page (via GSI), the FE POSTs it here, and we verify it exactly as
+ * `oidcCallback` does — this is that handler's second half (verify id_token →
+ * `signIn`) exposed as a credential-in endpoint instead of a code-in one.
+ *
+ * The replay defence is the same storage-free trick as the redirect `state`:
+ * `googleOneTapNonce` mints an HMAC-signed nonce, the page feeds it to GSI, and
+ * the id_token comes back carrying it. Because the nonce is signed with the gate
+ * secret, only a nonce *we* issued (and not yet expired) can satisfy a verify —
+ * no server-side pending-nonce table required.
+ */
+export interface OneTapNonceOptions {
+  gate: Gate
+  /** How long the minted nonce is valid. Default 300s. */
+  ttlS?: number
+}
+
+const ONETAP_PREFIX = 'onetap:'
+
+/**
+ * `GET` handler → `{ nonce }`. The page passes `nonce` to
+ * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
+ * `googleOneTapVerify`. The value is opaque and single-window; it is not a
+ * bearer credential (it authorizes nothing without a Google-signed id_token
+ * that embeds it).
+ */
+export function googleOneTapNonce(opts: OneTapNonceOptions) {
+  const { gate, ttlS = 300 } = opts
+  return async (_ctx?: { request?: Request }): Promise<Response> => {
+    const nonce = await signSession(`${ONETAP_PREFIX}${generateToken()}`, gate.secret, Date.now(), ttlS)
+    return new Response(JSON.stringify({ nonce }) + '\n', {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    })
+  }
+}
+
+export interface OneTapVerifyOptions {
+  gate: Gate
+  /** The OAuth client id; must equal the id_token `aud`. */
+  clientId: string
+  provider?: OidcProvider
+  fetch?: typeof globalThis.fetch
+}
+
+/** Every SHA-256 encoding Google might use for the nonce claim, plus the raw value. */
+async function nonceForms(nonce: string): Promise<Set<string>> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce)))
+  const b64u = b64uEncode(digest)
+  const b64 = b64u.replace(/-/g, '+').replace(/_/g, '/')
+  const hex = Array.from(digest, b => b.toString(16).padStart(2, '0')).join('')
+  // Current GSI returns the raw nonce; the hashed forms cover the older
+  // HTML-API behaviour. All derive from our signed nonce, so accepting several
+  // encodings widens compatibility without weakening the binding.
+  return new Set([nonce, b64u, b64, `${b64}=`, hex])
+}
+
+/**
+ * `POST {credential, nonce}` handler. `credential` is a Google id_token, `nonce`
+ * the value from `googleOneTapNonce`. On success the session is signed into
+ * *this* response (`200`) — the page is already where it wants to be, so unlike
+ * the redirect flow there is nothing to redirect to. A verified-but-not-allowed
+ * identity returns `401 {denied: <email>}` so the FE can pre-fill request-access
+ * with the Google-verified address.
+ */
+export function googleOneTapVerify(opts: OneTapVerifyOptions) {
+  const { gate, clientId, provider = GOOGLE } = opts
+  const doFetch = opts.fetch ?? globalThis.fetch
+
+  return async ({ request }: { request: Request }): Promise<Response> => {
+    const body = (await request.json().catch(() => ({}))) as { credential?: unknown; nonce?: unknown }
+    const credential = typeof body.credential === 'string' ? body.credential : ''
+    const nonce = typeof body.nonce === 'string' ? body.nonce : ''
+    if (!credential || !nonce) return oneTapDeny('missing credential or nonce')
+
+    // The nonce must be one we minted and that hasn't expired.
+    const sub = await verifySession(nonce, gate.secret, Date.now())
+    if (!sub?.startsWith(ONETAP_PREFIX)) return oneTapDeny('bad nonce')
+
+    const claims = await verifyRs256Jwt<IdTokenClaims>(credential, provider.jwksUrl, {
+      issuer: provider.issuer,
+      audience: clientId,
+      fetch: doFetch,
+    })
+    if (!claims) return oneTapDeny('credential failed verification')
+    // The id_token must answer the nonce we handed the page.
+    if (typeof claims.nonce !== 'string' || !(await nonceForms(nonce)).has(claims.nonce)) {
+      return oneTapDeny('nonce mismatch')
+    }
+    if (claims.email_verified !== true || typeof claims.email !== 'string') return oneTapDeny('no verified email')
+
+    const signedIn = await gate.signIn(claims.email, request)
+    if (!signedIn) {
+      return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', {
+        status: 401,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      })
+    }
+    return new Response(JSON.stringify({ ok: true }) + '\n', {
+      status: 200,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        'set-cookie': signedIn.cookie,
+      },
+    })
+  }
+}
+
+const oneTapDeny = (why: string): Response =>
+  new Response(JSON.stringify({ ok: false }) + '\n', {
+    status: 401,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-onetap-reason': why },
+  })
