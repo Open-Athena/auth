@@ -5,9 +5,10 @@
 ## Status (2026-09-19)
 
 - **Ask 1 — shipped** (`src/adapters/oidc.ts`, commit `68bab91`), under generic names rather than `googleAuthUrl`/`googleCallback`: `oidcStart(opts)` and `oidcCallback(opts)`, both taking `OidcOptions { gate, clientId, clientSecret, redirectUri, provider? = GOOGLE, authParams?, … }`. `GOOGLE` is a preset `OidcProvider`; `hd` rides in via `authParams`. State is HMAC'd with the gate secret (`oidc:` prefix, mutually inert with `e:`/`g:` session subjects) and the nonce is double-submitted (signed state + short-lived cookie), exactly as the spec asked. `email_verified` is required. Covered by `test/oidc.test.ts`. So the two-Function consumer shape (`/auth/google` + `/auth/google/callback`) is available today — `oidcStart`/`oidcCallback` are the handlers.
-- **Ask 2 — not built** (email codes for the non-Google tail). Decision pending (see Decisions).
-- **Ask 3 — not built** (Google-first `react/` sign-in panel). Decision pending.
-- **Ask 4 — not built** (Google One Tap / FedCM; added 2026-09-19). Decision pending.
+- **Ask 2 — to build** (email codes). Decided 2026-09-19: **required**, not punted — non-Google accounts must be able to access sites, so `core/email-codes.ts` (magic link + short code, pluggable `sendEmail`) is in scope, not just the interim admin-mediated grant. This is the biggest single piece of remaining work (pending-auth table, an ESP adapter, deliverability).
+- **Ask 3 — to build** (Google-first `react/` sign-in panel). Decided: yes; it's the FE spine the rest hangs off.
+- **Ask 4 — to build** (Google One Tap / FedCM; added 2026-09-19). Decided: yes, **button-first** (rendered "Sign in with Google" over the auto-surfacing prompt — no surprise overlay, no display caps), sequenced after Ask 3 since One Tap degrades to it.
+- **OAuth client provisioning — new work item** (see "OAuth client provisioning" below). Per-deployment client, and investigate IaC to remove the console-click wall for adopters.
 
 ## Why
 
@@ -60,12 +61,18 @@ This is strictly additive — it reuses everything Ask 1 already built and never
 
 mgu keeps CFA-as-IdP until Ask 1 lands (it works; this is streamlining, not a fire). Marin's mark-&-sweep sprint runs through 2026-08-28, so any dist-branch SHA that includes the adapter can be consumed after that. Watchy presumably migrates the same way later (same two-Function shape).
 
-## Decisions (need from Ryan)
+## OAuth client provisioning (per-app, and can it be IaC'd?)
 
-Ask 1 is shipped, so these are about how far to take the rest:
+Each deployed consumer (`gcs`, `cw`, mgu, the `auth.oa.dev` demo, later watchy) needs its **own** OAuth 2.0 "Web application" client: the client is bound to a fixed set of authorized JavaScript origins and redirect URIs, and One Tap/FedCM additionally requires the app's exact web origin be authorized on the client. One shared client across deployments would mean every app's origins pile onto one client (blast radius, and you can't rotate one app's secret without touching the others). So: **one client per deployment.**
 
-1. **Ask 3 (Google-first sign-in panel) — build now?** This is the FE that makes Ask 1 usable without CFA's hosted page. mgu can't fully drop CFA-as-IdP until *something* renders "Continue with Google." Likely yes; confirm.
-2. **Ask 2 (email-code fallback) — build, or punt to the interim story?** The tail is ~4 non-Google addresses. The spec's interim answer (admin mints an email-bound grant, delivered to the claimed inbox = verification) needs no new code and covers those 4. Building `core/email-codes.ts` is real work (a pending-auth table, a `sendEmail` adapter, deliverability). Recommend **punt** unless you want self-serve for the tail now.
-3. **Ask 4 (One Tap) — want it, and at what priority?** Additive polish on top of Ask 3. If yes: (a) **auto-prompt vs button-only** — the auto-surfacing One Tap prompt is lower-friction but can feel intrusive / has display caps; the rendered "Sign in with Google" button is calmer. (b) Priority relative to Ask 3 — I'd do Ask 3 first (it's the fallback One Tap degrades to) and Ask 4 as a follow-up.
-4. **Google OAuth client** — Ask 1's consumer usage names a fresh client in `oa-internal-450019`. For One Tap the **Client ID** must be authorized for the app's web origin(s) and listed as a FedCM/One Tap origin. Is that client created, and do you want the demo (`auth.oa.dev`) wired as a live example, or is this consumer-side (mgu) only?
-5. **CFA decommission** — Ask 1 landing was the gate for deleting mgu's Access app. Is that the mgu session's job (not this repo's), or do you want a note/checklist here?
+The friction Ryan flags — "a bunch of unintuitive cloud-console clicks, I always hit a wall there" — is real and is the main adoption tax of this whole direction. The console path is: create/verify the **OAuth consent screen (brand)** for the project, then create a **Web application client**, then hand-enter authorized origins + redirect URIs, then (for One Tap) register the origin again. The consent-screen brand step in particular has historically been the least IaC-able part of Google's stack.
+
+**Open work item — spike the IaC feasibility** (tracked separately in `specs/oauth-client-iac.md`): can the per-deployment client be provisioned by Terraform/Pulumi/`gcloud` rather than clicks — `google_iap_brand` + `google_iap_client`, the newer `google_oauth_client` resource (verify it exists and covers non-IAP web clients), or a `gcloud alpha` path — and what is the minimal manual residue (brand verification, app publishing status)? The goal is a copy-pasteable module an adopter parametrizes with `{project, app_origin, redirect_uri}` and gets a client id/secret out, so adoption is `terraform apply`, not a console safari. If full IaC isn't possible, document the exact minimal click-path as the fallback.
+
+## Decisions — resolved 2026-09-19
+
+1. **Ask 3 (sign-in panel)** — **build.** The FE spine; mgu can't drop CFA-as-IdP until it renders.
+2. **Ask 2 (email codes)** — **build (required).** Non-Google accounts must be able to access sites, so the full `core/email-codes.ts` flow is in scope, not just the interim admin-delivered grant.
+3. **Ask 4 (One Tap)** — **build, button-first, after Ask 3.**
+4. **OAuth client** — **one per deployment; spike the IaC path** (above). Ryan hasn't created the GCP-console client yet, so any live wiring (incl. `auth.oa.dev` as an example) waits on either the IaC module or a manual client; the package code (Asks 2/3/4) can ship and be exercised in tests without a live client.
+5. **CFA decommission** — **each app ports itself** once the surface is built; not this repo's job. No checklist tracked here.
