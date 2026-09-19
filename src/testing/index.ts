@@ -206,6 +206,11 @@ export function memoryPendingAuthStore(): MemoryPendingAuthStore {
       for (const row of rows.values()) if (row.email === email && row.createdAt >= sinceS) n++
       return n
     },
+    async countSinceByIp(ipHash, sinceS) {
+      let n = 0
+      for (const row of rows.values()) if (row.ipHash === ipHash && row.createdAt >= sinceS) n++
+      return n
+    },
   }
 }
 

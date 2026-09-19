@@ -546,6 +546,7 @@ interface PendingAuthRow {
   expires_at: number
   consumed_at: number | null
   attempts: number
+  ip_hash: string | null
 }
 
 const toPendingAuth = (r: PendingAuthRow): PendingAuth => ({
@@ -557,9 +558,10 @@ const toPendingAuth = (r: PendingAuthRow): PendingAuth => ({
   expiresAt: r.expires_at,
   consumedAt: r.consumed_at,
   attempts: r.attempts,
+  ipHash: r.ip_hash,
 })
 
-const PENDING_COLS = `id, email, token_hash, code_hash, created_at, expires_at, consumed_at, attempts`
+const PENDING_COLS = `id, email, token_hash, code_hash, created_at, expires_at, consumed_at, attempts, ip_hash`
 
 export function d1PendingAuthStore(db: D1Database): PendingAuthStore {
   const byId = async (id: string): Promise<PendingAuth | null> => {
@@ -584,7 +586,7 @@ export function d1PendingAuthStore(db: D1Database): PendingAuthStore {
       await db
         .prepare(
           `INSERT INTO pending_auth (${PENDING_COLS})
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -595,6 +597,7 @@ export function d1PendingAuthStore(db: D1Database): PendingAuthStore {
           row.expiresAt,
           row.consumedAt,
           row.attempts,
+          row.ipHash,
         )
         .run()
     },
@@ -619,6 +622,14 @@ export function d1PendingAuthStore(db: D1Database): PendingAuthStore {
       const row = await db
         .prepare(`SELECT COUNT(*) AS n FROM pending_auth WHERE email = ? AND created_at >= ?`)
         .bind(email, sinceS)
+        .first<{ n: number }>()
+      return row?.n ?? 0
+    },
+
+    async countSinceByIp(ipHash, sinceS) {
+      const row = await db
+        .prepare(`SELECT COUNT(*) AS n FROM pending_auth WHERE ip_hash = ? AND created_at >= ?`)
+        .bind(ipHash, sinceS)
         .first<{ n: number }>()
       return row?.n ?? 0
     },

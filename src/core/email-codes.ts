@@ -21,6 +21,7 @@
  * the OIDC adapter's `oidcStart`/`oidcCallback`, so a consumer wires them as
  * Functions at whatever paths it likes.
  */
+import { requestMeta } from './audit.js'
 import type { Gate } from './gate.js'
 import type { SendEmail } from './email.js'
 import type { PendingAuthStore } from './store.js'
@@ -36,6 +37,8 @@ export interface PendingAuth {
   expiresAt: number
   consumedAt: number | null
   attempts: number
+  /** HMAC of the client IP the send came from, or null when no IP was present. */
+  ipHash: string | null
 }
 
 export interface EmailCodeOptions {
@@ -53,8 +56,14 @@ export interface EmailCodeOptions {
   ttlS?: number
   /** Wrong-code guesses allowed before the row is spent. Default 5. */
   maxAttempts?: number
-  /** Cap sends to one address within `windowS`. Default 3 per 900s. */
-  rateLimit?: { windowS?: number; maxPerEmail?: number }
+  /**
+   * Cap sends within `windowS`, per address and per source IP. The per-IP cap
+   * (default 10) is looser than per-email (default 3) so a shared NAT doesn't
+   * lock out colleagues, while still blunting one IP fanning out across many
+   * allowed addresses. The client IP is read from `CF-Connecting-IP` /
+   * `X-Forwarded-For`; absent it (local, tests), only the per-email cap applies.
+   */
+  rateLimit?: { windowS?: number; maxPerEmail?: number; maxPerIp?: number }
   /** Where a successful link lands. Only same-origin paths; default `/`. */
   defaultNext?: string
   nowMs?: () => number
@@ -116,6 +125,7 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
   } = opts
   const windowS = opts.rateLimit?.windowS ?? 900
   const maxPerEmail = opts.rateLimit?.maxPerEmail ?? 3
+  const maxPerIp = opts.rateLimit?.maxPerIp ?? 10
   const sec = (ms: number): number => Math.floor(ms / 1000)
 
   /**
@@ -125,8 +135,19 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
    * allowlist — a not-allowed address simply never receives mail, and its `id`
    * names a flow that no code will ever satisfy. The UI offers request-access
    * alongside, which is where a genuinely-not-allowed person goes.
+   *
+   * Pass `waitUntil` (the Pages Function context has it) so the mail send is
+   * scheduled rather than awaited: otherwise the admitted path blocks on
+   * delivery while the early-return paths don't, and that latency gap is itself
+   * a (coarse) allowlist oracle. Without it, delivery is awaited inline.
    */
-  async function start({ request }: { request: Request }): Promise<Response> {
+  async function start({
+    request,
+    waitUntil,
+  }: {
+    request: Request
+    waitUntil?: (p: Promise<unknown>) => void
+  }): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as { email?: unknown }
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
     // A malformed address is a client error, not an allowlist signal, so it may
@@ -135,9 +156,14 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
 
     const nowS = sec(nowMs())
     const constant: StartResult = { status: 'sent', id: generateId() }
+    const { ipHash } = await requestMeta(request, gate.secret)
 
     const recent = await store.countSince(email, nowS - windowS)
     if (recent >= maxPerEmail) return json(constant)
+    // Per-IP cap: only meaningful once an IP is known. Rows exist only for
+    // admitted addresses, so this bounds how fast one source can fan mail out
+    // across the allowlist, not anonymous probing (which sends nothing).
+    if (ipHash && (await store.countSinceByIp(ipHash, nowS - windowS)) >= maxPerIp) return json(constant)
 
     const scopes = await gate.admits(email)
     if (!scopes) return json(constant)
@@ -153,12 +179,13 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
       expiresAt: nowS + ttlS,
       consumedAt: null,
       attempts: 0,
+      ipHash,
     }
     await store.insert(row)
 
     const minutes = Math.round(ttlS / 60)
     const link = linkFor(token)
-    await send({
+    const deliver = send({
       from,
       to: email,
       subject: `Your sign-in code for ${appName}`,
@@ -177,6 +204,10 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
         `If you didn't ask to sign in, you can ignore this email.`,
       ].join('\n'),
     }).catch(() => {})
+    // Scheduled (constant-latency) when the runtime gives us `waitUntil`, else
+    // awaited so the send still happens before the worker is torn down.
+    if (waitUntil) waitUntil(deliver)
+    else await deliver
 
     return json(constant)
   }

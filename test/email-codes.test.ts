@@ -9,6 +9,7 @@ import { emailCodeAuth } from '../src/core/email-codes.js'
 import type { EmailMessage, SendResult } from '../src/core/email.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
+import { hashIp } from '../src/core/tokens.js'
 import { memoryPendingAuthStore } from '../src/testing/index.js'
 import { memoryStore } from './memory-store.js'
 
@@ -176,5 +177,96 @@ describe('rate limiting', () => {
     expect(sent.length).toBe(3)
     const last = (await (await startReq(ALLOWED)).json()) as Record<string, unknown>
     expect(last.status).toBe('sent')
+  })
+
+  it('caps sends per source IP across addresses, storing the hashed IP', async () => {
+    const IP = '203.0.113.7'
+    const gate = createGate({ store: memoryStore(), secret: SECRET, policy: domainPolicy(['openathena.ai'], ['read']) })
+    const st = memoryPendingAuthStore()
+    // maxPerEmail high so the per-address cap can't be what stops us; maxPerIp = 2.
+    const local = emailCodeAuth({
+      gate,
+      store: st,
+      send: async (msg): Promise<SendResult> => {
+        sent.push(msg)
+        return { ok: true }
+      },
+      from: 'Auth <noreply@app.test>',
+      linkFor,
+      rateLimit: { maxPerEmail: 100, maxPerIp: 2 },
+    })
+    const fromIp = (email: string) =>
+      local.start({
+        request: new Request('https://app.test/auth/email/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'CF-Connecting-IP': IP },
+          body: JSON.stringify({ email }),
+        }),
+      })
+
+    await fromIp('a@openathena.ai')
+    await fromIp('b@openathena.ai')
+    const third = (await (await fromIp('c@openathena.ai')).json()) as Record<string, unknown>
+
+    // Two distinct addresses mailed, the third capped — but the response shape
+    // is unchanged, so the cap isn't observable as a distinct answer.
+    expect(sent.map(m => m.to)).toEqual(['a@openathena.ai', 'b@openathena.ai'])
+    expect(third.status).toBe('sent')
+    // Every stored row carries the HMAC of the IP (never the raw address), by
+    // the same `hashIp` scheme the access log uses.
+    const expected = await hashIp(IP, SECRET)
+    expect([...st.rows.values()].map(r => r.ipHash)).toEqual([expected, expected])
+  })
+
+  it('skips the per-IP cap gracefully when no IP header is present', async () => {
+    // The default flow sends with no CF-Connecting-IP; per-IP must not throw or
+    // block, and rows record a null ipHash.
+    const res = (await (await startReq(ALLOWED)).json()) as Record<string, unknown>
+    expect(res.status).toBe('sent')
+    expect([...store.rows.values()].map(r => r.ipHash)).toEqual([null])
+  })
+})
+
+describe('start — waitUntil defers delivery', () => {
+  it('schedules the send instead of awaiting it inline', async () => {
+    const scheduled: Promise<unknown>[] = []
+    let release!: () => void
+    const gate = createGate({ store: memoryStore(), secret: SECRET, policy: domainPolicy(['openathena.ai'], ['read']) })
+    const local = emailCodeAuth({
+      gate,
+      store: memoryPendingAuthStore(),
+      // Delivery blocks until released, so "already delivered" would prove it
+      // was awaited inline.
+      send: async (msg): Promise<SendResult> => {
+        await new Promise<void>(r => {
+          release = () => {
+            sent.push(msg)
+            r()
+          }
+        })
+        return { ok: true }
+      },
+      from: 'Auth <noreply@app.test>',
+      linkFor,
+    })
+
+    const res = await local.start({
+      request: new Request('https://app.test/auth/email/start', {
+        method: 'POST',
+        body: JSON.stringify({ email: ALLOWED }),
+      }),
+      waitUntil: p => scheduled.push(p),
+    })
+    const parsed = (await res.json()) as Record<string, unknown>
+
+    // The response is back and exactly one send was handed to waitUntil, but no
+    // mail has been delivered yet — it wasn't awaited inline.
+    expect([parsed.status, typeof parsed.id]).toEqual(['sent', 'string'])
+    expect([scheduled.length, sent.length]).toEqual([1, 0])
+
+    // Draining the scheduled work delivers it.
+    release()
+    await scheduled[0]
+    expect(sent.map(m => m.to)).toEqual([ALLOWED])
   })
 })
