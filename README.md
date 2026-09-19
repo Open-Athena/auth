@@ -59,6 +59,12 @@ The `dist` branch only advances on a commit whose tests passed, and CI then inst
 
 Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), and `react` + `@tanstack/react-query` for the `/react` subpath.
 
+## Migrations
+
+`migrations/` holds the schema in two forms. **A fresh database** applies `migrations/schema.sql` — the whole current schema in one file. **An existing database** applies only the numbered deltas it hasn't yet (`0001_*.sql` … `0011_*.sql`); each is an incremental step (a `CREATE` or an `ALTER`) that carries a live DB forward without dropping data, so the numbered files are the upgrade path and can't be collapsed away while any consumer is mid-sequence.
+
+These are *reference DDL*, not drop-in files: apply them by **content**, integrated into your own migration runner and renumbered into your own sequence — don't assume the package's numbering matches yours. `schema.sql` is generated from the numbered migrations (`node scripts/gen-schema.mjs`) and a test keeps the two in lockstep, so it never drifts.
+
 ## Quickstart
 
 Apply the migrations, then build a gate:
