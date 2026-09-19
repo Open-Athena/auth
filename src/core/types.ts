@@ -66,7 +66,7 @@ export interface GrantPatch {
 }
 
 export type Auth =
-  | { kind: 'sso'; email: string; admin: boolean; scopes: string[] }
+  | { kind: 'sso'; email: string; admin: boolean; scopes: string[]; subject: Subject | null }
   | { kind: 'grant'; grant: Grant; admin: false; scopes: string[] }
 
 /** Wildcard scope: granted to admins, matches every `hasScope` check. */

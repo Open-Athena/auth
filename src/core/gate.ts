@@ -8,7 +8,18 @@
  * story (assume forwarding; make it visible and revocable) actually work.
  */
 import { type AccessEvent, type AuditSink, nullAudit, requestMeta } from './audit.js'
+import { type AssetStore, assetId, assetUri } from './assets.js'
+import {
+  InvalidImageError,
+  MAX_INLINE_AVATAR_BYTES,
+  bytesToDataUri,
+  isGithubHandle,
+  isSafeAvatarUrl,
+  resolveAvatar,
+  validateUploadedImage,
+} from './avatar.js'
 import { looksAutomated } from './bots.js'
+import { type Profile, cleanName } from './profile.js'
 import { type EmailPolicy, adminPolicy, firstMatch } from './policy.js'
 import {
   type AccessRequest,
@@ -32,7 +43,7 @@ import {
   signSession,
   verifySession,
 } from './session.js'
-import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from './store.js'
+import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from './store.js'
 import {
   DEFAULT_DECISION_TTL_S,
   DEFAULT_REVERSAL_WINDOW_S,
@@ -89,6 +100,39 @@ export interface GateOptions {
     maxRedeems?: number | null
     sessionTtlS?: number | null
   }
+  /**
+   * Self-set profiles (name + avatar). Without it, `getProfile`/`putProfile`
+   * report unconfigured and every SSO `subject` is null (initials, as today).
+   */
+  profiles?: ProfileStore
+  /**
+   * Where uploaded avatar bytes live when too big to inline. Without it,
+   * avatars inline as `data:` URIs capped at `MAX_INLINE_AVATAR_BYTES`.
+   */
+  assets?: AssetStore
+  /**
+   * Let a share-link (grant) session edit its own profile. Default false: a
+   * link's face is the admin's anti-forwarding signal, and a *forwarded* link
+   * rewriting whose identity it shows is exactly the hazard to avoid. Even when
+   * true, only an email-bound grant qualifies — an anonymous link has no
+   * principal to key a profile by.
+   */
+  allowGrantSelfEdit?: boolean
+  /**
+   * Reject a profile edit within this many seconds of the last one — a durable,
+   * per-principal throttle (the row's `updatedAt`), no counter store needed.
+   * Default 0 (off).
+   */
+  profileMinEditIntervalS?: number
+  /**
+   * Byte cap for an *uploaded* avatar when an `AssetStore` is bound (larger
+   * faces live out of the row). Default 256 KB. Inlined sources (url/github/
+   * gravatar, and uploads with no asset store) stay capped at
+   * `MAX_INLINE_AVATAR_BYTES`.
+   */
+  profileUploadMaxBytes?: number
+  /** Injectable fetch for server-side avatar copying (url/github/gravatar). Default global. */
+  fetch?: typeof globalThis.fetch
 }
 
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted'
@@ -114,6 +158,36 @@ export interface MintResult {
   /** The raw token. Returned exactly once — only its hash is stored. */
   token: string
 }
+
+/**
+ * How a caller supplies an avatar to `putProfile`. Every source is copied
+ * server-side (`resolveAvatar`/`validateUploadedImage`) — a live remote URL is
+ * never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
+ */
+export type AvatarInput =
+  | { upload: Uint8Array }
+  | { url: string }
+  | { github: string }
+  | { gravatar: true }
+  | null
+  | undefined
+
+export interface ProfileInput {
+  first?: string | null
+  last?: string | null
+  avatar?: AvatarInput
+}
+
+export type PutProfileResult =
+  | { ok: true; profile: Profile }
+  /** No profile store bound. */
+  | { ok: false; reason: 'unconfigured' }
+  /** A bare/grant session that may not self-edit. */
+  | { ok: false; reason: 'forbidden' }
+  /** Edited again within `profileMinEditIntervalS`. */
+  | { ok: false; reason: 'rate-limited' }
+  /** The supplied avatar bytes/url/handle were not an acceptable image. */
+  | { ok: false; reason: 'invalid-avatar'; detail: string }
 
 const sec = (nowMs: number): number => Math.floor(nowMs / 1000)
 
@@ -161,11 +235,34 @@ export function createGate(opts: GateOptions) {
     touchIntervalS = 60,
     logViews = false,
     filterBots = true,
+    profiles,
+    assets,
+    allowGrantSelfEdit = false,
+    profileMinEditIntervalS = 0,
+    profileUploadMaxBytes = 256 * 1024,
+    fetch: fetchImpl = globalThis.fetch,
   } = opts
   const policy: EmailPolicy = opts.policy
     ? firstMatch(adminPolicy(adminEmails), opts.policy)
     : adminPolicy(adminEmails)
   const isAdmin = (email: string): boolean => adminEmails.some(a => a.toLowerCase() === email.toLowerCase())
+
+  /**
+   * The self-set identity to attach to an SSO principal, or null. Read on every
+   * authenticate, same cadence as the grant re-join, so a name/face change is
+   * live on the next request. Null when there's no profile store or no row —
+   * `<Avatar>`/`displayName` fall back to initials exactly as before.
+   */
+  async function subjectFor(email: string): Promise<Subject | null> {
+    if (!profiles) return null
+    const p = await profiles.get(email)
+    if (!p) return null
+    const subject: Subject = {}
+    if (p.first) subject.first = p.first
+    if (p.last) subject.last = p.last
+    if (p.avatar) subject.avatar = p.avatar
+    return Object.keys(subject).length ? subject : null
+  }
 
   const notify: Notify = opts.notify ?? noopNotify
   const log = (event: AccessEvent): Promise<void> => audit.log(event)
@@ -234,7 +331,13 @@ export function createGate(opts: GateOptions) {
         await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS)
         return null
       }
-      return await afterAuth({ kind: 'sso', email: parsed.value, admin: isAdmin(parsed.value), scopes })
+      return await afterAuth({
+        kind: 'sso',
+        email: parsed.value,
+        admin: isAdmin(parsed.value),
+        scopes,
+        subject: await subjectFor(parsed.value),
+      })
     }
 
     // Re-join the grant every request: this is what makes revocation instant.
@@ -302,7 +405,7 @@ export function createGate(opts: GateOptions) {
     }
     const cookie = cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)
     await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS)
-    return { auth: { kind: 'sso', email, admin: isAdmin(email), scopes }, cookie }
+    return { auth: { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) }, cookie }
   }
 
   async function signOut(req: Request, auth: Auth | null = null, nowMs = Date.now()): Promise<string> {
@@ -601,10 +704,108 @@ export function createGate(opts: GateOptions) {
     return grant
   }
 
+  /** The email a profile is keyed by: an SSO principal, or an email-bound grant. */
+  function principalEmail(auth: Auth): string | null {
+    return auth.kind === 'sso' ? auth.email : auth.grant.email
+  }
+
+  /**
+   * Who may edit their own profile. An SSO principal authenticated as
+   * themselves, always. A grant session only when the app opted in *and* the
+   * link is email-bound — an anonymous or forwarded link has no verified
+   * principal, which is the "forwarding manufactures identities" hazard.
+   */
+  function mayEditProfile(auth: Auth): boolean {
+    if (auth.kind === 'sso') return true
+    return allowGrantSelfEdit && auth.grant.email !== null
+  }
+
+  /** The caller's own profile, or null. Never reads another principal's row. */
+  async function getProfile(auth: Auth): Promise<Profile | null> {
+    if (!profiles) return null
+    const email = principalEmail(auth)
+    return email ? profiles.get(email) : null
+  }
+
+  /** Copy a supplied avatar server-side to a `data:` URI or `asset://` ref, or throw `InvalidImageError`. */
+  async function resolveAvatarInput(
+    input: Exclude<AvatarInput, null | undefined>,
+    email: string,
+  ): Promise<{ value: string; src: Profile['avatarSrc'] }> {
+    if ('upload' in input) {
+      const cap = assets ? profileUploadMaxBytes : MAX_INLINE_AVATAR_BYTES
+      const { type, bytes } = validateUploadedImage(input.upload, { maxBytes: cap })
+      if (assets) return { value: assetUri(await assets.put(bytes, type)), src: 'upload' }
+      return { value: bytesToDataUri(type, bytes), src: 'upload' }
+    }
+    if ('url' in input) {
+      if (!isSafeAvatarUrl(input.url)) throw new InvalidImageError('avatar url must be https with no credentials')
+      const data = await resolveAvatar({ url: input.url }, { inline: true, fetch: fetchImpl })
+      if (!data) throw new InvalidImageError('could not fetch a valid image from that url')
+      return { value: data, src: 'url' }
+    }
+    if ('github' in input) {
+      if (!isGithubHandle(input.github)) throw new InvalidImageError('not a valid github handle')
+      const data = await resolveAvatar({ github: input.github }, { inline: true, fetch: fetchImpl })
+      if (!data) throw new InvalidImageError('no github avatar for that handle')
+      return { value: data, src: 'github' }
+    }
+    const data = await resolveAvatar({ email }, { inline: true, fetch: fetchImpl })
+    if (!data) throw new InvalidImageError('no gravatar for your address')
+    return { value: data, src: 'gravatar' }
+  }
+
+  /**
+   * Set the caller's own display name and/or avatar. Only an authenticated self
+   * may write, and only their own row. The avatar is always *copied* here — a
+   * live third-party URL is never persisted, so rendering a profile never phones
+   * a third party.
+   */
+  async function putProfile(auth: Auth, input: ProfileInput, nowMs = Date.now()): Promise<PutProfileResult> {
+    if (!profiles) return { ok: false, reason: 'unconfigured' }
+    if (!mayEditProfile(auth)) return { ok: false, reason: 'forbidden' }
+    const email = principalEmail(auth)
+    if (!email) return { ok: false, reason: 'forbidden' }
+    const nowS = sec(nowMs)
+    const existing = await profiles.get(email)
+    if (existing && profileMinEditIntervalS > 0 && nowS - existing.updatedAt < profileMinEditIntervalS) {
+      return { ok: false, reason: 'rate-limited' }
+    }
+
+    const first = 'first' in input ? cleanName(input.first) : (existing?.first ?? null)
+    const last = 'last' in input ? cleanName(input.last) : (existing?.last ?? null)
+
+    let avatar = existing?.avatar ?? null
+    let avatarSrc = existing?.avatarSrc ?? null
+    if (input.avatar !== undefined) {
+      // Replacing or clearing: drop the prior asset so the store doesn't accrete
+      // orphans. Inlined (`data:`) rows need no cleanup.
+      const priorAsset = assetId(existing?.avatar)
+      if (priorAsset && assets) await assets.del(priorAsset).catch(() => {})
+      if (input.avatar === null) {
+        avatar = null
+        avatarSrc = null
+      } else {
+        try {
+          const resolved = await resolveAvatarInput(input.avatar, email)
+          avatar = resolved.value
+          avatarSrc = resolved.src
+        } catch (e) {
+          const detail = e instanceof InvalidImageError ? e.message : 'invalid avatar'
+          return { ok: false, reason: 'invalid-avatar', detail }
+        }
+      }
+    }
+
+    const profile: Profile = { email, first, last, avatar, avatarSrc, updatedAt: nowS }
+    await profiles.put(profile)
+    return { ok: true, profile }
+  }
+
   /** The JSON an app hands its frontend. Never includes tokens or hashes. */
   function whoami(auth: Auth) {
     return auth.kind === 'sso'
-      ? { kind: 'sso' as const, email: auth.email, admin: auth.admin, scopes: auth.scopes }
+      ? { kind: 'sso' as const, email: auth.email, admin: auth.admin, scopes: auth.scopes, subject: auth.subject }
       : {
           kind: 'grant' as const,
           // The grant id, so a recipient's UI can name the session it is in —
@@ -632,6 +833,8 @@ export function createGate(opts: GateOptions) {
     update,
     logView,
     whoami,
+    getProfile,
+    putProfile,
     isAdmin,
     cookieName,
     /**

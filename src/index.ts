@@ -1,14 +1,22 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js'
 export { nullAudit, requestMeta } from './core/audit.js'
 export {
+  InvalidImageError,
+  MAX_AVATAR_DIMENSION,
   MAX_INLINE_AVATAR_BYTES,
+  bytesToDataUri,
   githubAvatarUrl,
   gravatarUrl,
   isGithubHandle,
   isSafeAvatarUrl,
   resolveAvatar,
+  validateUploadedImage,
 } from './core/avatar.js'
-export type { AvatarSource, ResolveAvatarOptions } from './core/avatar.js'
+export type { AvatarSource, ResolveAvatarOptions, ValidatedImage } from './core/avatar.js'
+export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js'
+export type { AssetStore, StoredAsset } from './core/assets.js'
+export { MAX_PROFILE_NAME, cleanName } from './core/profile.js'
+export type { AvatarSourceKind, Profile } from './core/profile.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
 export { renderDecisionPage } from './core/decision-page.js'
@@ -27,7 +35,17 @@ export type { EmailMessage, EmailNotifyOptions, SendEmail, SendResult } from './
 export { verifyRs256Jwt } from './core/jwt.js'
 export type { VerifyJwtOptions } from './core/jwt.js'
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js'
-export type { Gate, GateOptions, MintResult, RedeemFailure, RedeemResult, RequestAccessResult } from './core/gate.js'
+export type {
+  AvatarInput,
+  Gate,
+  GateOptions,
+  MintResult,
+  ProfileInput,
+  PutProfileResult,
+  RedeemFailure,
+  RedeemResult,
+  RequestAccessResult,
+} from './core/gate.js'
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js'
 export type { AccessRequest, Notify, NotifyEvent, RateLimit, RequestStatus } from './core/requests.js'
 export { authRoutes } from './core/routes.js'
@@ -54,6 +72,7 @@ export type {
   GrantDraft,
   GrantListOpts,
   GrantStore,
+  ProfileStore,
   RequestListOpts,
   RequestStore,
   StoredEvent,

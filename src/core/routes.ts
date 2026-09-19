@@ -10,7 +10,7 @@ import { type DecisionPageOptions, renderDecisionPage } from './decision-page.js
 import type { DecisionView } from './decisions.js'
 import type { Auth } from './types.js'
 import type { AuditQuery } from './store.js'
-import type { Gate } from './gate.js'
+import type { Gate, ProfileInput } from './gate.js'
 import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
 import { cleanSubject } from './requests.js'
 import { type GrantPatch, hasScope } from './types.js'
@@ -90,6 +90,51 @@ async function formOrJson(req: Request): Promise<Record<string, string>> {
 
 const defaultCreator = (auth: Auth): string => (auth.kind === 'sso' ? auth.email : `g:${auth.grant.id}`)
 
+/**
+ * Parse a `PUT /profile` body into a `ProfileInput`. JSON for name + a
+ * url/github/gravatar/clear avatar; multipart when the avatar is an uploaded
+ * file (raw bytes don't ride JSON cleanly). A key that's *absent* leaves that
+ * field unchanged; `avatar: null` clears it.
+ */
+async function readProfileInput(req: Request): Promise<ProfileInput> {
+  const ct = req.headers.get('content-type') ?? ''
+  if (ct.includes('multipart/form-data')) {
+    const form = await req.formData().catch(() => null)
+    if (!form) return {}
+    const input: ProfileInput = {}
+    if (form.has('first')) input.first = String(form.get('first'))
+    if (form.has('last')) input.last = String(form.get('last'))
+    const file = form.get('avatar')
+    // A file part is a Blob at runtime; workers-types narrows `FormData.get` to
+    // `string | null` in this build, so duck-type past it rather than trust it.
+    if (file !== null && typeof file !== 'string') {
+      input.avatar = { upload: new Uint8Array(await (file as unknown as Blob).arrayBuffer()) }
+    } else if (form.has('avatarUrl')) input.avatar = { url: String(form.get('avatarUrl')) }
+    else if (form.has('avatarGithub')) input.avatar = { github: String(form.get('avatarGithub')) }
+    else if (form.get('avatarGravatar') === 'true') input.avatar = { gravatar: true }
+    else if (form.has('avatar')) input.avatar = null // a string `avatar` field is the clear directive
+    return input
+  }
+  const b = (await req.json().catch(() => null)) as Record<string, unknown> | null
+  if (!b || typeof b !== 'object') return {}
+  const input: ProfileInput = {}
+  if ('first' in b) input.first = (b.first as string | null) ?? null
+  if ('last' in b) input.last = (b.last as string | null) ?? null
+  if ('avatar' in b) input.avatar = normalizeAvatarJson(b.avatar)
+  return input
+}
+
+/** Coerce a JSON `avatar` value to an `AvatarInput` (uploads are multipart-only). */
+function normalizeAvatarJson(a: unknown): ProfileInput['avatar'] {
+  if (a === null) return null
+  if (!a || typeof a !== 'object') return undefined
+  const o = a as Record<string, unknown>
+  if (typeof o.url === 'string') return { url: o.url }
+  if (typeof o.github === 'string') return { github: o.github }
+  if (o.gravatar === true) return { gravatar: true }
+  return undefined
+}
+
 export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
   const {
     basePath = '/api/auth',
@@ -157,6 +202,26 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       }
       await gate.logView(req, auth, undefined, path)
       return json({ ok: true })
+    }
+
+    // The signed-in principal's own profile (name + face). Self only — `GET`
+    // never takes an email argument, `PUT` only ever writes the caller's row.
+    // No admin scope: editing your own label is not an admin action.
+    if (rest === '/profile' && method === 'GET') {
+      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      const p = await gate.getProfile(auth)
+      return json(p ? { first: p.first, last: p.last, avatar: p.avatar } : null)
+    }
+
+    if (rest === '/profile' && method === 'PUT') {
+      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      const res = await gate.putProfile(auth, await readProfileInput(req))
+      if (!res.ok) {
+        const status =
+          res.reason === 'forbidden' ? 403 : res.reason === 'rate-limited' ? 429 : res.reason === 'unconfigured' ? 501 : 400
+        return json({ error: res.reason, ...('detail' in res ? { detail: res.detail } : {}) }, status)
+      }
+      return json({ first: res.profile.first, last: res.profile.last, avatar: res.profile.avatar })
     }
 
     if (rest === '/request' && method === 'POST') {
