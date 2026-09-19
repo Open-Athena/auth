@@ -32,6 +32,10 @@
       "types": "./dist/adapters/cf-access.d.ts",
       "default": "./dist/adapters/cf-access.js"
     },
+    "./r2": {
+      "types": "./dist/adapters/r2.d.ts",
+      "default": "./dist/adapters/r2.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"

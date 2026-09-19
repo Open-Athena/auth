@@ -10,8 +10,11 @@
  * Not for production: no persistence, no concurrency safety.
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js'
+import type { AssetStore, StoredAsset } from '../core/assets.js'
+import type { Profile } from '../core/profile.js'
 import type { AccessRequest, RequestStatus } from '../core/requests.js'
-import type { GrantListOpts, GrantStore, RequestListOpts, RequestStore } from '../core/store.js'
+import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from '../core/store.js'
+import { generateId } from '../core/tokens.js'
 import type { Grant } from '../core/types.js'
 
 export interface MemoryGrantStore extends GrantStore {
@@ -142,6 +145,48 @@ export function memoryRequestStore(): MemoryRequestStore {
           r.createdAt >= sinceS &&
           (by.email !== undefined ? r.email === by.email : by.ipHash != null && ips.get(r.id) === by.ipHash),
       ).length
+    },
+  }
+}
+
+export interface MemoryProfileStore extends ProfileStore {
+  rows: Map<string, Profile>
+}
+
+export function memoryProfileStore(): MemoryProfileStore {
+  const rows = new Map<string, Profile>()
+  return {
+    rows,
+    async get(email) {
+      return rows.get(email) ?? null
+    },
+    async put(profile) {
+      rows.set(profile.email, { ...profile })
+    },
+    async del(email) {
+      rows.delete(email)
+    },
+  }
+}
+
+export interface MemoryAssetStore extends AssetStore {
+  rows: Map<string, StoredAsset>
+}
+
+export function memoryAssetStore(): MemoryAssetStore {
+  const rows = new Map<string, StoredAsset>()
+  return {
+    rows,
+    async put(bytes, type) {
+      const id = generateId()
+      rows.set(id, { bytes, type })
+      return id
+    },
+    async get(id) {
+      return rows.get(id) ?? null
+    },
+    async del(id) {
+      rows.delete(id)
     },
   }
 }
