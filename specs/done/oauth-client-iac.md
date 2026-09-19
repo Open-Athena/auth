@@ -79,3 +79,15 @@ The only cost of per-app is the manual create per deployment, which the checklis
 [gh6074]: https://github.com/hashicorp/terraform-provider-google/issues/6074
 [gh16452]: https://github.com/hashicorp/terraform-provider-google/issues/16452
 [gsi]: https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid
+
+## As-built (2026-09-19)
+
+Shipped the recommended adoption CLI: [`scripts/provision-oauth-client.mjs`](../scripts/provision-oauth-client.mjs) (Node ESM, built-ins only, matching `verify-dist.mjs`), with pure helpers unit-tested in `test/provision-oauth-client.test.mjs` (12 exact-equality tests). Flow: orient `gcloud` → print the consent-screen requirement + link → print the create-form deep link with the three field values (app type, JS origin, redirect URIs) → capture the pasted id/secret → store via `wrangler pages secret put`. `--dry-run` is the default (prints every command + the deep link, runs nothing); `--run` executes, but the client-create step stays manual regardless.
+
+Deviations from the sketch above, and why:
+
+- **No `gcloud services enable iap.googleapis.com` by default.** That was a holdover from the dead IAP path; a plain Sign-in-with-Google client needs no API enabled. Enabling an API is opt-in via a repeatable `--enable-service <api>` (for an app that *does* later call, say, the People API).
+- **Env-var names are `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, matching what the README's `oidc` example and the adapter actually read (`env.GOOGLE_CLIENT_ID`), not the sketch's `GOOGLE_OAUTH_*`. Overridable with `--id-var` / `--secret-var`.
+- **The consent-screen step is printed guidance, not an automated assert.** There is no reliable API to query an External brand's publishing status, so pretending to check it would be theatre; the CLI prints the requirement (External + In production) and the console link instead.
+- **Secret handling:** the client secret is read on a muted, buffered single-`readline` (a second interface would close the shared stdin and drop the line under a pipe), handed to `wrangler` on **stdin** so it never enters argv/`ps`/history, and never printed or logged (the CLI echoes only `<id> (secret hidden, N chars)`).
+- **What's tested vs not:** the pure surface (URL/deep-link construction, input validation, argv builders, arg parsing) is unit-tested with exact-string assertions; the interactive prompts and the `gcloud`/`wrangler` shell-outs are not (they'd need a live console/CLIs) — `--dry-run` is the manual-verification path.
