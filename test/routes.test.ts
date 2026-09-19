@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore } from '../src/adapters/d1.js'
 import { createGate } from '../src/core/gate.js'
 import { adminPolicy, anyEmailPolicy, firstMatch } from '../src/core/policy.js'
@@ -37,7 +37,14 @@ const asAdmin = async (email = 'boss@openathena.ai') => {
   return pair(res!.cookie)
 }
 
+// Sessions are signed at NOW but `gate.authenticate` verifies against the wall
+// clock; without pinning the clock the default 30-day session TTL makes every
+// `asAdmin()` cookie expire 30 days after NOW and the suite starts 401ing on a
+// fixed calendar date. Fake only `Date` (leave real timers) so signing and
+// verification share one instant.
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   db = testDb()
   gate = createGate({
     store: d1GrantStore(db),
@@ -48,6 +55,10 @@ beforeEach(() => {
     approvalGrant: { scopes: ['reports'] },
   })
   handle = authRoutes(gate, { audit: d1AuditQuery(db) })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('mounting', () => {

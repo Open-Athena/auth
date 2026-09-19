@@ -1,5 +1,5 @@
 /** Bot filtering, the first-party beacon, and retention rollup (share-links §4). */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, rollupAccessLog } from '../src/adapters/d1.js'
 import { isBot, looksAutomated } from '../src/core/bots.js'
 import { createGate } from '../src/core/gate.js'
@@ -11,6 +11,18 @@ const SECRET = 'test-secret-0123456789abcdef'
 const NOW = Date.parse('2026-08-16T00:00:00Z')
 const NOW_S = NOW / 1000
 const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0 Safari/537.36'
+
+// Sessions are signed at NOW but `gate.authenticate` verifies against the wall
+// clock; pin only `Date` to NOW so the default 30-day session TTL doesn't make
+// the beacon tests' cookies expire on a fixed calendar date (see routes.test).
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('isBot', () => {
   it('lets real browsers through', () => {
