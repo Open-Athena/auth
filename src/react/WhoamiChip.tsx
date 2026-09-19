@@ -17,7 +17,13 @@ export interface WhoamiChipProps {
   onSignedOut?: () => void
   /** Show an `<Avatar>` before the name. Off by default: it changes the layout. */
   avatar?: boolean | { src?: string | null; size?: number }
-  classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar', string>>
+  /**
+   * Make the avatar + name a click target — "click your face to edit it". When
+   * set, they render as a `<button>` calling this, so an app can open a
+   * `<ProfilePanel>` without wiring its own hit area.
+   */
+  onOpenProfile?: () => void
+  classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar' | 'identity', string>>
 }
 
 /** Header chip: who you are, and how to stop being them. */
@@ -28,6 +34,7 @@ export function WhoamiChip({
   anonymousLabel = 'Anonymous link',
   onSignedOut,
   avatar = false,
+  onOpenProfile,
   classNames = {},
 }: WhoamiChipProps) {
   const forget = useForgetWhoami()
@@ -40,16 +47,26 @@ export function WhoamiChip({
     onSignedOut?.()
   }
 
+  const face = avatar && (
+    <Avatar whoami={whoami} className={classNames.avatar} {...(typeof avatar === 'object' ? avatar : {})} />
+  )
+  const label = <span className={classNames.name}>{name ?? anonymousLabel}</span>
+
   return (
     <div className={classNames.root}>
-      {avatar && (
-        <Avatar
-          whoami={whoami}
-          className={classNames.avatar}
-          {...(typeof avatar === 'object' ? avatar : {})}
-        />
+      {onOpenProfile ? (
+        // A single hit area over face + name, so "click your face → edit it"
+        // needs no layout of the app's own.
+        <button className={classNames.identity} type="button" onClick={onOpenProfile}>
+          {face}
+          {label}
+        </button>
+      ) : (
+        <>
+          {face}
+          {label}
+        </>
       )}
-      <span className={classNames.name}>{name ?? anonymousLabel}</span>
       {logoutEndpoint !== null && (
         <button className={classNames.button} type="button" onClick={signOut}>
           {signOutLabel}

@@ -22,6 +22,8 @@ export interface SsoWhoami {
   email: string
   admin: boolean
   scopes: string[]
+  /** The principal's self-set profile, or null (initials). Carried so `<Avatar>`/`displayName` render staff faces without a render-side change. */
+  subject: Subject | null
 }
 
 export interface GrantWhoami {
@@ -71,7 +73,13 @@ export function displayName(whoami: Whoami | null | undefined): string | null {
     const full = [subject.first, subject.last].filter(Boolean).join(' ')
     return full || w.name || subject.email || w.email || null
   }
-  if (w.kind === 'sso') return w.email ?? null
+  if (w.kind === 'sso') {
+    // A self-set name wins over the bare email, same as a grant's subject wins
+    // over its memo — it's who the person said they are.
+    const subject: Subject = w.subject ?? {}
+    const full = [subject.first, subject.last].filter(Boolean).join(' ')
+    return full || w.email || null
+  }
   return w.name ?? w.email ?? null
 }
 
