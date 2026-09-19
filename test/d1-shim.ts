@@ -30,10 +30,13 @@ function shim(db: DatabaseSync): D1Database {
 
 const migrationsDir = fileURLToPath(new URL('../migrations/', import.meta.url).href)
 
+/** Only `NNNN_*.sql` are migrations; `schema.sql` is the derived one-file dump. */
+const MIGRATION_RE = /^\d{4}_.*\.sql$/
+
 /** A fresh in-memory database with every migration applied, discovered not listed. */
 export function testDb(): D1Database {
   const db = new DatabaseSync(':memory:')
-  for (const name of readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()) {
+  for (const name of readdirSync(migrationsDir).filter(f => MIGRATION_RE.test(f)).sort()) {
     db.exec(readFileSync(migrationsDir + name, 'utf8'))
   }
   return shim(db)

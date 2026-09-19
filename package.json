@@ -51,7 +51,8 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.react.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.react.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "gen:schema": "node scripts/gen-schema.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.0",
