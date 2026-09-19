@@ -37,6 +37,13 @@ export interface Grant {
    * redemption window only, and a session then lives out its own `sessionTtlS`.
    */
   expiryEndsSessions: boolean
+  /**
+   * Rotation epoch (epoch seconds), or null. Set by `gate.rotate({ endSessions:
+   * true })`: a grant session whose `iat` predates this is rejected on its next
+   * request, so re-keying a leaked link can also boot whoever is already inside.
+   * A plain re-key leaves it null and existing sessions untouched.
+   */
+  sessionsInvalidBefore: number | null
   firstUsedAt: number | null
   lastUsedAt: number | null
 }

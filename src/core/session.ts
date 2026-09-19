@@ -19,6 +19,15 @@ const enc = new TextEncoder()
 export interface SessionClaims {
   v: 1
   sub: string
+  /**
+   * Issued-at, epoch seconds. Added so grant rotation can boot sessions minted
+   * before a re-key (`gate.rotate({ endSessions: true })`): a session whose
+   * `iat` predates the grant's rotation epoch is rejected. Cookies signed
+   * before this field existed decode with `iat` absent; `verifySessionClaims`
+   * reports those as `iat: 0` (oldest), so an epoch check conservatively boots
+   * an un-datable session — the safe reading for a compromise scenario.
+   */
+  iat: number
   exp: number // epoch seconds
 }
 
@@ -37,14 +46,24 @@ async function hmacKey(secret: string, usages: ('sign' | 'verify')[]): Promise<C
 }
 
 export async function signSession(sub: string, secret: string, nowMs: number, ttlS = DEFAULT_SESSION_TTL_S): Promise<string> {
-  const claims: SessionClaims = { v: 1, sub, exp: Math.floor(nowMs / 1000) + ttlS }
+  const nowS = Math.floor(nowMs / 1000)
+  const claims: SessionClaims = { v: 1, sub, iat: nowS, exp: nowS + ttlS }
   const body = b64uEncode(enc.encode(JSON.stringify(claims)))
   const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret, ['sign']), enc.encode(body))
   return `${body}.${b64uEncode(sig)}`
 }
 
-/** Returns the `sub` claim, or null if the value is malformed, forged, or expired. */
-export async function verifySession(value: string, secret: string, nowMs: number): Promise<string | null> {
+/**
+ * Returns the verified claims (`sub`, `iat`, `exp`), or null if the value is
+ * malformed, forged, or expired. `iat` defaults to `0` for cookies minted
+ * before the field existed, so an epoch check treats an un-datable session as
+ * the oldest possible. Most callers only want `sub` and use `verifySession`.
+ */
+export async function verifySessionClaims(
+  value: string,
+  secret: string,
+  nowMs: number,
+): Promise<{ sub: string; iat: number; exp: number } | null> {
   const i = value.indexOf('.')
   if (i < 0) return null
   const body = value.slice(0, i)
@@ -62,12 +81,17 @@ export async function verifySession(value: string, secret: string, nowMs: number
   } catch {
     return null
   }
-  const { v, sub, exp } = (claims ?? {}) as Partial<SessionClaims>
+  const { v, sub, iat, exp } = (claims ?? {}) as Partial<SessionClaims>
   if (v !== 1 || typeof sub !== 'string' || typeof exp !== 'number') return null
   // `<=` so expiry is judged identically everywhere: grants (`expiresAt > nowS`),
   // Access JWTs, and sessions all treat "exactly at exp" as expired.
   if (exp * 1000 <= nowMs) return null
-  return sub
+  return { sub, iat: typeof iat === 'number' ? iat : 0, exp }
+}
+
+/** Returns the `sub` claim, or null if the value is malformed, forged, or expired. */
+export async function verifySession(value: string, secret: string, nowMs: number): Promise<string | null> {
+  return (await verifySessionClaims(value, secret, nowMs))?.sub ?? null
 }
 
 export interface CookieOpts {

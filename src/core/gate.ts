@@ -41,7 +41,7 @@ import {
   readCookie,
   sessionCookie,
   signSession,
-  verifySession,
+  verifySessionClaims,
 } from './session.js'
 import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from './store.js'
 import {
@@ -320,8 +320,9 @@ export function createGate(opts: GateOptions) {
 
     const cookie = readCookie(req, cookieName)
     if (!cookie) return null
-    const sub = await verifySession(cookie, secret, nowMs)
-    if (!sub) return null
+    const claims = await verifySessionClaims(cookie, secret, nowMs)
+    if (!claims) return null
+    const sub = claims.sub
     const parsed = parseSub(sub)
     if (!parsed) return null
 
@@ -344,10 +345,20 @@ export function createGate(opts: GateOptions) {
     // `sessionValid`, not `canRedeem` — a disabled link keeps its existing
     // sessions alive, and an expired one only ends them if it was minted to.
     const grant = await store.byId(parsed.value)
-    if (!grant || !sessionValid(grant, nowS)) {
+    // A rotation with `endSessions` stamps `sessionsInvalidBefore`; a session
+    // whose `iat` predates it was minted from the old link and is booted — the
+    // same "re-join every request" hook that makes revoke instant.
+    const rotatedOut =
+      grant !== null && grant.sessionsInvalidBefore !== null && claims.iat < grant.sessionsInvalidBefore
+    if (!grant || !sessionValid(grant, nowS) || rotatedOut) {
       await logWithRequest(
         req,
-        { event: 'deny', grantId: parsed.value, sessionSub: sub, reason: grant ? denyReason(grant) : 'expired' },
+        {
+          event: 'deny',
+          grantId: parsed.value,
+          sessionSub: sub,
+          reason: !grant ? 'expired' : rotatedOut ? 'rotated' : denyReason(grant),
+        },
         nowS,
       )
       return null
@@ -445,6 +456,7 @@ export function createGate(opts: GateOptions) {
       disabledAt: null,
       revokedAt: null,
       expiryEndsSessions: draft.expiryEndsSessions ?? true,
+      sessionsInvalidBefore: null,
       firstUsedAt: null,
       lastUsedAt: null,
     }
@@ -676,6 +688,34 @@ export function createGate(opts: GateOptions) {
   }
 
   /**
+   * Re-key a share link. Mints a new token, swaps `token_hash` on the *same*
+   * grant row — subject, scopes, expiry, and audit history all intact — and
+   * returns the raw token once (like `mint`). The old `?key=` link stops
+   * working on its next redemption.
+   *
+   * By default sessions already minted from the old link keep working — the
+   * routine "shared too broadly, re-key it" case; `revoke` remains the terminal
+   * option. Pass `endSessions: true` for the compromise case ("the link
+   * leaked, boot whoever's inside"): it stamps a session epoch so every session
+   * minted before now is rejected on its next request, without revoking the
+   * grant — the freshly issued token still mints working sessions.
+   *
+   * Null if the grant does not exist or is revoked (revocation is terminal).
+   */
+  async function rotate(
+    id: string,
+    { endSessions = false }: { endSessions?: boolean } = {},
+    nowMs = Date.now(),
+  ): Promise<MintResult | null> {
+    const nowS = sec(nowMs)
+    const token = generateToken()
+    const grant = await store.rotate(id, await hashToken(token), endSessions ? nowS : null)
+    if (!grant) return null
+    await log({ ts: nowS, event: 'rotate', grantId: id, reason: endSessions ? 'end-sessions' : null })
+    return { grant, token }
+  }
+
+  /**
    * Stop handing out new sessions, without touching the people already inside.
    * The softer half of `revoke`, and the reversible one — which is why it is
    * worth having: an admin who suspects a link has leaked can stop the bleeding
@@ -838,6 +878,7 @@ export function createGate(opts: GateOptions) {
     signOut,
     mint,
     revoke,
+    rotate,
     disable,
     enable,
     update,

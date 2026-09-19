@@ -66,6 +66,7 @@ export {
   sessionCookie,
   signSession,
   verifySession,
+  verifySessionClaims,
 } from './core/session.js'
 export type { CookieOpts, SessionClaims } from './core/session.js'
 export type {

@@ -29,12 +29,13 @@ interface GrantRow {
   disabled_at: number | null
   revoked_at: number | null
   expiry_ends_sessions: number
+  sessions_invalid_before: number | null
   first_used_at: number | null
   last_used_at: number | null
 }
 
 const COLS =
-  'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, first_used_at, last_used_at'
+  'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at'
 
 function parseSubject(json: string | null): Subject | null {
   if (!json) return null
@@ -63,6 +64,7 @@ const toGrant = (r: GrantRow): Grant => ({
   disabledAt: r.disabled_at,
   revokedAt: r.revoked_at,
   expiryEndsSessions: r.expiry_ends_sessions !== 0,
+  sessionsInvalidBefore: r.sessions_invalid_before,
   firstUsedAt: r.first_used_at,
   lastUsedAt: r.last_used_at,
 })
@@ -146,6 +148,23 @@ export function d1GrantStore(db: D1Database): GrantStore {
         .bind(nowS, id)
         .run()
       return (res.meta?.changes ?? 0) > 0
+    },
+
+    async rotate(id, newTokenHash, sessionsInvalidBefore) {
+      // Single-statement swap of `token_hash`, guarded on the grant existing and
+      // not revoked (revocation is terminal). `COALESCE` means a plain re-key
+      // (null) leaves any prior rotation epoch in place rather than clearing it.
+      const row = await db
+        .prepare(
+          `UPDATE grants
+              SET token_hash = ?,
+                  sessions_invalid_before = COALESCE(?, sessions_invalid_before)
+            WHERE id = ? AND revoked_at IS NULL
+            RETURNING ${COLS}`,
+        )
+        .bind(newTokenHash, sessionsInvalidBefore, id)
+        .first<GrantRow>()
+      return row ? toGrant(row) : null
     },
 
     async update(id, patch) {

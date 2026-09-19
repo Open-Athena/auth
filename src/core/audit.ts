@@ -17,6 +17,7 @@ export type AccessEventKind =
   | 'enable'
   | 'update'
   | 'revoke'
+  | 'rotate'
   | 'request'
   | 'view'
   | 'signin'
