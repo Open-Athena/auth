@@ -167,19 +167,21 @@ emailNotify({
 
 ## Acceptance
 
-- [ ] A GET never mutates; a scanner fetching every URL in the mail decides nothing.
-- [ ] Approve URL edited to `deny` (and vice versa) fails signature verification.
-- [ ] A token for request A rejected on request B.
-- [ ] Expired token → the same page as a forged one.
-- [ ] Same verb twice → "already", no second grant, no second mail.
-- [ ] `first-wins` (default): neither verb reverses, and no window is consulted.
-- [ ] `deny-wins`: deny after approve revokes the minted grant; a live session
+**Built (2026-09-20).** `core/decisions.ts` (`readDecisionToken`, `gate.decide`), `core/decision-page.ts` (`renderDecisionPage`), and the `GET`/`POST <base>/requests/decide` pair in `routes.ts`; every line below is a passing case in `test/decisions.test.ts` (15 tests).
+
+- [x] A GET never mutates; a scanner fetching every URL in the mail decides nothing.
+- [x] Approve URL edited to `deny` (and vice versa) fails signature verification.
+- [x] A token for request A rejected on request B.
+- [x] Expired token → the same page as a forged one.
+- [x] Same verb twice → "already", no second grant, no second mail.
+- [x] `first-wins` (default): neither verb reverses, and no window is consulted.
+- [x] `deny-wins`: deny after approve revokes the minted grant; a live session
       dies on its next request.
-- [ ] `deny-wins`: approve after deny changes nothing.
-- [ ] `last-wins` behaves as tabulated.
-- [ ] Outside `reversalWindowS`, no mode reverses.
-- [ ] `requireAuth: true` rejects an unauthenticated POST.
-- [ ] `decidedBy` is `'email-link'`, never a fabricated identity.
+- [x] `deny-wins`: approve after deny changes nothing.
+- [x] `last-wins` behaves as tabulated.
+- [x] Outside `reversalWindowS`, no mode reverses.
+- [x] `requireAuth: true` rejects an unauthenticated POST.
+- [x] `decidedBy` is `'email-link'`, never a fabricated identity.
 
 ## Deliberately out of scope
 
