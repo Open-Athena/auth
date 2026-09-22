@@ -88,6 +88,13 @@ export interface GateOptions {
      * `MAX_INLINE_AVATAR_BYTES`.
      */
     profileUploadMaxBytes?: number;
+    /**
+     * Abort the `seedProfileFromClaims` avatar fetch after this many ms, so a slow
+     * IdP picture host can't drag out sign-in (a timeout degrades to name-only).
+     * Default 3000; 0 disables. Only the seed path is bounded — a user-initiated
+     * `putProfile` avatar copy is not on anyone's login latency path.
+     */
+    seedAvatarTimeoutMs?: number;
     /** Injectable fetch for server-side avatar copying (url/github/gravatar). Default global. */
     fetch?: typeof globalThis.fetch;
 }
@@ -227,6 +234,12 @@ export declare function createGate(opts: GateOptions): {
     };
     getProfile: (auth: Auth) => Promise<Profile | null>;
     putProfile: (auth: Auth, input: ProfileInput, nowMs?: number) => Promise<PutProfileResult>;
+    seedProfileFromClaims: (email: string, claims: {
+        name?: string;
+        given_name?: string;
+        family_name?: string;
+        picture?: string;
+    }, nowMs?: number) => Promise<Subject | null>;
     isAdmin: (email: string) => boolean;
     cookieName: string;
     /**

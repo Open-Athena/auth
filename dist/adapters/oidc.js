@@ -91,7 +91,7 @@ export function oidcStart(opts) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts) {
-    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE } = opts;
+    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = false } = opts;
     const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE;
     const doFetch = opts.fetch ?? globalThis.fetch;
     return async ({ request }) => {
@@ -157,6 +157,12 @@ export function oidcCallback(opts) {
                 },
             });
         }
+        // Seed name + face before we redirect, so the seeded subject is already
+        // there on the browser's first `/whoami` (no initials flash, no cookie
+        // reissue — the subject is re-derived per request). Best-effort: a failure
+        // here must never turn a successful sign-in into an error.
+        if (seedProfile)
+            await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         const headers = new Headers({ location: next, 'cache-control': 'no-store' });
         headers.append('set-cookie', signedIn.cookie);
         headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
@@ -213,7 +219,7 @@ async function nonceForms(nonce) {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts) {
-    const { gate, clientId, provider = GOOGLE, debug = false } = opts;
+    const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = false } = opts;
     const doFetch = opts.fetch ?? globalThis.fetch;
     const deny = (why) => oneTapDeny(why, debug);
     return async ({ request }) => {
@@ -246,6 +252,10 @@ export function googleOneTapVerify(opts) {
                 headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
             });
         }
+        // Seed before the 200: the FE re-fetches `/whoami` right after this resolves,
+        // so awaiting the seed puts the name/face on that first poll. Best-effort.
+        if (seedProfile)
+            await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         return new Response(JSON.stringify({ ok: true }) + '\n', {
             status: 200,
             headers: {

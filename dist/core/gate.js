@@ -22,6 +22,13 @@ import { generateId, generateToken, hashToken } from './tokens.js';
 const denyReason = (grant) => grant.revokedAt ? 'revoked' : grant.disabledAt ? 'disabled' : 'expired';
 const sec = (nowMs) => Math.floor(nowMs / 1000);
 /**
+ * Wrap a fetch so each call aborts after `ms`. Used only on the profile-seed
+ * avatar fetch, which sits on the sign-in latency path against a third-party
+ * host; `ms <= 0` disables it. Timing out surfaces as a rejection the seed
+ * swallows into name-only, exactly the intended degradation.
+ */
+const withTimeout = (f, ms) => ms > 0 ? ((input, init) => f(input, { ...init, signal: AbortSignal.timeout(ms) })) : f;
+/**
  * Two different questions, deliberately separated (see migration 0007).
  *
  * `canRedeem` — may this link mint a *new* session? Blocked by revoke, by
@@ -51,7 +58,7 @@ function grantAuth(grant) {
     return { kind: 'grant', grant, admin: false, scopes: grant.scopes };
 }
 export function createGate(opts) {
-    const { store, secret, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, profileUploadMaxBytes = 256 * 1024, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const { store, secret, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, profileUploadMaxBytes = 256 * 1024, seedAvatarTimeoutMs = 3000, fetch: fetchImpl = globalThis.fetch, } = opts;
     const policy = opts.policy
         ? firstMatch(adminPolicy(adminEmails), opts.policy)
         : adminPolicy(adminEmails);
@@ -621,6 +628,58 @@ export function createGate(opts) {
         await profiles.put(profile);
         return { ok: true, profile };
     }
+    /**
+     * Seed the profile for a just-signed-in SSO principal from the IdP's claims —
+     * the name and face Google already verified, so the board isn't initials-only
+     * until each member happens to open `ProfilePanel`. Best-effort and system-
+     * sourced: it bypasses the self-edit rate limit, never overrides a self-set
+     * profile, and a failed/slow picture fetch degrades to name-only rather than
+     * breaking or stalling sign-in. No-op without a profile store. Returns the
+     * resulting `Subject` (via `subjectFor`) so a caller could reissue if it
+     * wanted — though it needn't: the subject is re-derived per request, so
+     * awaiting this before responding already puts it on the first `/whoami`.
+     *
+     * See specs/done/oidc-profile-seed.md §1 for the "seed only when no row
+     * exists" provenance rule and the optional refresh-on-login extension.
+     */
+    async function seedProfileFromClaims(email, claims, nowMs = Date.now()) {
+        if (!profiles)
+            return null;
+        // A self-set profile (or an earlier seed) outranks the IdP: only the very
+        // first sign-in for an email with no row seeds; every later one is a no-op.
+        if (await profiles.get(email))
+            return subjectFor(email);
+        let first;
+        let last;
+        if (claims.given_name != null || claims.family_name != null) {
+            first = cleanName(claims.given_name ?? null);
+            last = cleanName(claims.family_name ?? null);
+        }
+        else {
+            // Best-effort split of a single display name on its last space — the same
+            // lossy first/last split the self-serve panel already tolerates.
+            const whole = cleanName(claims.name ?? null);
+            const i = whole ? whole.lastIndexOf(' ') : -1;
+            first = whole ? (i < 0 ? whole : whole.slice(0, i)) : null;
+            last = whole && i >= 0 ? whole.slice(i + 1) : null;
+        }
+        let avatar = null;
+        if (claims.picture && isSafeAvatarUrl(claims.picture)) {
+            try {
+                // Inline the Google `picture` as a `data:` URI — never persist the live
+                // `lh3.googleusercontent.com` URL, which would leak "this person opened
+                // this page" to Google on every render. Bounded by a timeout: the host
+                // is third-party and on the login path.
+                avatar = await resolveAvatar({ url: claims.picture }, { inline: true, fetch: withTimeout(fetchImpl, seedAvatarTimeoutMs) });
+            }
+            catch {
+                avatar = null;
+            }
+        }
+        const profile = { email, first, last, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) };
+        await profiles.put(profile);
+        return subjectFor(email);
+    }
     /** The JSON an app hands its frontend. Never includes tokens or hashes. */
     function whoami(auth) {
         return auth.kind === 'sso'
@@ -655,6 +714,7 @@ export function createGate(opts) {
         whoami,
         getProfile,
         putProfile,
+        seedProfileFromClaims,
         isAdmin,
         cookieName,
         /**

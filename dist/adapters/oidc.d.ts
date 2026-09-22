@@ -21,6 +21,13 @@ export interface OidcOptions {
     stateTtlS?: number;
     /** Cookie holding the nonce between the two requests. */
     nonceCookieName?: string;
+    /**
+     * On a first-ever sign-in, seed the principal's profile (name + inlined
+     * avatar) from the id_token's `name`/`picture`. Default false — it only does
+     * anything when the gate has a `profiles` store, and an app opts into auto-
+     * capture rather than initials-only. Never overrides a self-set profile.
+     */
+    seedProfile?: boolean;
     fetch?: typeof globalThis.fetch;
 }
 /**
@@ -86,6 +93,8 @@ export interface OneTapVerifyOptions {
      * `deny`). Turn it on to debug a wiring problem, not in production.
      */
     debug?: boolean;
+    /** Seed a first-ever principal's profile from the credential's claims. See `OidcOptions.seedProfile`. */
+    seedProfile?: boolean;
     fetch?: typeof globalThis.fetch;
 }
 /**
