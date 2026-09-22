@@ -111,3 +111,14 @@ CREATE UNIQUE INDEX pending_auth_token ON pending_auth (token_hash);
 CREATE INDEX pending_auth_email ON pending_auth (email, created_at);
 
 CREATE INDEX pending_auth_ip ON pending_auth (ip_hash, created_at);
+
+CREATE TABLE allowed_emails (
+  email      TEXT PRIMARY KEY,       -- lowercased on write; the policy lowercases its lookup
+  scopes     TEXT NOT NULL,          -- space-separated, same codec as grants.scopes
+  source     TEXT NOT NULL DEFAULT 'manual',  -- provenance: 'manual' | 'sync:<group>'; a sync replaces only its own source
+  note       TEXT,
+  added_by   TEXT,                   -- the admin (or sync job) that wrote the row
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX allowed_emails_source ON allowed_emails (source);

@@ -1,3 +1,5 @@
+export { AllowlistPanel } from './AllowlistPanel.js'
+export type { AllowedEntry, AllowlistPanelProps } from './AllowlistPanel.js'
 export { AuthGate } from './AuthGate.js'
 export type { AuthGateProps } from './AuthGate.js'
 export { Avatar, initialsOf } from './Avatar.js'

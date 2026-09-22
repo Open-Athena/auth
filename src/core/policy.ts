@@ -7,6 +7,7 @@
  * (applitrack's `allowed_users` shape), or both composed, all satisfy it.
  * Returning null denies — the IdP authenticated them, we don't authorize them.
  */
+import type { AllowlistStore } from './store.js'
 import { ALL_SCOPES } from './types.js'
 
 export type EmailPolicy = (email: string) => string[] | null | Promise<string[] | null>
@@ -39,4 +40,25 @@ export function firstMatch(...policies: EmailPolicy[]): EmailPolicy {
 export function adminPolicy(adminEmails: readonly string[]): EmailPolicy {
   const admins = new Set(adminEmails.map(e => e.toLowerCase()))
   return email => (admins.has(email.toLowerCase()) ? [ALL_SCOPES] : null)
+}
+
+/**
+ * Admit anyone in an `AllowlistStore` — the DB-table allowlist, so membership
+ * is edited (or directory-synced) rather than redeployed. Compose it like any
+ * other: `firstMatch(adminPolicy(ADMINS), allowlistPolicy(store))`.
+ *
+ * By default each row carries its own scopes (a board member gets `[VIEW]`, a
+ * one-off guest something narrower). Pass `{ scopes }` to ignore the stored
+ * scopes and grant a fixed set to every listed identity — the "membership is
+ * the whole decision" case, where the table is just a set of addresses.
+ */
+export function allowlistPolicy(
+  store: Pick<AllowlistStore, 'lookup'>,
+  opts: { scopes?: readonly string[] } = {},
+): EmailPolicy {
+  return async email => {
+    const scopes = await store.lookup(email.toLowerCase())
+    if (scopes === null) return null
+    return opts.scopes ? [...opts.scopes] : scopes
+  }
 }

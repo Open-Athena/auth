@@ -25,7 +25,21 @@ function shim(db: DatabaseSync): D1Database {
       raw: async () => [] as never,
     } as unknown as D1PreparedStatement
   }
-  return { prepare: (sql: string) => prepare(sql) } as unknown as D1Database
+  // `batch` runs its statements in one transaction, like D1's — the allowlist
+  // sync's replace-by-source relies on the delete and re-insert being atomic.
+  const batch = async (stmts: D1PreparedStatement[]) => {
+    db.exec('BEGIN')
+    try {
+      const out: unknown[] = []
+      for (const s of stmts) out.push(await s.run())
+      db.exec('COMMIT')
+      return out
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+  }
+  return { prepare: (sql: string) => prepare(sql), batch } as unknown as D1Database
 }
 
 const migrationsDir = fileURLToPath(new URL('../migrations/', import.meta.url).href)

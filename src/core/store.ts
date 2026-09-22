@@ -128,6 +128,52 @@ export interface PendingAuthStore {
   countSinceByIp(ipHash: string, sinceS: number): Promise<number>
 }
 
+/** One allowed identity: an email, the scopes it earns, and where the row came from. */
+export interface AllowEntry {
+  /** Stored lowercased. */
+  email: string
+  scopes: string[]
+  /**
+   * Provenance. `manual` for a hand-added row; `sync:<group>` for one a
+   * directory sync owns. `replaceSource` keys off this so a `board@` pull can
+   * refresh its own membership without touching hand-added guests.
+   */
+  source: string
+  note: string | null
+  /** The admin email (or sync job name) that wrote the row. */
+  addedBy: string | null
+  updatedAt: number
+}
+
+/**
+ * A per-email allowlist the SSO policy consults (`allowlistPolicy`). This is
+ * where specs/overview.md's "allowlist as a DB table" option lands, and the
+ * substrate under specs/done/saml-groups.md's directory-sync tier: rows arrive
+ * by hand (the admin panel) or out of band (a group sync), and the policy only
+ * reads. Pure row I/O — no auth logic lives here.
+ */
+export interface AllowlistStore {
+  /**
+   * Scopes for this email if it is listed, else null — the hot path the policy
+   * calls on every SSO sign-in. Callers pass an already-lowercased address.
+   */
+  lookup(email: string): Promise<string[] | null>
+  list(): Promise<AllowEntry[]>
+  /** Upsert by email (case-folded). */
+  put(entry: AllowEntry): Promise<void>
+  /** Returns false if there was no such row. */
+  remove(email: string): Promise<boolean>
+  /**
+   * Atomically replace every row of `source` with `entries` — the sync
+   * primitive. A directory pull for `sync:board@…` deletes the rows it wrote
+   * last time and inserts the current membership in one transaction, leaving
+   * `manual` (and other sources') rows untouched. `entries` whose `source`
+   * differs from the argument are rejected, so a sync can't smuggle a row into
+   * a source it doesn't own.
+   */
+  replaceSource(source: string, entries: AllowEntry[]): Promise<void>
+}
+
 /** What an admin view needs to answer "what happened to Bob's link?". */
 export interface GrantActivity {
   grantId: string

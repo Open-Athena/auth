@@ -9,10 +9,10 @@
 import { type DecisionPageOptions, renderDecisionPage } from './decision-page.js'
 import type { DecisionView } from './decisions.js'
 import type { Auth } from './types.js'
-import type { AuditQuery } from './store.js'
+import type { AllowEntry, AllowlistStore, AuditQuery } from './store.js'
 import type { Gate, ProfileInput } from './gate.js'
 import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
-import { cleanSubject } from './requests.js'
+import { cleanSubject, isEmailish } from './requests.js'
 import { type GrantPatch, hasScope } from './types.js'
 
 export interface RouteOptions {
@@ -28,6 +28,14 @@ export interface RouteOptions {
   requestScope?: string
   /** Read side of the access log; without it the activity/log routes 501. */
   audit?: AuditQuery
+  /**
+   * Backs the `<basePath>/allowed` admin CRUD (list/add/remove allowed emails);
+   * without it those routes 501. This is only the *management* surface — an app
+   * still opts the table into authorization separately, by putting
+   * `allowlistPolicy(store)` in its `policy`. Kept apart on purpose: mounting an
+   * editor should not silently change who gets in.
+   */
+  allowlist?: AllowlistStore
   /**
    * The identity recorded as a grant's `created_by`. Default: the SSO email.
    * Returning a per-visitor value plus `scopeToCreator` gives each admin their
@@ -140,6 +148,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     basePath = '/api/auth',
     adminScope = 'admin',
     audit,
+    allowlist,
     creatorOf = defaultCreator,
     scopeToCreator,
     honeypotField = 'website',
@@ -389,6 +398,45 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         const request = await gate.denyRequest(id, creatorOf(a))
         if (!request) return json({ error: 'no pending request with that id' }, 404)
         return json({ request })
+      }
+    }
+
+    // The allowlist an SSO `policy` can consult: an admin manages "who is
+    // allowed" as a table here, and (separately) an app wires `allowlistPolicy`
+    // to enforce it. Hand-added rows are `source: 'manual'`; a directory sync
+    // owns its own source and never touches these — so the panel and a `board@`
+    // sync coexist in one table.
+    if (seg[0] === 'allowed') {
+      const a = await admin()
+      if (a instanceof Response) return a
+      if (!allowlist) return json({ error: 'allowlist not configured' }, 501)
+
+      if (seg.length === 1 && method === 'GET') {
+        return json({ allowed: await allowlist.list() })
+      }
+
+      if (seg.length === 1 && (method === 'POST' || method === 'PUT')) {
+        const b = await body<{ email: string; scopes: string[]; note: string }>(req)
+        const email = (b.email ?? '').trim().toLowerCase()
+        if (!isEmailish(email)) return json({ error: 'valid email required' }, 400)
+        if (!Array.isArray(b.scopes)) return json({ error: 'scopes must be an array' }, 400)
+        const entry: AllowEntry = {
+          email,
+          scopes: b.scopes,
+          source: 'manual',
+          note: b.note?.trim() || null,
+          addedBy: a.kind === 'sso' ? a.email : creatorOf(a),
+          updatedAt: Math.floor(Date.now() / 1000),
+        }
+        await allowlist.put(entry)
+        return json({ entry })
+      }
+
+      // The email rides the path (`/allowed/foo%40bar.com`), so decode it; it
+      // arrives percent-encoded because `@` is reserved in a path segment.
+      const email = seg[1] ? decodeURIComponent(seg[1]) : ''
+      if (email && seg.length === 2 && method === 'DELETE') {
+        return json({ ok: await allowlist.remove(email.toLowerCase()) })
       }
     }
 

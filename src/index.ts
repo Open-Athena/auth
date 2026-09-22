@@ -52,7 +52,7 @@ export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNo
 export type { AccessRequest, Notify, NotifyEvent, RateLimit, RequestStatus } from './core/requests.js'
 export { authRoutes } from './core/routes.js'
 export type { RouteOptions } from './core/routes.js'
-export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js'
+export { adminPolicy, allowlistPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js'
 export type { EmailPolicy } from './core/policy.js'
 export {
   DEFAULT_COOKIE_NAME,
@@ -70,6 +70,8 @@ export {
 } from './core/session.js'
 export type { CookieOpts, SessionClaims } from './core/session.js'
 export type {
+  AllowEntry,
+  AllowlistStore,
   AuditQuery,
   GrantActivity,
   GrantDraft,

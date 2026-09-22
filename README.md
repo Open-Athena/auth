@@ -179,6 +179,21 @@ The `access-granted` message is the only place a token is ever rendered, and it 
 
 `SendEmail` is one method, so Postmark or SES is a sibling file rather than a refactor. (MailChannels' free Workers integration ended in 2024, so an ESP is a real dependency now.)
 
+**Allowlist as a table, not a redeploy.** A `policy` can be a literal (`domainPolicy`, `adminPolicy`) *or* a DB table, because `EmailPolicy` is `(email) => scopes | null | Promise<…>`. `allowlistPolicy(store)` reads an `allowed_emails` table so "who's allowed" is edited, not shipped:
+
+```ts
+import { allowlistPolicy, firstMatch, adminPolicy } from '@open-athena/auth'
+import { d1Allowlist } from '@open-athena/auth/d1'
+
+const allowlist = d1Allowlist(env.DB)
+createGate({ ..., policy: firstMatch(adminPolicy(ADMINS), allowlistPolicy(allowlist)) })
+authRoutes(gate, { allowlist })   // adds admin GET/POST/DELETE <base>/allowed; <AllowlistPanel/> in react/
+```
+
+Each row carries its own scopes, or pass `allowlistPolicy(store, { scopes })` to grant a fixed set to every member. Rows arrive by hand (the panel) or out of band: a directory sync owns a `source` and calls `store.replaceSource('sync:board@…', members)` — one transaction, so a sign-in mid-sync never sees the group empty and a sync never clobbers a hand-added guest. Mounting the editor doesn't change who gets in; that's the separate `policy` wiring, on purpose.
+
+**On Google groups.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), so group-awareness always needs a directory lookup somewhere. The table above is the pragmatic tier: fill it by hand, or with an app-side `board@` sync (the package deliberately holds no directory credential — that's app ops, like the OAuth client). The "live, signed at each sign-in" tier is a **SAML** adapter that consumes Google's group-attribute assertion; it's specced but unbuilt — see [`specs/saml-groups.md`](specs/saml-groups.md).
+
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
 
 **Request access** collects an address, and optionally a person: `<RequestAccessForm askName="split" />` posts first/last, stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the watermark says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
