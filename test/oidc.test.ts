@@ -11,6 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { GOOGLE, googleOneTapNonce, googleOneTapVerify, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
+import { type MemoryProfileStore, memoryProfileStore } from '../src/testing/index.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -345,5 +346,176 @@ describe('googleOneTap', () => {
       }),
     })
     expect([shown.status, shown.headers.get('x-onetap-reason')]).toEqual([401, 'no verified email'])
+  })
+})
+
+/**
+ * `seedProfile`: capture the name + face the id_token already carries into the
+ * `profiles` table, once, without ever overriding a self-set profile. Both the
+ * gate method and its wiring into the two sign-in handlers.
+ */
+describe('profile seed', () => {
+  const PICTURE = 'https://pics.test/face.png'
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const dataUri = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`
+
+  /** The *gate's* fetch (avatar copy), distinct from the adapter's (JWKS/token). */
+  const pictureFetch =
+    (status = 200, type = 'image/png', bytes: Uint8Array = PNG): typeof globalThis.fetch =>
+    (async input =>
+      String(input) === PICTURE
+        ? status === 200
+          ? new Response(bytes, { headers: { 'content-type': type } })
+          : new Response('x', { status })
+        : new Response(null, { status: 404 })) as typeof globalThis.fetch
+
+  const seedGate = (o: { profiles?: MemoryProfileStore | null; fetch?: typeof globalThis.fetch; timeoutMs?: number } = {}) => {
+    const profiles = o.profiles === undefined ? memoryProfileStore() : o.profiles
+    const g = createGate({
+      store: memoryStore(),
+      audit: memoryAudit(),
+      secret: SECRET,
+      adminEmails: ['boss@openathena.ai'],
+      policy: domainPolicy(['openathena.ai'], ['internal']),
+      fetch: o.fetch ?? pictureFetch(),
+      ...(profiles ? { profiles } : {}),
+      ...(o.timeoutMs !== undefined ? { seedAvatarTimeoutMs: o.timeoutMs } : {}),
+    })
+    return { g, profiles }
+  }
+
+  const norm = (p: Awaited<ReturnType<MemoryProfileStore['get']>>) => (p ? { ...p, updatedAt: '<ts>' } : null)
+
+  describe('gate.seedProfileFromClaims', () => {
+    it('seeds first/last (split from a single name) and the inlined avatar', async () => {
+      const { g, profiles } = seedGate()
+      const subject = await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })
+      expect(subject).toEqual({ first: 'Ada', last: 'Lovelace', avatar: dataUri })
+      expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
+        email: 'ada@openathena.ai',
+        first: 'Ada',
+        last: 'Lovelace',
+        avatar: dataUri,
+        avatarSrc: 'url',
+        updatedAt: '<ts>',
+      })
+    })
+
+    it('prefers given_name/family_name over the display name, and tolerates no picture', async () => {
+      const { g, profiles } = seedGate()
+      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ignore Me', given_name: 'Ada', family_name: 'Lovelace' })
+      expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
+        email: 'ada@openathena.ai',
+        first: 'Ada',
+        last: 'Lovelace',
+        avatar: null,
+        avatarSrc: null,
+        updatedAt: '<ts>',
+      })
+    })
+
+    it('never overrides a self-set profile — a later sign-in is a no-op', async () => {
+      const { g, profiles } = seedGate()
+      const self = { email: 'ada@openathena.ai', first: 'Self', last: 'Chosen', avatar: null, avatarSrc: null, updatedAt: 5 }
+      await profiles!.put(self)
+      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Google Name', picture: PICTURE })
+      expect(await profiles!.get('ada@openathena.ai')).toEqual(self)
+    })
+
+    it('degrades to name-only when the avatar fetch fails, never throwing', async () => {
+      const { g, profiles } = seedGate({ fetch: pictureFetch(500) })
+      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })
+      expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
+        email: 'ada@openathena.ai',
+        first: 'Ada',
+        last: 'Lovelace',
+        avatar: null,
+        avatarSrc: null,
+        updatedAt: '<ts>',
+      })
+    })
+
+    it('aborts a hanging avatar fetch at the timeout and stores name-only', async () => {
+      const hanging: typeof globalThis.fetch = (async (_input, init) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve(new Response(PNG, { headers: { 'content-type': 'image/png' } })), 1000)
+          ;(init?.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(new Error('aborted'))
+          })
+        })) as typeof globalThis.fetch
+      const { g, profiles } = seedGate({ fetch: hanging, timeoutMs: 10 })
+      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })
+      expect((await profiles!.get('ada@openathena.ai'))?.avatar).toBeNull()
+    })
+
+    it('is a no-op with no profile store bound', async () => {
+      const { g } = seedGate({ profiles: null })
+      expect(await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })).toBeNull()
+    })
+  })
+
+  describe('wired into the sign-in handlers', () => {
+    const seedOpts = (g: ReturnType<typeof createGate>, fetch: typeof globalThis.fetch, seedProfile: boolean) => ({
+      gate: g,
+      clientId: CLIENT_ID,
+      clientSecret: 'shh',
+      redirectUri: REDIRECT,
+      fetch,
+      seedProfile,
+    })
+
+    /** Drive a full redirect sign-in against gate `g`, seeding per `seedProfile`. */
+    async function redirectSignIn(g: ReturnType<typeof createGate>, claims: Record<string, unknown>, seedProfile: boolean) {
+      const startRes = await oidcStart(seedOpts(g, providerFetch(null), seedProfile))({
+        request: new Request('https://app.test/auth/google?next=/reports'),
+      })
+      const state = new URL(startRes.headers.get('location')!).searchParams.get('state')!
+      const cookie = setCookies(startRes)[0]!.split(';')[0]!
+      const nonce = cookie.split('=')[1]!
+      const token = await idToken({ email_verified: true, nonce, ...claims })
+      const res = await oidcCallback(seedOpts(g, providerFetch(token), seedProfile))({
+        request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`, {
+          headers: { cookie },
+        }),
+      })
+      return { res, sessionCookie: setCookies(res)[0]!.split(';')[0]! }
+    }
+
+    it('oidcCallback seeds on sign-in, and the seeded subject is live on the next authenticate', async () => {
+      const { g, profiles } = seedGate()
+      const { res, sessionCookie } = await redirectSignIn(
+        g,
+        { email: 'ada@openathena.ai', name: 'Ada Lovelace', picture: PICTURE },
+        true,
+      )
+      expect(res.status).toBe(302)
+      expect((await profiles!.get('ada@openathena.ai'))?.avatar).toBe(dataUri)
+      const auth = await g.authenticate(new Request('https://app.test/', { headers: { Cookie: sessionCookie } }))
+      expect(auth?.kind === 'sso' ? auth.subject : null).toEqual({ first: 'Ada', last: 'Lovelace', avatar: dataUri })
+    })
+
+    it('writes nothing when seedProfile is off (default)', async () => {
+      const { g, profiles } = seedGate()
+      const { res } = await redirectSignIn(g, { email: 'ada@openathena.ai', name: 'Ada Lovelace', picture: PICTURE }, false)
+      expect(res.status).toBe(302)
+      expect(await profiles!.get('ada@openathena.ai')).toBeNull()
+    })
+
+    it('One Tap seeds on its success path too', async () => {
+      const { g, profiles } = seedGate()
+      const nonceRes = await googleOneTapNonce({ gate: g })()
+      const nonce = ((await nonceRes.json()) as { nonce: string }).nonce
+      const credential = await idToken({ email: 'ada@openathena.ai', email_verified: true, nonce, name: 'Ada Lovelace', picture: PICTURE })
+      const res = await googleOneTapVerify({ gate: g, clientId: CLIENT_ID, fetch: providerFetch(null), seedProfile: true })({
+        request: new Request('https://app.test/auth/onetap', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ credential, nonce }),
+        }),
+      })
+      expect(res.status).toBe(200)
+      expect((await profiles!.get('ada@openathena.ai'))?.avatar).toBe(dataUri)
+    })
   })
 })

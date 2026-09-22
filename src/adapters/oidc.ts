@@ -61,6 +61,13 @@ export interface OidcOptions {
   stateTtlS?: number
   /** Cookie holding the nonce between the two requests. */
   nonceCookieName?: string
+  /**
+   * On a first-ever sign-in, seed the principal's profile (name + inlined
+   * avatar) from the id_token's `name`/`picture`. Default false — it only does
+   * anything when the gate has a `profiles` store, and an app opts into auto-
+   * capture rather than initials-only. Never overrides a self-set profile.
+   */
+  seedProfile?: boolean
   fetch?: typeof globalThis.fetch
 }
 
@@ -71,6 +78,13 @@ interface IdTokenClaims extends Record<string, unknown> {
   email?: string
   email_verified?: boolean
   nonce?: string
+  // Present when `scope` includes `profile` (Google's default here): used only
+  // to seed a self-serve profile when `seedProfile` is on. Never trusted for
+  // authorization — that's `email` + `email_verified`.
+  name?: string
+  given_name?: string
+  family_name?: string
+  picture?: string
 }
 
 /** Only same-origin paths, so `?next=` can't become an open redirect. */
@@ -131,7 +145,7 @@ export function oidcStart(opts: OidcOptions) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts: OidcOptions) {
-  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE } = opts
+  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = false } = opts
   const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE
   const doFetch = opts.fetch ?? globalThis.fetch
 
@@ -195,6 +209,12 @@ export function oidcCallback(opts: OidcOptions) {
         },
       })
     }
+
+    // Seed name + face before we redirect, so the seeded subject is already
+    // there on the browser's first `/whoami` (no initials flash, no cookie
+    // reissue — the subject is re-derived per request). Best-effort: a failure
+    // here must never turn a successful sign-in into an error.
+    if (seedProfile) await gate.seedProfileFromClaims(claims.email, claims).catch(() => null)
 
     const headers = new Headers({ location: next, 'cache-control': 'no-store' })
     headers.append('set-cookie', signedIn.cookie)
@@ -267,6 +287,8 @@ export interface OneTapVerifyOptions {
    * `deny`). Turn it on to debug a wiring problem, not in production.
    */
   debug?: boolean
+  /** Seed a first-ever principal's profile from the credential's claims. See `OidcOptions.seedProfile`. */
+  seedProfile?: boolean
   fetch?: typeof globalThis.fetch
 }
 
@@ -291,7 +313,7 @@ async function nonceForms(nonce: string): Promise<Set<string>> {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts: OneTapVerifyOptions) {
-  const { gate, clientId, provider = GOOGLE, debug = false } = opts
+  const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = false } = opts
   const doFetch = opts.fetch ?? globalThis.fetch
   const deny = (why: string): Response => oneTapDeny(why, debug)
 
@@ -324,6 +346,9 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
         headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
       })
     }
+    // Seed before the 200: the FE re-fetches `/whoami` right after this resolves,
+    // so awaiting the seed puts the name/face on that first poll. Best-effort.
+    if (seedProfile) await gate.seedProfileFromClaims(claims.email, claims).catch(() => null)
     return new Response(JSON.stringify({ ok: true }) + '\n', {
       status: 200,
       headers: {
