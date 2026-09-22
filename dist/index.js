@@ -12,7 +12,7 @@ export { verifyRs256Jwt } from './core/jwt.js';
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';
 export { authRoutes } from './core/routes.js';
-export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
+export { adminPolicy, allowlistPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
 export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, verifySessionClaims, } from './core/session.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';
 export { formatScopes, hasScope, parseScopes } from './core/types.js';

@@ -7,7 +7,7 @@
  * Apply `migrations/0001_grants.sql` and `migrations/0002_access_log.sql` first.
  */
 import type { AuditSink } from '../core/audit.js';
-import type { AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
+import type { AllowlistStore, AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
 export declare function d1GrantStore(db: D1Database): GrantStore;
 export declare function d1RequestStore(db: D1Database): RequestStore;
 export interface RollupResult {
@@ -46,3 +46,4 @@ export declare function d1AuditSink(db: D1Database): AuditSink;
 /** Apply `migrations/0008_profiles.sql` first. */
 export declare function d1ProfileStore(db: D1Database): ProfileStore;
 export declare function d1PendingAuthStore(db: D1Database): PendingAuthStore;
+export declare function d1Allowlist(db: D1Database): AllowlistStore;

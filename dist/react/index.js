@@ -1,3 +1,4 @@
+export { AllowlistPanel } from './AllowlistPanel.js';
 export { AuthGate } from './AuthGate.js';
 export { Avatar, initialsOf } from './Avatar.js';
 export { AccessNotice, Watermark } from './disclosure.js';

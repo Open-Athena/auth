@@ -24,11 +24,11 @@ export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNo
 export type { AccessRequest, Notify, NotifyEvent, RateLimit, RequestStatus } from './core/requests.js';
 export { authRoutes } from './core/routes.js';
 export type { RouteOptions } from './core/routes.js';
-export { adminPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
+export { adminPolicy, allowlistPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';
 export type { EmailPolicy } from './core/policy.js';
 export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, verifySessionClaims, } from './core/session.js';
 export type { CookieOpts, SessionClaims } from './core/session.js';
-export type { AuditQuery, GrantActivity, GrantDraft, GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore, StoredEvent, } from './core/store.js';
+export type { AllowEntry, AllowlistStore, AuditQuery, GrantActivity, GrantDraft, GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore, StoredEvent, } from './core/store.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';
 export { formatScopes, hasScope, parseScopes } from './core/types.js';
 export type { Auth, Grant, NewGrant, GrantPatch, Subject } from './core/types.js';

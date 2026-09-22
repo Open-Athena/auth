@@ -9,7 +9,7 @@
 import { type DecisionPageOptions } from './decision-page.js';
 import type { DecisionView } from './decisions.js';
 import type { Auth } from './types.js';
-import type { AuditQuery } from './store.js';
+import type { AllowlistStore, AuditQuery } from './store.js';
 import type { Gate } from './gate.js';
 import { type ResolveAvatarOptions } from './avatar.js';
 export interface RouteOptions {
@@ -25,6 +25,14 @@ export interface RouteOptions {
     requestScope?: string;
     /** Read side of the access log; without it the activity/log routes 501. */
     audit?: AuditQuery;
+    /**
+     * Backs the `<basePath>/allowed` admin CRUD (list/add/remove allowed emails);
+     * without it those routes 501. This is only the *management* surface — an app
+     * still opts the table into authorization separately, by putting
+     * `allowlistPolicy(store)` in its `policy`. Kept apart on purpose: mounting an
+     * editor should not silently change who gets in.
+     */
+    allowlist?: AllowlistStore;
     /**
      * The identity recorded as a grant's `created_by`. Default: the SSO email.
      * Returning a per-visitor value plus `scopeToCreator` gives each admin their

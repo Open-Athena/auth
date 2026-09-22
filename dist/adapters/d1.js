@@ -461,3 +461,56 @@ export function d1PendingAuthStore(db) {
         },
     };
 }
+const toAllowEntry = (r) => ({
+    email: r.email,
+    scopes: parseScopes(r.scopes),
+    source: r.source,
+    note: r.note,
+    addedBy: r.added_by,
+    updatedAt: r.updated_at,
+});
+const ALLOW_COLS = 'email, scopes, source, note, added_by, updated_at';
+export function d1Allowlist(db) {
+    const upsert = (e) => db
+        .prepare(`INSERT INTO allowed_emails (email, scopes, source, note, added_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(email) DO UPDATE SET
+           scopes = excluded.scopes,
+           source = excluded.source,
+           note = excluded.note,
+           added_by = excluded.added_by,
+           updated_at = excluded.updated_at`)
+        .bind(e.email.toLowerCase(), formatScopes(e.scopes), e.source, e.note, e.addedBy, e.updatedAt);
+    return {
+        async lookup(email) {
+            const row = await db
+                .prepare(`SELECT scopes FROM allowed_emails WHERE email = ?`)
+                .bind(email.toLowerCase())
+                .first();
+            return row ? parseScopes(row.scopes) : null;
+        },
+        async list() {
+            const { results } = await db.prepare(`SELECT ${ALLOW_COLS} FROM allowed_emails ORDER BY email`).all();
+            return results.map(toAllowEntry);
+        },
+        async put(entry) {
+            await upsert(entry).run();
+        },
+        async remove(email) {
+            const res = await db.prepare(`DELETE FROM allowed_emails WHERE email = ?`).bind(email.toLowerCase()).run();
+            return (res.meta?.changes ?? 0) > 0;
+        },
+        async replaceSource(source, entries) {
+            // A sync owns exactly one source; refuse to write a row tagged otherwise,
+            // so a bug can't let a `board@` pull overwrite a hand-added guest.
+            for (const e of entries) {
+                if (e.source !== source) {
+                    throw new Error(`replaceSource(${source}): entry ${e.email} carries source ${e.source}`);
+                }
+            }
+            // One transaction: the delete and the re-insert land together, so a
+            // sign-in mid-sync never sees the group momentarily empty.
+            await db.batch([db.prepare(`DELETE FROM allowed_emails WHERE source = ?`).bind(source), ...entries.map(upsert)]);
+        },
+    };
+}
