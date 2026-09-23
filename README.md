@@ -220,7 +220,17 @@ export default {
 }
 ```
 
-Because `allowlistPolicy` is re-evaluated on every request, a removed member is denied within one sync interval — at 15 minutes, well inside the ~1 h token lifetime most orgs accept as their revocation window. (Pages Functions have no cron: run the same call from a sibling Worker bound to the same D1, or from a scheduled GitHub Action.) `listGroupMembers`/`googleAccessToken` are exported separately for anything else that needs a group or an SA token.
+Because `allowlistPolicy` is re-evaluated on every request, a removed member is denied within one sync interval — at 15 minutes, well inside the ~1 h token lifetime most orgs accept as their revocation window. `listGroupMembers`/`googleAccessToken` are exported separately for anything else that needs a group or an SA token.
+
+**On Pages (no cron):** mount the sync as a route instead — `authRoutes(gate, { allowlist, sync: { run: () => syncGroupsToAllowlist(…), token: env.SYNC_TOKEN } })` adds `POST <base>/allowed/sync`, callable by an admin session (`<AllowlistPanel sync />` shows a "Sync now" button) or by `Authorization: Bearer <SYNC_TOKEN>`, so a scheduled GitHub Action is the whole cron:
+
+```yaml
+on: { schedule: [{ cron: '*/15 * * * *' }], workflow_dispatch: {} }
+jobs:
+  sync: { runs-on: ubuntu-latest, steps: [{ run: "curl -fsS -X POST -H 'Authorization: Bearer ${{ secrets.SYNC_TOKEN }}' https://your-app.pages.dev/api/auth/allowed/sync" }] }
+```
+
+A failing sync answers 502 with the error and leaves the table as it was.
 
 Provisioning is `gcloud`, and needs **no domain-wide delegation**: the service account acts as itself once it can read the group — either as an *owner of just that group* (lightest), or holding the *Groups Reader* admin role (Admin console → *Assign service accounts*, or Terraform's `googleworkspace_role_assignment`). Whoever runs this once must be a Workspace admin or the group's owner; after that, membership is edited in Workspace and nothing here changes.
 

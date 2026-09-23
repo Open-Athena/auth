@@ -16,10 +16,16 @@ export interface AllowlistPanelProps {
      * field. Rows a directory sync wrote keep whatever scopes it gave them.
      */
     defaultScopes?: readonly string[];
-    /** Called after any successful add or remove. */
+    /** Called after any successful add, remove, or sync. */
     onChanged?: () => void;
-    classNames?: Partial<Record<'root' | 'table' | 'row' | 'cell' | 'source' | 'form' | 'input' | 'button' | 'remove' | 'message' | 'empty', string>>;
-    labels?: Partial<Record<'email' | 'add' | 'adding' | 'remove' | 'empty' | 'synced' | 'manual', string>>;
+    /**
+     * Show a "Sync now" button that POSTs `<endpoint>/sync` (the route an app
+     * mounts with `authRoutes(gate, { allowlist, sync })`) and reloads. Off by
+     * default: only meaningful when the app has a directory sync wired.
+     */
+    sync?: boolean;
+    classNames?: Partial<Record<'root' | 'table' | 'row' | 'cell' | 'source' | 'form' | 'input' | 'button' | 'remove' | 'sync' | 'message' | 'empty', string>>;
+    labels?: Partial<Record<'email' | 'add' | 'adding' | 'remove' | 'empty' | 'synced' | 'manual' | 'sync' | 'syncing' | 'syncDone', string>>;
 }
 /**
  * Manage the SSO allowlist: list allowed emails, add one, remove one. Unstyled
@@ -30,4 +36,4 @@ export interface AllowlistPanelProps {
  * re-add the ones it manages on its next run, so removing a synced member is
  * only durable if you also take them out of the upstream group.
  */
-export declare function AllowlistPanel({ endpoint, defaultScopes, onChanged, classNames, labels, }: AllowlistPanelProps): import("react").JSX.Element;
+export declare function AllowlistPanel({ endpoint, defaultScopes, onChanged, sync, classNames, labels, }: AllowlistPanelProps): import("react").JSX.Element;

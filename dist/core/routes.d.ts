@@ -34,6 +34,18 @@ export interface RouteOptions {
      */
     allowlist?: AllowlistStore;
     /**
+     * Backs `POST <basePath>/allowed/sync`: run the app's directory sync on
+     * demand (`run` is typically `() => syncGroupsToAllowlist(store, …)` from
+     * `@open-athena/auth/google-directory`). Gated by `adminScope` — the panel's
+     * "Sync now" — or by `token` presented as `Authorization: Bearer …`, so a
+     * scheduled GitHub Action can drive it with no session and a Pages app needs
+     * no cron Worker. Without it the route 501s.
+     */
+    sync?: {
+        run: () => Promise<unknown>;
+        token?: string;
+    };
+    /**
      * The identity recorded as a grant's `created_by`. Default: the SSO email.
      * Returning a per-visitor value plus `scopeToCreator` gives each admin their
      * own sandbox of links — which is how the demo lets strangers try the admin

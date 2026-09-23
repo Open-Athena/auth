@@ -9,6 +9,7 @@
 import { renderDecisionPage } from './decision-page.js';
 import { isSafeAvatarUrl, resolveAvatar } from './avatar.js';
 import { cleanSubject, isEmailish } from './requests.js';
+import { hashToken } from './tokens.js';
 import { hasScope } from './types.js';
 /**
  * Every response here is identity-shaped — who you are, which links are yours,
@@ -104,7 +105,7 @@ function normalizeAvatarJson(a) {
     return undefined;
 }
 export function authRoutes(gate, opts = {}) {
-    const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', avatarLookup = false, decisionPage, decisionAppName, } = opts;
+    const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, sync, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', avatarLookup = false, decisionPage, decisionAppName, } = opts;
     return async function handle(req) {
         const url = new URL(req.url);
         if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`))
@@ -342,6 +343,27 @@ export function authRoutes(gate, opts = {}) {
         // to enforce it. Hand-added rows are `source: 'manual'`; a directory sync
         // owns its own source and never touches these — so the panel and a `board@`
         // sync coexist in one table.
+        if (seg[0] === 'allowed' && seg[1] === 'sync' && seg.length === 2 && method === 'POST') {
+            // A bearer that matches `sync.token` stands in for an admin session (the
+            // cron case). Compared as hashes so the check isn't a timing oracle.
+            const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
+            const byToken = !!sync?.token && !!bearer && (await hashToken(bearer)) === (await hashToken(sync.token));
+            if (!byToken) {
+                const a = await admin();
+                if (a instanceof Response)
+                    return a;
+            }
+            if (!sync)
+                return json({ error: 'sync not configured' }, 501);
+            try {
+                return json({ ok: true, result: await sync.run() });
+            }
+            catch (e) {
+                // The upstream directory is down or the credential is wrong: say so
+                // rather than 500 — the previous membership stands until it works.
+                return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502);
+            }
+        }
         if (seg[0] === 'allowed') {
             const a = await admin();
             if (a instanceof Response)
