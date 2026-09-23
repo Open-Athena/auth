@@ -280,8 +280,8 @@ async function main(argv) {
   // 5. Store the secrets. Without a Pages project we can only show the commands.
   err('')
   if (opts.pagesProject) {
-    runOrShow('npx', ['wrangler', ...secretPutArgs(opts.idVar, opts.pagesProject)], `${clientId}\n`)
-    runOrShow('npx', ['wrangler', ...secretPutArgs(opts.secretVar, opts.pagesProject)], `${clientSecret}\n`)
+    runOrShow('npx', ['wrangler', ...secretPutArgs(opts.idVar, opts.pagesProject)], clientId)
+    runOrShow('npx', ['wrangler', ...secretPutArgs(opts.secretVar, opts.pagesProject)], clientSecret)
   } else {
     err('no --pages-project given; store the pair yourself, e.g.:')
     err(`  echo <id>     | npx ${formatCommand('wrangler', secretPutArgs(opts.idVar, '<pages-project>'))}`)

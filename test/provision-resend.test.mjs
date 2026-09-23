@@ -475,8 +475,8 @@ describe('secrets', () => {
     const { calls, lines, execs, code } = await run([...argv, '--run'])
     expect(calls).toEqual([])
     expect(execs).toEqual([
-      { cmd: 'npx', args: ['wrangler', 'pages', 'secret', 'put', 'RESEND_API_KEY', '--project-name', 'myapp'], input: `${KEY}\n` },
-      { cmd: 'npx', args: ['wrangler', 'pages', 'secret', 'put', 'MAIL_FROM', '--project-name', 'myapp'], input: 'Reports <noreply@oa.dev>\n' },
+      { cmd: 'npx', args: ['wrangler', 'pages', 'secret', 'put', 'RESEND_API_KEY', '--project-name', 'myapp'], input: KEY },
+      { cmd: 'npx', args: ['wrangler', 'pages', 'secret', 'put', 'MAIL_FROM', '--project-name', 'myapp'], input: 'Reports <noreply@oa.dev>' },
     ])
     expect(lines).toEqual([
       'secrets: running: npx wrangler pages secret put RESEND_API_KEY --project-name myapp  # value on stdin (hidden)',

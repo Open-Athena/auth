@@ -406,13 +406,14 @@ export async function main(argv, deps = {}) {
     }
   }
 
-  // 4. Secrets: the key never appears in argv or output; wrangler reads it on stdin.
+  // 4. Secrets: the key never appears in argv or output; wrangler reads it on stdin —
+  //    raw, with no trimming, so no trailing newline: it would become part of the secret.
   if (wants('secrets')) {
     const target = { pagesProject: opts.pagesProject, worker: opts.worker }
     for (const [name, value] of [[KEY_VAR, resendKey], [FROM_VAR, opts.from]]) {
       const args = ['wrangler', ...secretPutArgs(name, target)]
       out(`secrets: ${dry ? `${tag} run` : 'running'}: ${formatCommand('npx', args)}  # value on stdin${name === KEY_VAR ? ' (hidden)' : `: ${value}`}`)
-      if (!dry) exec('npx', args, `${value}\n`)
+      if (!dry) exec('npx', args, value)
     }
   }
 
