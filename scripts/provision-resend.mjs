@@ -159,6 +159,9 @@ export function parseArgs(argv) {
     only: STEPS,
     run: false,
     help: false,
+    resendKeyVar: KEY_VAR,
+    sendKeyVar: null,
+    cfTokenVar: CF_TOKEN_VAR,
   }
   const need = flag => {
     const v = argv[++i]
@@ -203,6 +206,15 @@ export function parseArgs(argv) {
       case '--return-path':
         opts.returnPath = need(a)
         break
+      case '--resend-key-var':
+        opts.resendKeyVar = need(a)
+        break
+      case '--send-key-var':
+        opts.sendKeyVar = need(a)
+        break
+      case '--cf-token-var':
+        opts.cfTokenVar = need(a)
+        break
       case '--wait': {
         const w = Number(need(a))
         if (!Number.isInteger(w) || w < 0) throw new UsageError(`--wait must be a non-negative integer (seconds), got ${JSON.stringify(argv[i])}`)
@@ -231,6 +243,7 @@ export function parseArgs(argv) {
     if (!opts.pagesProject && !opts.worker) throw new UsageError('--pages-project or --worker is required for the secrets step')
   }
   if (opts.from) opts.from = validateFrom(opts.from, opts.domain)
+  opts.sendKeyVar ??= opts.resendKeyVar
   return opts
 }
 
@@ -251,11 +264,14 @@ Optional:
   --dmarc                   also add _dmarc.<domain> TXT "${DMARC_VALUE}" if absent
   --wait <seconds>          keep polling verification this long (default 0: one check)
   --only <steps>            comma-separated subset of: ${STEPS.join(', ')}
+  --resend-key-var <VAR>    env var holding the Resend key for API calls (default ${KEY_VAR})
+  --send-key-var <VAR>      env var holding the key the secrets step stores (default: same as --resend-key-var)
+  --cf-token-var <VAR>      env var holding the Cloudflare token (default ${CF_TOKEN_VAR})
   --run                     actually create/write (default: dry run — GETs only, prints the plan)
   -h, --help                this help
 
-Env:
-  ${KEY_VAR}            Resend API key (full access — domains are account-scoped); also the value stored by the secrets step
+Env (names overridable per the flags above):
+  ${KEY_VAR}            Resend API key (full access — domains are account-scoped); also what the secrets step stores unless --send-key-var
   ${CF_TOKEN_VAR}      Cloudflare API token with Zone:DNS:Edit on the zone
 
 Every step is idempotent; re-run after DNS propagates to finish verification.`
@@ -317,8 +333,12 @@ export async function main(argv, deps = {}) {
   }
   // Every step talks to Resend (`dns` reads the domain's records; `secrets` stores
   // the key itself), so that token is unconditional; Cloudflare's only for `dns`.
-  const resendKey = envVar(KEY_VAR)
-  const cfToken = wants('dns') ? envVar(CF_TOKEN_VAR) : null
+  const resendKey = envVar(opts.resendKeyVar)
+  const cfToken = wants('dns') ? envVar(opts.cfTokenVar) : null
+  // What the app gets is the *sending* key: by default the same key, but an
+  // operator holding a full-access key in one var and a send-only key in
+  // another keeps the full-access one out of every deployment's secrets.
+  const sendKey = wants('secrets') ? envVar(opts.sendKeyVar) : null
   const { domain } = opts
 
   // 1. Resolve (or create) the domain. `dns` and `verify` need its id/records too, so
@@ -410,7 +430,7 @@ export async function main(argv, deps = {}) {
   //    raw, with no trimming, so no trailing newline: it would become part of the secret.
   if (wants('secrets')) {
     const target = { pagesProject: opts.pagesProject, worker: opts.worker }
-    for (const [name, value] of [[KEY_VAR, resendKey], [FROM_VAR, opts.from]]) {
+    for (const [name, value] of [[KEY_VAR, sendKey], [FROM_VAR, opts.from]]) {
       const args = ['wrangler', ...secretPutArgs(name, target)]
       out(`secrets: ${dry ? `${tag} run` : 'running'}: ${formatCommand('npx', args)}  # value on stdin${name === KEY_VAR ? ' (hidden)' : `: ${value}`}`)
       if (!dry) exec('npx', args, value)

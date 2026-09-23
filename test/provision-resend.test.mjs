@@ -212,6 +212,9 @@ describe('parseArgs', () => {
       only: ['create', 'verify'],
       run: true,
       help: false,
+      resendKeyVar: 'RESEND_API_KEY',
+      sendKeyVar: 'RESEND_API_KEY',
+      cfTokenVar: 'CLOUDFLARE_API_TOKEN',
     })
   })
 
@@ -465,6 +468,33 @@ describe('verify', () => {
       'done',
     ])
     expect(code).toBe(1)
+  })
+})
+
+describe('token env-var flags', () => {
+  it('reads the API key and CF token from the named vars, and stores the send-key var', async () => {
+    const env = { RESEND_ADMIN_KEY: 'admin-key', RESEND_SEND_KEY: 'send-key', CLOUDFLARE_ADMIN_TOKEN: 'cf-admin' }
+    const { calls, execs } = await run(
+      ['--domain', DOMAIN, '--only', 'secrets', '--from', 'noreply@oa.dev', '--worker', 'w',
+        '--resend-key-var', 'RESEND_ADMIN_KEY', '--send-key-var', 'RESEND_SEND_KEY', '--cf-token-var', 'CLOUDFLARE_ADMIN_TOKEN', '--run'],
+      { env },
+    )
+    expect(calls).toEqual([])
+    expect(execs).toEqual([
+      { cmd: 'npx', args: ['wrangler', 'secret', 'put', 'RESEND_API_KEY', '--name', 'w'], input: 'send-key' },
+      { cmd: 'npx', args: ['wrangler', 'secret', 'put', 'MAIL_FROM', '--name', 'w'], input: 'noreply@oa.dev' },
+    ])
+  })
+
+  it('names the overridden var when it is missing', async () => {
+    await expect(run(['--domain', DOMAIN, '--only', 'verify', '--resend-key-var', 'NOPE'], { env: {} })).rejects.toThrow(
+      'NOPE is not set (export it in the environment; it is never read from argv)',
+    )
+  })
+
+  it('defaults --send-key-var to --resend-key-var', () => {
+    expect(parseArgs(['--domain', DOMAIN, '--only', 'create', '--resend-key-var', 'X']).sendKeyVar).toBe('X')
+    expect(parseArgs(['--domain', DOMAIN, '--only', 'create']).sendKeyVar).toBe('RESEND_API_KEY')
   })
 })
 
