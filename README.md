@@ -192,7 +192,36 @@ authRoutes(gate, { allowlist })   // adds admin GET/POST/DELETE <base>/allowed; 
 
 Each row carries its own scopes, or pass `allowlistPolicy(store, { scopes })` to grant a fixed set to every member. Rows arrive by hand (the panel) or out of band: a directory sync owns a `source` and calls `store.replaceSource('sync:board@…', members)` — one transaction, so a sign-in mid-sync never sees the group empty and a sync never clobbers a hand-added guest. Mounting the editor doesn't change who gets in; that's the separate `policy` wiring, on purpose.
 
-**On Google groups.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), so group-awareness always needs a directory lookup somewhere. The table above is the pragmatic tier: fill it by hand, or with an app-side `board@` sync (the package deliberately holds no directory credential — that's app ops, like the OAuth client). The "live, signed at each sign-in" tier is a **SAML** adapter that consumes Google's group-attribute assertion; it's specced but unbuilt — see [`specs/saml-groups.md`](specs/saml-groups.md).
+**Google groups, synced.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), and nothing pushes a group change to a custom app (Google's Shared Signals role is *receiver*, session-revocation only). So "gate this to `board@`" is a periodic pull into the table above, and `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`:
+
+```ts
+import { syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
+
+export default {
+  // wrangler.toml: [triggers] crons = ["*/15 * * * *"]
+  async scheduled(_ev, env) {
+    await syncGroupsToAllowlist(d1Allowlist(env.DB), {
+      key: env.GOOGLE_SA_KEY,                          // the SA key JSON, as a secret
+      groups: [{ group: 'board@example.org', scopes: ['board'] }],
+    })
+  },
+}
+```
+
+Because `allowlistPolicy` is re-evaluated on every request, a removed member is denied within one sync interval — at 15 minutes, well inside the ~1 h token lifetime most orgs accept as their revocation window. (Pages Functions have no cron: run the same call from a sibling Worker bound to the same D1, or from a scheduled GitHub Action.) `listGroupMembers`/`googleAccessToken` are exported separately for anything else that needs a group or an SA token.
+
+Provisioning is `gcloud`, and needs **no domain-wide delegation**: the service account acts as itself once it can read the group — either as an *owner of just that group* (lightest), or holding the *Groups Reader* admin role (Admin console → *Assign service accounts*, or Terraform's `googleworkspace_role_assignment`). Whoever runs this once must be a Workspace admin or the group's owner; after that, membership is edited in Workspace and nothing here changes.
+
+```bash
+gcloud iam service-accounts create group-sync --project $PROJECT
+gcloud services enable admin.googleapis.com --project $PROJECT
+gcloud iam service-accounts keys create sa.json --iam-account group-sync@$PROJECT.iam.gserviceaccount.com
+gcloud identity groups memberships add --group-email=board@example.org \
+  --member-email=group-sync@$PROJECT.iam.gserviceaccount.com --roles=OWNER
+wrangler secret put GOOGLE_SA_KEY < sa.json && rm sa.json
+```
+
+Orgs already wired for domain-wide delegation pass `subject: 'admin@…'` and get the impersonation path instead; `api: 'cloud-identity'` swaps the Admin SDK Directory read for the Cloud Identity one. The "live, signed at each sign-in" tier — a **SAML** adapter consuming Google's group-attribute assertion — stays specced but unbuilt ([`specs/saml-groups.md`](specs/saml-groups.md)): it only refreshes at login, so it is *slower* to revoke than this sync unless it writes into the same table anyway.
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
 
