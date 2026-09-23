@@ -75,3 +75,7 @@ wrangler secret put GOOGLE_SA_KEY < sa.json
 - The Cloud Identity path pages at `pageSize=500`; Directory at `maxResults=200` (its max).
 - `syncSource(group)` is exported so an app can address a group's rows (`store.replaceSource(syncSource(g), [])` to drop one).
 - The GHA-schedule trigger for Pages apps is documented as "sibling Worker or scheduled Action" and not built; an admin `POST /allowed/sync` route stays a follow-up if a consumer wants it.
+
+## Addendum (2026-09-23): `POST /allowed/sync` — Pages apps need no cron Worker
+
+Both first consumers (hccs-funds, gcs) are Pages projects, so "sibling Worker with `[triggers] crons`" was the wrong default. `authRoutes(gate, { allowlist, sync: { run, token? } })` now mounts `POST <base>/allowed/sync`: gated by `adminScope`, or by `token` as a bearer (compared as SHA-256 hashes) so a scheduled GitHub Action `curl`s it with a `SYNC_TOKEN` secret. `run` is a plain callback (typically `() => syncGroupsToAllowlist(store, …)`), so `core/routes.ts` stays ignorant of Google. A throwing `run` → 502 `{ ok: false, error }`, table untouched. `<AllowlistPanel sync />` adds a "Sync now" button that reports the per-group counts. Tests: `test/allowlist.test.ts` (5) + `test/react/allowlist.test.tsx` (3).

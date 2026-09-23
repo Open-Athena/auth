@@ -21,15 +21,23 @@ export interface AllowlistPanelProps {
    * field. Rows a directory sync wrote keep whatever scopes it gave them.
    */
   defaultScopes?: readonly string[]
-  /** Called after any successful add or remove. */
+  /** Called after any successful add, remove, or sync. */
   onChanged?: () => void
+  /**
+   * Show a "Sync now" button that POSTs `<endpoint>/sync` (the route an app
+   * mounts with `authRoutes(gate, { allowlist, sync })`) and reloads. Off by
+   * default: only meaningful when the app has a directory sync wired.
+   */
+  sync?: boolean
   classNames?: Partial<
     Record<
-      'root' | 'table' | 'row' | 'cell' | 'source' | 'form' | 'input' | 'button' | 'remove' | 'message' | 'empty',
+      'root' | 'table' | 'row' | 'cell' | 'source' | 'form' | 'input' | 'button' | 'remove' | 'sync' | 'message' | 'empty',
       string
     >
   >
-  labels?: Partial<Record<'email' | 'add' | 'adding' | 'remove' | 'empty' | 'synced' | 'manual', string>>
+  labels?: Partial<
+    Record<'email' | 'add' | 'adding' | 'remove' | 'empty' | 'synced' | 'manual' | 'sync' | 'syncing' | 'syncDone', string>
+  >
 }
 
 const DEFAULTS = {
@@ -40,7 +48,19 @@ const DEFAULTS = {
   empty: 'No one is on the allowlist yet.',
   synced: 'synced',
   manual: 'manual',
+  sync: 'Sync now',
+  syncing: 'Syncing…',
+  syncDone: 'Synced',
 }
+
+/** What `syncGroupsToAllowlist` returns, if that's what the app's sync runs. */
+interface SyncSummary {
+  group: string
+  count: number
+}
+
+const isSyncSummary = (v: unknown): v is SyncSummary[] =>
+  Array.isArray(v) && v.every(r => r && typeof r.group === 'string' && typeof r.count === 'number')
 
 /**
  * Manage the SSO allowlist: list allowed emails, add one, remove one. Unstyled
@@ -55,6 +75,7 @@ export function AllowlistPanel({
   endpoint = '/api/auth/allowed',
   defaultScopes = [],
   onChanged,
+  sync = false,
   classNames = {},
   labels = {},
 }: AllowlistPanelProps) {
@@ -63,6 +84,7 @@ export function AllowlistPanel({
   const [email, setEmail] = useState('')
   const [state, setState] = useState<PanelState>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +129,25 @@ export function AllowlistPanel({
     }
   }
 
+  async function runSync() {
+    if (state === 'saving') return
+    setState('saving')
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await fetch(`${endpoint}/sync`, { method: 'POST', credentials: 'include' })
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: unknown; error?: string }
+      if (!res.ok || !body.ok) throw new Error(body.error ?? `${res.status}`)
+      const summary = isSyncSummary(body.result) ? `: ${body.result.map(r => `${r.group} (${r.count})`).join(', ')}` : ''
+      setNotice(`${t.syncDone}${summary}`)
+      await load()
+      onChanged?.()
+    } catch (err) {
+      setState('error')
+      setError(err instanceof Error ? err.message : 'Could not sync.')
+    }
+  }
+
   async function remove(target: string) {
     setState('saving')
     setError(null)
@@ -137,9 +178,20 @@ export function AllowlistPanel({
         </button>
       </form>
 
+      {sync && (
+        <button className={classNames.sync} type="button" onClick={runSync} disabled={state === 'saving'}>
+          {state === 'saving' ? t.syncing : t.sync}
+        </button>
+      )}
+
       {error && (
         <p className={classNames.message} role="alert">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p className={classNames.message} role="status">
+          {notice}
         </p>
       )}
 

@@ -193,4 +193,54 @@ describe('/allowed admin routes', () => {
     expect(await call(path, { method: 'DELETE' }, admin)).toEqual({ status: 200, body: { ok: false } })
     expect(await store.lookup('member@x.test')).toBeNull()
   })
+
+  describe('POST /allowed/sync', () => {
+    const runs: number[] = []
+    const okSync = { run: async () => { runs.push(1); return [{ group: 'board@x.test', source: 'sync:board@x.test', count: 2 }] } }
+
+    beforeEach(() => {
+      runs.length = 0
+    })
+
+    it('runs the sync for an admin and returns its result', async () => {
+      handle = authRoutes(gate, { allowlist: store, sync: okSync })
+      const res = await call('/allowed/sync', { method: 'POST' }, await signIn('boss@x.test'))
+      expect(res).toEqual({ status: 200, body: { ok: true, result: [{ group: 'board@x.test', source: 'sync:board@x.test', count: 2 }] } })
+      expect(runs).toEqual([1])
+    })
+
+    it('401s anonymous, 403s a non-admin, 501s an admin when no sync is wired — and never runs', async () => {
+      handle = authRoutes(gate, { allowlist: store })
+      expect((await call('/allowed/sync', { method: 'POST' })).status).toBe(401)
+      expect((await call('/allowed/sync', { method: 'POST' }, await signIn('member@x.test'))).status).toBe(403)
+      expect(await call('/allowed/sync', { method: 'POST' }, await signIn('boss@x.test'))).toEqual({
+        status: 501,
+        body: { error: 'sync not configured' },
+      })
+      expect(runs).toEqual([])
+    })
+
+    it('accepts the bearer token in place of a session, and rejects a wrong or absent one', async () => {
+      handle = authRoutes(gate, { allowlist: store, sync: { ...okSync, token: 'cron-secret' } })
+      const bearer = (t: string) => call('/allowed/sync', { method: 'POST', headers: { authorization: `Bearer ${t}` } })
+      expect((await bearer('cron-secret')).status).toBe(200)
+      expect((await bearer('wrong')).status).toBe(401)
+      expect((await call('/allowed/sync', { method: 'POST' })).status).toBe(401)
+      expect(runs).toEqual([1])
+    })
+
+    it('ignores a bearer when no token is configured (a session is still required)', async () => {
+      handle = authRoutes(gate, { allowlist: store, sync: okSync })
+      const res = await call('/allowed/sync', { method: 'POST', headers: { authorization: 'Bearer anything' } })
+      expect(res.status).toBe(401)
+      expect(runs).toEqual([])
+    })
+
+    it('reports a failing sync as 502 with the error, leaving the table alone', async () => {
+      handle = authRoutes(gate, { allowlist: store, sync: { run: async () => { throw new Error('google token endpoint: HTTP 401') } } })
+      const res = await call('/allowed/sync', { method: 'POST' }, await signIn('boss@x.test'))
+      expect(res).toEqual({ status: 502, body: { ok: false, error: 'google token endpoint: HTTP 401' } })
+      expect((await store.list()).map(r => r.email)).toEqual(['member@x.test'])
+    })
+  })
 })

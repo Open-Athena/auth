@@ -13,6 +13,7 @@ import type { AllowEntry, AllowlistStore, AuditQuery } from './store.js'
 import type { Gate, ProfileInput } from './gate.js'
 import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
 import { cleanSubject, isEmailish } from './requests.js'
+import { hashToken } from './tokens.js'
 import { type GrantPatch, hasScope } from './types.js'
 
 export interface RouteOptions {
@@ -36,6 +37,15 @@ export interface RouteOptions {
    * editor should not silently change who gets in.
    */
   allowlist?: AllowlistStore
+  /**
+   * Backs `POST <basePath>/allowed/sync`: run the app's directory sync on
+   * demand (`run` is typically `() => syncGroupsToAllowlist(store, …)` from
+   * `@open-athena/auth/google-directory`). Gated by `adminScope` — the panel's
+   * "Sync now" — or by `token` presented as `Authorization: Bearer …`, so a
+   * scheduled GitHub Action can drive it with no session and a Pages app needs
+   * no cron Worker. Without it the route 501s.
+   */
+  sync?: { run: () => Promise<unknown>; token?: string }
   /**
    * The identity recorded as a grant's `created_by`. Default: the SSO email.
    * Returning a per-visitor value plus `scopeToCreator` gives each admin their
@@ -149,6 +159,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     adminScope = 'admin',
     audit,
     allowlist,
+    sync,
     creatorOf = defaultCreator,
     scopeToCreator,
     honeypotField = 'website',
@@ -406,6 +417,25 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // to enforce it. Hand-added rows are `source: 'manual'`; a directory sync
     // owns its own source and never touches these — so the panel and a `board@`
     // sync coexist in one table.
+    if (seg[0] === 'allowed' && seg[1] === 'sync' && seg.length === 2 && method === 'POST') {
+      // A bearer that matches `sync.token` stands in for an admin session (the
+      // cron case). Compared as hashes so the check isn't a timing oracle.
+      const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
+      const byToken = !!sync?.token && !!bearer && (await hashToken(bearer)) === (await hashToken(sync.token))
+      if (!byToken) {
+        const a = await admin()
+        if (a instanceof Response) return a
+      }
+      if (!sync) return json({ error: 'sync not configured' }, 501)
+      try {
+        return json({ ok: true, result: await sync.run() })
+      } catch (e) {
+        // The upstream directory is down or the credential is wrong: say so
+        // rather than 500 — the previous membership stands until it works.
+        return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502)
+      }
+    }
+
     if (seg[0] === 'allowed') {
       const a = await admin()
       if (a instanceof Response) return a
