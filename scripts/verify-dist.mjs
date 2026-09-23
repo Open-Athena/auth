@@ -54,6 +54,7 @@ const CHECK = String.raw`
 import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from '@open-athena/auth'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
 import { ssoHandler, verifyAccessJwt } from '@open-athena/auth/cf-access'
+import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
 import { readdirSync, readFileSync } from 'node:fs'
 
@@ -97,7 +98,7 @@ const checks = {
   'no dev-only fields':           !manifest.scripts && !manifest.devDependencies && !manifest.pnpm,
   'peer deps declared':           ['react', '@tanstack/react-query'].every(d => d in (manifest.peerDependencies ?? {})),
   'peer deps optional':           ['react', '@tanstack/react-query'].every(d => manifest.peerDependenciesMeta?.[d]?.optional),
-  'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler].every(f => typeof f === 'function'),
+  'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
   'migrations shipped':           shippedMigrations.length > 0 && grantsDdl.includes('CREATE TABLE grants'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),

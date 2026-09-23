@@ -10,7 +10,7 @@ So any group-awareness requires a directory lookup *somewhere*. The question is 
 
 | Tier | Mechanism | Freshness | Standing cred | Status |
 |---|---|---|---|---|
-| **allowlist table** | local rows, filled by hand or a pull | as fresh as the fill | none | **shipped** ([`allowlist-store.md`](./done/allowlist-store.md)) |
+| **allowlist table** | local rows, filled by hand or a periodic pull (`syncGroupsToAllowlist`) | sync interval | SA key (read-only group access, no DWD) | **shipped** ([`allowlist-store.md`](./done/allowlist-store.md), [`google-directory-sync.md`](./done/google-directory-sync.md)) |
 | **SAML assertion** | groups in Google's signed assertion, per sign-in | live | **none** | this spec |
 | **SCIM receiver** | IdP pushes users/groups to us | live (on change) | none (IdP-authed) | not planned (heavier; Google's SCIM is oriented at provisioning *into* SaaS) |
 
@@ -56,4 +56,4 @@ Narrow surface: one request out, one signed assertion back, a fixed set of valid
 
 ## Trigger to build
 
-A consumer that needs **live** directory-group membership (a group that changes often enough that the allowlist-table sync's staleness window matters, or an org that won't grant even a scheduled Directory read scope). Until then, `allowlist-store.md` + a periodic `replaceSource` sync is the right-sized answer, and this stays a design. The spike above means that when the trigger comes, the path is concrete and the risks are named — not that we build it speculatively now.
+A consumer that needs **live** directory-group membership (a group that changes often enough that the allowlist-table sync's staleness window matters, or an org that won't grant even a scheduled Directory read scope). Until then, `allowlist-store.md` + the package's `syncGroupsToAllowlist` cron ([`google-directory-sync.md`](./done/google-directory-sync.md)) is the right-sized answer, and this stays a design. Note the revocation math: this adapter refreshes groups only at sign-in, so it is *slower* to revoke than a 15-minute sync unless it also writes into the allowlist table. The spike above means that when the trigger comes, the path is concrete and the risks are named — not that we build it speculatively now.

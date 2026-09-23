@@ -60,9 +60,18 @@ wrangler secret put GOOGLE_SA_KEY < sa.json
 
 ## Acceptance
 
-- [ ] `googleAccessToken` produces a JWT-bearer assertion the token endpoint can verify with the SA's public key, with exactly the expected claims (and `sub` only when `subject` is given); returns the access token; throws on a 4xx.
-- [ ] `listGroupMembers` follows `nextPageToken` on both APIs, keeps only active `USER` members, lowercases, sorts, de-dups; Cloud Identity path does `lookup` first.
-- [ ] `syncGroupsToAllowlist` writes `sync:<group>` rows via `replaceSource` with the configured scopes, leaves `manual` rows alone, and does not touch the store when listing throws.
-- [ ] `allowlistPolicy` over the synced store admits a member and denies a removed one on the next sync.
-- [ ] Exported from `package.json` `exports` as `./google-directory`; `verify-dist` covers it.
-- [ ] README: the recipe above, and the Google-groups stance updated (no longer "app-side").
+- [x] `googleAccessToken` produces a JWT-bearer assertion the token endpoint can verify with the SA's public key, with exactly the expected claims (and `sub` only when `subject` is given); returns the access token; throws on a 4xx.
+- [x] `listGroupMembers` follows `nextPageToken` on both APIs, keeps only active `USER` members, lowercases, sorts, de-dups; Cloud Identity path does `lookup` first.
+- [x] `syncGroupsToAllowlist` writes `sync:<group>` rows via `replaceSource` with the configured scopes, leaves `manual` rows alone, and does not touch the store when listing throws.
+- [x] `allowlistPolicy` over the synced store admits a member and denies a removed one on the next sync.
+- [x] Exported from `package.json` `exports` as `./google-directory`; `verify-dist` covers it.
+- [x] README: the recipe above, and the Google-groups stance updated (no longer "app-side").
+
+## As built (2026-09-23)
+
+`src/adapters/google-directory.ts`, exported as `@open-athena/auth/google-directory`; `test/google-directory.test.ts` (10 tests: assertion claims verified against the SA public key, `sub` only with `subject`, key-as-string, both APIs paged and filtered, sync writes/leaves-manual/denies-after-removal/untouched-on-error). Differences from the shape above:
+
+- `googleAccessToken` also returns `clientEmail`, and sync rows carry `addedBy: <client_email>` rather than a bare `'sync'` — the audit trail names the credential.
+- The Cloud Identity path pages at `pageSize=500`; Directory at `maxResults=200` (its max).
+- `syncSource(group)` is exported so an app can address a group's rows (`store.replaceSource(syncSource(g), [])` to drop one).
+- The GHA-schedule trigger for Pages apps is documented as "sibling Worker or scheduled Action" and not built; an admin `POST /allowed/sync` route stays a follow-up if a consumer wants it.

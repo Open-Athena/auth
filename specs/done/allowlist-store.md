@@ -22,7 +22,9 @@ This is also the substrate the group story needs: whether membership arrives by 
   - **Management is kept separate from enforcement on purpose.** Mounting the editor (`allowlist` route option) does *not* change who gets in; an app opts the table into authorization *separately*, by putting `allowlistPolicy(store)` in its `policy`. So "who can edit the list" and "does the list grant access" are two deliberate wirings, not one.
 - **`AllowlistPanel`** (`react/`) — unstyled, prop-driven (every string and class a prop, like the other panels): list, add, remove, with a `manual`/`synced` provenance tag. `defaultScopes` lets the add form skip a scopes field.
 
-## Boundary: the package does not sync directories
+## Boundary: the package does not sync directories *(revised 2026-09-23)*
+
+*Superseded for the runtime half by [`google-directory-sync.md`](./google-directory-sync.md): `syncGroupsToAllowlist` now lives in the package (zero-dep WebCrypto + fetch), while provisioning the credential stays `gcloud`/IaC. The reasoning below is kept as written.*
 
 The Google Directory→table sync (an app's `scripts/sync-board.mjs`, holding *that app's* Google admin credential) stays out of the package, for the same reason `oauth-client-iac.md` kept OAuth-client provisioning out: it's IdP-management-plane code with a standing credential, and baking it in would couple this runtime-agnostic library to one IdP. The package gives the store + policy + panel; the app gives the sync and its creds. `replaceSource` is the contract between them.
 

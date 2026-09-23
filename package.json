@@ -36,6 +36,10 @@
       "types": "./dist/adapters/r2.d.ts",
       "default": "./dist/adapters/r2.js"
     },
+    "./google-directory": {
+      "types": "./dist/adapters/google-directory.d.ts",
+      "default": "./dist/adapters/google-directory.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
