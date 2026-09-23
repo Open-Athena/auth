@@ -179,6 +179,18 @@ The `access-granted` message is the only place a token is ever rendered, and it 
 
 `SendEmail` is one method, so Postmark or SES is a sibling file rather than a refactor. (MailChannels' free Workers integration ended in 2024, so an ESP is a real dependency now.)
 
+**Email codes** (`emailCodeAuth`) are the same delivery-is-verification idea as a sign-in rather than a sign-up: a magic link plus a 6-digit code in one mail, backed by a `pending_auth` row (`d1PendingAuthStore`), converging on the same `gate.signIn` as Google or Access. It's four mountable handlers — [`examples/pages-functions/auth/email/[[path]].ts`](examples/pages-functions/auth/email/%5B%5Bpath%5D%5D.ts) is the reference Pages-Function mount, and `<EmailCodeForm>` (or `<SignInPanel emailAuth>`) is the front half.
+
+**Provisioning Resend.** Unlike the Google client, every step here has an API, so [`scripts/provision-resend.mjs`](scripts/provision-resend.mjs) does the whole thing: creates the sending domain in Resend, writes the SPF/DKIM records it returns onto your Cloudflare zone (idempotently — re-runs skip what's already there), kicks off verification, and stores `RESEND_API_KEY` + `MAIL_FROM` as Pages (or Worker) secrets, piping the key on stdin so it never touches argv. Dry run by default:
+
+```bash
+RESEND_API_KEY=re_… CLOUDFLARE_API_TOKEN=… scripts/provision-resend.mjs \
+  --domain example.org --zone-id <zone-id> --from noreply@example.org \
+  --pages-project your-app --dmarc      # add --run to apply; --wait 600 to poll verification
+```
+
+What stays manual: a Resend account and a *full-access* API key (domains are account-scoped; a send-only key can't create one), a Cloudflare token with `Zone:DNS:Edit`, accepting an ESP as a dependency, and the DNS-propagation wait — usually minutes on a Cloudflare zone, after which `--only verify --wait 600` finishes the job. The records are ordinary DNS, so teams that already run their zone as code can express the same thing in Terraform instead (`resend_domain` emits the identical `records` list; `cloudflare_dns_record` consumes it) — the script just spares everyone else a provider, a state backend, and a key in state.
+
 **Allowlist as a table, not a redeploy.** A `policy` can be a literal (`domainPolicy`, `adminPolicy`) *or* a DB table, because `EmailPolicy` is `(email) => scopes | null | Promise<…>`. `allowlistPolicy(store)` reads an `allowed_emails` table so "who's allowed" is edited, not shipped:
 
 ```ts
