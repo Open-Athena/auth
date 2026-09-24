@@ -1,5 +1,5 @@
 /**
- * `migrations/schema.sql` is the whole schema in one apply, for a fresh install.
+ * `schema.sql` (package root) is the whole schema in one apply, for a fresh install.
  * It is *derived* from the numbered migrations (`scripts/gen-schema.mjs`), so it
  * must never drift: applying every migration has to build the same schema as
  * applying `schema.sql`. A migration added without regenerating the file fails
@@ -34,9 +34,9 @@ const fromMigrations = (): SchemaObject[] =>
     for (const f of readdirSync(dir).filter(n => MIGRATION_RE.test(n)).sort()) db.exec(readFileSync(dir + f, 'utf8'))
   })
 
-const fromSchemaFile = (): SchemaObject[] => schemaOf(db => db.exec(readFileSync(dir + 'schema.sql', 'utf8')))
+const fromSchemaFile = (): SchemaObject[] => schemaOf(db => db.exec(readFileSync(dir + '../schema.sql', 'utf8')))
 
-describe('migrations/schema.sql', () => {
+describe('schema.sql', () => {
   it('builds exactly the schema the numbered migrations do (else run `node scripts/gen-schema.mjs`)', () => {
     expect(fromSchemaFile()).toEqual(fromMigrations())
   })

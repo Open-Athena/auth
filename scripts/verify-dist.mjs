@@ -13,7 +13,7 @@
  *   defaults: Open-Athena/auth, the current `dist` branch head
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -101,6 +101,7 @@ const checks = {
   'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
   'migrations shipped':           shippedMigrations.length > 0 && grantsDdl.includes('CREATE TABLE grants'),
+  'schema.sql shipped, not in migrations/': existsSync(new URL('./node_modules/@open-athena/auth/schema.sql', import.meta.url)) && !shippedMigrations.includes('schema.sql'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,
   'redeem mints a session':       redeemed.ok === true,

@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "migrations",
+    "schema.sql",
     "src"
   ],
   "exports": {
@@ -49,6 +50,7 @@
       "default": "./dist/testing/index.js"
     },
     "./migrations/*": "./migrations/*",
+    "./schema.sql": "./schema.sql",
     "./package.json": "./package.json"
   },
   "scripts": {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regenerate `migrations/schema.sql` — the full current schema in one file, for
+ * Regenerate `schema.sql` (package root) — the full current schema in one file, for
  * a fresh consumer who wants to stand up the tables in a single apply rather
  * than replaying every numbered migration.
  *
@@ -52,8 +52,11 @@ const HEADER = [
 ].join('\n')
 
 function main() {
-  writeFileSync(migrationsDir + 'schema.sql', HEADER + dumpSchema() + '\n')
-  process.stderr.write(`wrote migrations/schema.sql (${migrationFiles().length} migrations)\n`)
+  // Deliberately *outside* `migrations/`: `wrangler d1 migrations apply` sweeps
+  // every `.sql` in its dir, so a one-file dump in there re-creates `grants`
+  // after the numbered files and dies.
+  writeFileSync(new URL('../schema.sql', import.meta.url), HEADER + dumpSchema() + '\n')
+  process.stderr.write(`wrote schema.sql (${migrationFiles().length} migrations)\n`)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()
