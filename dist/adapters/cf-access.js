@@ -5,6 +5,9 @@ const enc = new TextEncoder();
  * Verify an Access JWT against the Zero Trust team's public certs and return
  * the authenticated email, or null. `aud` is checked when `expectedAud` is
  * given — do give it: without it any app in the same team is accepted.
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export async function verifyAccessJwt(jwt, teamDomain, expectedAud, nowMs = Date.now()) {
     const claims = await verifyRs256Jwt(jwt, `${teamDomain}/cdn-cgi/access/certs`, {
@@ -21,6 +24,9 @@ function safeNext(raw) {
 /**
  * Build the `/auth/sso` handler: verify Access -> mint session -> 302 to `next`.
  * Usable directly as a Pages Function `onRequest`.
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export function ssoHandler({ gate, teamDomain, aud }) {
     return async ({ request }) => {
@@ -45,6 +51,9 @@ export function ssoHandler({ gate, teamDomain, aud }) {
  * So this mints for any Access-verified email and the gate decides later —
  * the same order of operations `ssoHandler` uses, minus the early rejection
  * (and minus the `signin` audit row, which needs the gate's sink).
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export function ssoSessionHandler({ secret, teamDomain, aud, cookieName, sessionTtlS }) {
     return async ({ request }) => {

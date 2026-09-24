@@ -17,6 +17,9 @@ import type { Gate } from '../core/gate.js';
  * Verify an Access JWT against the Zero Trust team's public certs and return
  * the authenticated email, or null. `aud` is checked when `expectedAud` is
  * given — do give it: without it any app in the same team is accepted.
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export declare function verifyAccessJwt(jwt: string, teamDomain: string, expectedAud?: string, nowMs?: number): Promise<string | null>;
 export interface SsoHandlerOptions {
@@ -29,6 +32,9 @@ export interface SsoHandlerOptions {
 /**
  * Build the `/auth/sso` handler: verify Access -> mint session -> 302 to `next`.
  * Usable directly as a Pages Function `onRequest`.
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export declare function ssoHandler({ gate, teamDomain, aud }: SsoHandlerOptions): ({ request }: {
     request: Request;
@@ -55,6 +61,9 @@ export interface SsoSessionHandlerOptions {
  * So this mints for any Access-verified email and the gate decides later —
  * the same order of operations `ssoHandler` uses, minus the early rejection
  * (and minus the `signin` audit row, which needs the gate's sink).
+ *
+ * @deprecated Cloudflare Access is being retired as a sign-in path: use
+ * `@open-athena/auth/oidc` (Google + One Tap) and `emailCodeAuth` instead.
  */
 export declare function ssoSessionHandler({ secret, teamDomain, aud, cookieName, sessionTtlS }: SsoSessionHandlerOptions): ({ request }: {
     request: Request;
