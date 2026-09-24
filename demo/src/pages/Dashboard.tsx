@@ -149,7 +149,7 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
       </p>
       <ul>
         <li>
-          <Link to="/">Sign in with an emailed code</Link>, Google, or SSO — one <code>gate.signIn</code> for all three.
+          <Link to="/">Sign in with an emailed code</Link>, or Google — one <code>gate.signIn</code> for both.
         </li>
         <li>
           <Link to="/">Open the named or the anonymous demo link</Link> and compare the chip above.
@@ -180,7 +180,7 @@ function identityFacts(whoami: AppWhoami): [string, string][] {
       ['Subject', `e:${whoami.email}`],
       [
         'How you got in',
-        'An email session: SSO, Google, or an emailed code. The gate can\'t tell which — all three end in gate.signIn.',
+        'An email session: Google or an emailed code. The gate can\'t tell which — both end in gate.signIn.',
       ],
       ['Known as', displayName(whoami) ?? whoami.email],
       ['Scopes', whoami.scopes.join(', ') || 'none'],

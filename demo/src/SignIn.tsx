@@ -8,7 +8,7 @@ const FORM = { form: 'stack', field: 'field', input: 'input', button: 'btn', mes
 /**
  * The composed sign-in every gated page here shows — the library's own
  * `SignInPanel`, wired the way an adopter would wire it: Google (in-page One
- * Tap, then the redirect button), Cloudflare Access for staff, and an emailed
+ * Tap, then the redirect button) and an emailed
  * code for everyone else. All three end in the same `gate.signIn`, so the
  * dashboard can't tell them apart, which is the point.
  */
@@ -43,9 +43,6 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
       <SignInPanel
         title={title}
         googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
-        // Cloudflare Access fronts `/auth/sso` only on the deployed host; in local dev it can only 401.
-        signInUrl={import.meta.env.DEV ? undefined : '/auth/sso?next=%2Fdashboard'}
-        signInLabel="Sign in with SSO (staff)"
         withNext={false}
         emailAuth={{
           startEndpoint: '/auth/email/start',

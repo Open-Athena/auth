@@ -9,7 +9,7 @@
  *   GET  /auth/email/outbox  -> demo only, see below
  *
  * They sign into the same gate the dashboard checks, so an emailed code, a
- * Google sign-in and Cloudflare Access all converge on one `gate.signIn`.
+ * and Google sign-in converge on one `gate.signIn`.
  *
  * **The dishonest step.** The library's `start` never says whether mail went
  * out — the reply is identical for an admitted and a not-admitted address, so

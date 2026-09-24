@@ -1,7 +1,7 @@
 import { type Grant, subjectName } from '@open-athena/auth'
 import { AllowlistPanel, type AppWhoami, Avatar, useWhoami } from '@open-athena/auth/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
 
 const SOURCE = { kind: 'app', endpoint: '/api/admin/whoami' } as const
@@ -9,7 +9,17 @@ const SANDBOX_KEY = 'oa-auth-demo:sandbox'
 
 export function Admin() {
   const { whoami, refresh } = useWhoami<AppWhoami>(SOURCE)
-  if (whoami === undefined) return <p className="muted">Checking…</p>
+  // A staff member who signed in with Google holds a *view* session; promote it
+  // to the admin gate once (`/api/staff` 403s anyone outside the staff domain).
+  const [promoted, setPromoted] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (whoami !== null || promoted !== null) return
+    void fetch('/api/staff', { method: 'POST', credentials: 'include' }).then(res => {
+      setPromoted(res.ok)
+      if (res.ok) refresh()
+    })
+  }, [whoami, promoted, refresh])
+  if (whoami === undefined || (whoami === null && promoted === null)) return <p className="muted">Checking…</p>
   if (whoami === null) return <StartSandbox onStarted={refresh} />
   return <Console whoami={whoami} />
 }
@@ -43,8 +53,8 @@ function StartSandbox({ onStarted }: { onStarted: () => void }) {
         {busy ? 'Starting…' : 'Start a sandbox'}
       </button>
       <p className="muted small">
-        Staff can instead <a href="/auth/sso?next=%2Fadmin">sign in with SSO</a>, which also unlocks the access-request
-        queue.
+        Staff (<code>@openathena.ai</code>) can instead <a href="/auth/google/start?next=%2Fadmin">sign in with Google</a>,
+        which also unlocks the access-request queue.
       </p>
     </div>
   )

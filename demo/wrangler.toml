@@ -13,15 +13,13 @@ database_id = "84d1f21d-2d54-4b30-ae43-2712ab44f0db"
 migrations_dir = "../migrations"
 
 [vars]
-# The Zero Trust team domain whose JWTs `/auth/sso` will accept. Only the
-# `/auth/sso` path is Access-gated; everything else is public at the edge.
-ACCESS_TEAM_DOMAIN = "https://openathena-ai-pages.cloudflareaccess.com"
-# Domain whose SSO identities are treated as staff.
+# Google sign-ins at this domain may promote to the admin gate (`/api/staff`).
 STAFF_DOMAIN = "openathena.ai"
 
 # Secrets (set with `wrangler pages secret put <NAME>`):
 #   SESSION_SECRET        - HMAC key for session cookies and IP hashing
-#   ACCESS_AUD            - the Access application's AUD tag
+#   GOOGLE_CLIENT_ID      - Google OAuth "Web application" client (scripts/provision-oauth-client.mjs)
+#   GOOGLE_CLIENT_SECRET
 #   RESEND_API_KEY        - sending-only key; with MAIL_FROM, email codes go out for real
 #   MAIL_FROM             - `Name <addr@verified-domain>` (scripts/provision-resend.mjs stores both)
 #   MAIL_DOMAINS          - comma-separated recipient domains that get real mail; everyone else sees the mail on screen

@@ -1,8 +1,8 @@
 /**
  * Two gates over one grants table.
  *
- * `viewGate` guards the dashboard — the thing a share link, an emailed code, a
- * Google sign-in or SSO gets you into. `adminGate` guards the admin page where
+ * `viewGate` guards the dashboard — the thing a share link, an emailed code or a
+ * Google sign-in gets you into. `adminGate` guards the admin page where
  * links are minted, watched and revoked. They use different cookie names, so a
  * visitor can hold an admin session and a recipient session at once, and the
  * same D1 store, so revoking in the admin page kills the dashboard session on
@@ -40,8 +40,7 @@ export interface Env {
   /** Google OAuth "Web application" client. Absent = `/auth/google/*` answers 503 and the buttons are inert. */
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
-  ACCESS_TEAM_DOMAIN?: string
-  ACCESS_AUD?: string
+  /** Google sign-ins at this domain may promote to the admin gate (`/api/staff`). */
   STAFF_DOMAIN?: string
 }
 
@@ -113,7 +112,7 @@ export function gates(env: Env, req: Request) {
     profiles,
     secret,
     cookieName: VIEW_COOKIE,
-    // An email session (SSO, Google, or an emailed code — they all end in
+    // An email session (Google or an emailed code — both end in
     // `gate.signIn`) re-derives its scopes from this policy on every request,
     // so "who may sign in by email" is decided here and nowhere else.
     policy: firstMatch(domainPolicy([staffDomain], [VIEW_SCOPE]), anyoneButSandbox([VIEW_SCOPE])),

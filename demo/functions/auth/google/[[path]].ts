@@ -8,7 +8,8 @@
  *   POST /auth/google/onetap        -> `googleOneTapVerify`: same verification, session in this response
  *   GET  /auth/google/client        -> demo only: the public client id, so the page knows whether to render One Tap
  *
- * Both land in `viewGate.signIn`, like an emailed code or Access SSO. Dormant
+ * Both land in `viewGate.signIn`, like an emailed code; staff then promote to
+ * the admin gate via `/api/staff`. Dormant
  * (503) until a client exists: Google exposes no API to create one, so
  * `scripts/provision-oauth-client.mjs` walks the one manual step and stores
  * `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` as Pages secrets.

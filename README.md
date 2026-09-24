@@ -104,15 +104,7 @@ if (res.ok) return new Response(null, { headers: { 'set-cookie': res.cookie } })
 
 Every knob is optional; zero-config is an unlimited-use, never-expiring, unnamed link. `maxRedeems` counts **sessions minted** (≈ distinct browsers), not requests — which is what makes "one-use link" mean what a human predicts. Note that `maxRedeems: 1` is hostile UX in practice (the recipient opens it on their phone, then their laptop, and is locked out); prefer unlimited-redeem, named, logged, and revocable.
 
-**SSO.** Point one CF Access application at `/auth/sso` and leave the rest of the site public at the edge:
-
-```ts
-import { ssoHandler } from '@open-athena/auth/cf-access'
-
-export const onRequest = ssoHandler({ gate, teamDomain: 'https://acme.cloudflareaccess.com', aud: env.ACCESS_AUD })
-```
-
-**Or skip Access entirely.** `@open-athena/auth/oidc` signs people in against an OIDC provider directly, so the hosted chooser and its generic copy are replaced by a page you own:
+**Sign in with Google** (or any OIDC issuer). `@open-athena/auth/oidc` signs people in against the provider directly — no Cloudflare Access, no Zero Trust seats, and a sign-in page you own. Pair it with One Tap (`GoogleOneTap`) in the page and email codes (below) for addresses Google can't vouch for:
 
 ```ts
 import { GOOGLE, oidcCallback, oidcStart } from '@open-athena/auth/oidc'
@@ -139,9 +131,7 @@ Authorization-code flow, confidential clients only, nothing persisted between th
 
 A verified address that policy rejects redirects with `?denied=<email>` rather than 403ing, which is what lets an app pre-fill request-access with an address the *provider* vouched for instead of one the visitor typed.
 
-There's also a seat argument: every Access-authenticated user consumes a Cloudflare Zero Trust seat, while share links never touch Access at all. A growing allowlist hits that ceiling; this is the way off it.
-
-`ssoSessionHandler` is the same thing for a deployment that can mint sessions but not verify them — the auth store lives in another worker, so there's no gate to hand it. It takes `{ secret, teamDomain, aud, cookieName }` and mints for any Access-verified email; the gate that later verifies the cookie re-derives scopes from `policy` on every request, so authorization isn't being skipped, just deferred to where it can be answered.
+**Legacy: Cloudflare Access** (`@open-athena/auth/cf-access`). The package began as a layer *on* Access — Access authenticated, the gate added share links and the log — and the adapter still exists for deployments that haven't cut over: `ssoHandler` trades an Access JWT on one Access-gated path (`/auth/sso`) for a gate session, and `ssoSessionHandler` does the same where the verifying gate lives in another worker. It's deprecated in favour of the OIDC + email-code path above, which does the same job without Access: every Access-authenticated user consumes a Zero Trust seat (the free tier caps at 50), and the hosted chooser can't be styled. It will be removed once its last consumers have migrated.
 
 **Revocation is instant.** Grant-backed sessions re-join their grant row on every request, so `gate.revoke(id)` kills every session that link ever minted — no waiting out a cookie TTL. That property is what makes the social story work: assume links get forwarded, and design so forwarding is *visible and revocable* rather than prevented.
 
@@ -257,8 +247,8 @@ The default read is the Cloud Identity API, which is what honours a group-*owner
 
 ```tsx
 <AuthGate
-  source={{ kind: 'app' }}          // or { kind: 'edge' } for Tier 1 — the only line that changes
-  signIn={<SignInPanel signInUrl="/auth/sso" requestAccess />}
+  source={{ kind: 'app' }}
+  signIn={<SignInPanel googleUrl="/auth/google" emailAuth requestAccess />}
 >
   {whoami => <>
     <AccessNotice whoami={whoami} />   {/* "Private link for Bob Smith · access is logged" */}

@@ -6,7 +6,7 @@ Three pages:
 
 | Path | What it shows |
 |---|---|
-| `/` | The ways in: the library's `SignInPanel` (Google One Tap + redirect, Access SSO, an emailed code), and — more prominently — two share links you can just click |
+| `/` | The ways in: the library's `SignInPanel` (Google One Tap + redirect, an emailed code / magic link), and — more prominently — two share links you can just click |
 | `/dashboard` | The gated page. The wall in front of it, then a page whose only content is what the gate knows about you |
 | `/admin` | The power-user side, in a throwaway sandbox: mint links, watch their log, disable / rotate / revoke them, edit an allowlist and run a (simulated) directory sync |
 
@@ -27,15 +27,15 @@ Step 5 is the load-bearing one: grant-backed sessions re-join their grant row on
 **Simulated, and labelled as such in the page:**
 
 - **Mail.** `emailCodeAuth`'s `start` reply never says whether mail went out (so the form can't probe who's allowed), and delivery *is* the verification. This demo has no sending domain for most visitors, so its `send` captures the message instead of mailing it, stashes it in a short-lived `HttpOnly` cookie only your browser can read back (`GET /auth/email/outbox`), and the form shows you the code and link. That proves nothing about the address, and the page says so. Mail really goes out only when `RESEND_API_KEY` + `MAIL_FROM` are set *and* the recipient's domain is in `MAIL_DOMAINS` — a public form that mails whatever address a stranger types is a spam cannon pointed at other people.
-- **Google.** Without `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `/auth/google/*` answers 503, so the page drops One Tap and the Google button (and says why) rather than offering a sign-in that can't complete. The staff SSO button is likewise hidden under `pnpm dev`, where no Cloudflare Access sits in front of `/auth/sso`. Google exposes no API to create the client; `scripts/provision-oauth-client.mjs` walks the one manual step.
+- **Google.** Without `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `/auth/google/*` answers 503, so the page drops One Tap and the Google button (and says why) rather than offering a sign-in that can't complete. Google exposes no API to create the client; `scripts/provision-oauth-client.mjs` walks the one manual step.
 - **The directory sync.** `Admin → Allowlist → Sync now` `replaceSource`s `sync:staff@example.org` with a random subset of a five-person roster, returning the same `[{ group, source, count }]` shape `syncGroupsToAllowlist` returns. A real deployment puts that call at the marked spot in `functions/api/admin/[[path]].ts`, with a service-account key. The table isn't wired into any policy here (the demo admits any address) — which demonstrates a real property: mounting the editor never changes who gets in; `allowlistPolicy(store)` in the gate's `policy` is the separate line that does.
 
 ## Two gates, one grants table
 
 `functions/_lib/gates.ts` builds two gates over the same D1 store:
 
-- **`viewGate`** (`oa_demo_view`) — guards the dashboard. Its policy admits staff and *anyone who isn't a sandbox identity*: an email session (SSO, Google, or an emailed code — they all end in `gate.signIn`) re-derives its scopes from this policy on every request, so "who may sign in by email" is decided in that one line. A real deployment writes `domainPolicy`, `allowlistPolicy`, or both there.
-- **`adminGate`** (`oa_demo_admin`) — guards the admin page. Staff get `admin` + `requests` + `reports`; a sandbox identity gets `admin` only, so a visitor playing admin still meets the wall on the dashboard and has to mint themselves a link.
+- **`viewGate`** (`oa_demo_view`) — guards the dashboard. Its policy admits staff and *anyone who isn't a sandbox identity*: an email session (Google or an emailed code — both end in `gate.signIn`) re-derives its scopes from this policy on every request, so "who may sign in by email" is decided in that one line. A real deployment writes `domainPolicy`, `allowlistPolicy`, or both there.
+- **`adminGate`** (`oa_demo_admin`) — guards the admin page. Staff (Google sign-ins at `STAFF_DOMAIN`, promoted from their view session by `POST /api/staff` — one registered redirect URI serves both gates) get `admin` + `requests` + `reports`; a sandbox identity gets `admin` only, so a visitor playing admin still meets the wall on the dashboard and has to mint themselves a link.
 
 Separate cookie names let one browser hold both roles at once. The shared store is what makes revocation in one visible to the other.
 
@@ -63,18 +63,17 @@ Migrations come straight from the package (`migrations_dir = "../migrations"`), 
 wrangler d1 create oa-auth-demo          # paste database_id into wrangler.toml
 wrangler d1 migrations apply oa-auth-demo --remote
 wrangler pages secret put SESSION_SECRET # openssl rand -base64 32
-wrangler pages secret put ACCESS_AUD     # the Access application's AUD tag
 pnpm deploy
 ```
 
-Then, for SSO, create **one** Cloudflare Access application covering `auth.oa.dev/auth/sso` and nothing else. Narrowness is the point: the landing page and its og:image stay publicly crawlable so unfurls work, and Access is reduced to an IdP on a single path. Set `ACCESS_TEAM_DOMAIN` in `wrangler.toml` to your Zero Trust team domain.
+No Cloudflare Access / Zero Trust anywhere: the whole site is public at the edge, and the gate is the app's.
 
 Optional, each turning a simulated thing real (see `wrangler.toml` for the full list):
 
 - `RESEND_API_KEY` + `MAIL_FROM` (`scripts/provision-resend.mjs` stores both) and `MAIL_DOMAINS` — email codes are mailed to those domains.
 - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (`scripts/provision-oauth-client.mjs`) — Google sign-in and One Tap work.
 
-Without any of them, `/auth/sso` returns 401, `/auth/google/*` returns 503, and codes show on screen — everything else (share links, request-access, the log, the allowlist) still works.
+Without any of them, `/auth/google/*` returns 503, and codes show on screen — everything else (share links, request-access, the log, the allowlist) still works.
 
 ## Caveats
 

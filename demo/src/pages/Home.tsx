@@ -13,7 +13,7 @@ export function Home() {
         <code>@open-athena/auth</code>
       </h1>
       <p className="lede">
-        Named share links, SSO, and an access log for gated pages. A gate you mount in a Cloudflare Pages Function (or
+        Named share links, Google sign-in, email codes, and an access log for gated pages. A gate you mount in a Cloudflare Pages Function (or
         any Worker), and unstyled React primitives for the wall in front of it. This site is the library running:{' '}
         <Link to="/dashboard">the dashboard</Link> is gated, and below are the ways in.
       </p>
@@ -22,7 +22,7 @@ export function Home() {
         <h2>Sign in</h2>
         <p className="muted small">
           The library's <code>SignInPanel</code>, composed the way an app would: Google (One Tap in the page, or a
-          redirect), Cloudflare Access for staff, and an emailed code for everyone else. All three end in one{' '}
+          redirect) and an emailed code or magic link for everyone else — no Cloudflare Access, no Zero Trust seats. Both end in one{' '}
           <code>gate.signIn</code>. This demo admits <em>any</em> address — that's one line of policy — where a real
           deployment restricts by domain, an allowlist table, or an approval queue.
         </p>
@@ -83,7 +83,7 @@ export function Home() {
           codes, audit. Web Crypto and a SQL-shaped store interface; nothing platform-specific.
         </li>
         <li>
-          <code>adapters/</code> — D1, Cloudflare Access, any OIDC issuer (Google preset, plus One Tap), Resend, and a
+          <code>adapters/</code> — D1, any OIDC issuer (Google preset, plus One Tap), Resend, and a
           Google Directory group sync. Sibling files, not plugin registrations.
         </li>
         <li>
@@ -98,7 +98,7 @@ export function Home() {
         </li>
       </ul>
       <p className="muted">
-        Scope note: this is <em>gating</em> — sessions, SSO hand-off, share links, request-access, audit. It is not a
+        Scope note: this is <em>gating</em> — sessions, sign-in, share links, request-access, audit. It is not a
         general-purpose auth framework: no password store, no OAuth server, no RBAC engine.
       </p>
 
