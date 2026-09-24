@@ -57,7 +57,7 @@ The factoring:
 
 Composed as separate params: `?doc=<slug>&key=<token>` — the slug says *what*, the token says *may*. Keeping them separate matters, because a public view should be shareable with the auth system entirely out of the path, and the token is a secret that must never reach a log or a slug store. Folding state in here would couple them permanently and buy nothing.
 
-## 5. Demo rebuild
+## 5. Demo rebuild — **built** (2026-09; see [`done/demo-rebuild.md`](done/demo-rebuild.md))
 
 The current demo funnels into a sandbox, which buries the thing worth showing.
 

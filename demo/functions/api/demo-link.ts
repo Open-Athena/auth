@@ -1,15 +1,18 @@
 /**
- * The home page's two demo links, minted on demand.
+ * The home page's two demo links, minted on click.
  *
- * They exist side by side to make one argument visually: a link that renders
- * the recipient's name and face is *uncomfortable to forward*, and a bare one
- * costs nothing to pass along. That difference is the whole social design of
- * share links, and it's easier to feel than to read.
+ * They sit side by side to make one argument visually: a link that renders the
+ * recipient's name and face is *uncomfortable to forward*, and a bare one costs
+ * nothing to pass along. That difference is the whole social design of share
+ * links, and it's easier to feel than to read.
  *
- * Short-lived and unlimited-redeem: this is a front door, not a secret.
+ * `GET /api/demo-link?named=1` mints and 302s to `/dashboard?key=…`, so the
+ * page can show a link that simply works — no button first — while nothing is
+ * minted for visitors who only read. Short-lived and unlimited-redeem: this is
+ * a front door, not a secret.
  */
 import { resolveAvatar } from '@open-athena/auth'
-import { type Env, VIEW_SCOPE, gates, json } from '../_lib/gates.js'
+import { type Env, VIEW_SCOPE, gates } from '../_lib/gates.js'
 
 interface Ctx {
   request: Request
@@ -18,9 +21,9 @@ interface Ctx {
 
 const TTL_S = 60 * 60
 
-export const onRequestPost = async ({ request, env }: Ctx): Promise<Response> => {
+export const onRequestGet = async ({ request, env }: Ctx): Promise<Response> => {
   const { viewGate } = gates(env, request)
-  const { named } = (await request.json().catch(() => ({}))) as { named?: boolean }
+  const named = new URL(request.url).searchParams.get('named') === '1'
 
   // A real face, resolved here once rather than in the recipient's browser on
   // every render. GitHub rather than Gravatar for the demo persona only because
@@ -42,6 +45,8 @@ export const onRequestPost = async ({ request, env }: Ctx): Promise<Response> =>
     createdBy: 'demo',
   })
 
-  const url = new URL(request.url)
-  return json({ url: `${url.origin}/dashboard?key=${token}`, named: !!named, expiresInS: TTL_S })
+  return new Response(null, {
+    status: 302,
+    headers: { location: `/dashboard?key=${token}`, 'cache-control': 'no-store' },
+  })
 }

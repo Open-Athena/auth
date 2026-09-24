@@ -1,20 +1,21 @@
 /**
  * Two gates over one grants table.
  *
- * `viewGate` guards the dashboard — the thing a share link gets you into.
- * `adminGate` guards the console where links are minted, watched and revoked.
- * They use different cookie names, so a visitor can hold an admin session and a
- * recipient session at once, and the same D1 store, so revoking in the console
- * kills the dashboard session on its very next request. That single property is
- * most of what this demo exists to show.
+ * `viewGate` guards the dashboard — the thing a share link, an emailed code, a
+ * Google sign-in or SSO gets you into. `adminGate` guards the admin page where
+ * links are minted, watched and revoked. They use different cookie names, so a
+ * visitor can hold an admin session and a recipient session at once, and the
+ * same D1 store, so revoking in the admin page kills the dashboard session on
+ * its very next request. That single property is most of what this demo exists
+ * to show.
  */
 import { type AuditQuery, type EmailPolicy, createGate, domainPolicy, firstMatch } from '@open-athena/auth'
-import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore } from '@open-athena/auth/d1'
+import { d1AuditQuery, d1AuditSink, d1GrantStore, d1ProfileStore, d1RequestStore } from '@open-athena/auth/d1'
 
 export interface Env {
   DB: D1Database
   SESSION_SECRET?: string
-  /** Sending-only Resend key. Absent = the demo shows links instead of mailing them. */
+  /** Sending-only Resend key. Absent = the demo shows codes and links instead of mailing them. */
   RESEND_API_KEY?: string
   /** `Name <addr@verified-domain>`. */
   MAIL_FROM?: string
@@ -25,7 +26,8 @@ export interface Env {
    * emails *any* address someone types is an unsolicited-mail cannon pointed
    * at third parties, and the free tier's 100/day would let one visitor burn
    * the quota and the sending domain's reputation with it. Addresses outside
-   * this list get the link on screen, which is what the demo has always done.
+   * this list get the code and link on screen, which is what the demo has
+   * always done.
    */
   MAIL_DOMAINS?: string
   /**
@@ -35,6 +37,9 @@ export interface Env {
    * own, so there is no stranger to protect from it.
    */
   MAIL_ADMIN_TO?: string
+  /** Google OAuth "Web application" client. Absent = `/auth/google/*` answers 503 and the buttons are inert. */
+  GOOGLE_CLIENT_ID?: string
+  GOOGLE_CLIENT_SECRET?: string
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_AUD?: string
   STAFF_DOMAIN?: string
@@ -65,36 +70,67 @@ function secretFor(env: Env, req: Request): string {
   throw new Error('SESSION_SECRET is not configured')
 }
 
-const sandboxPolicy = (scopes: string[]): EmailPolicy => email =>
-  email.endsWith(`@${SANDBOX_DOMAIN}`) ? scopes : null
+const isSandbox = (email: string): boolean => email.endsWith(`@${SANDBOX_DOMAIN}`)
+
+const sandboxPolicy = (scopes: string[]): EmailPolicy => email => (isSandbox(email) ? scopes : null)
+
+/**
+ * Anyone at all, except a sandbox identity. This is the "this demo accepts
+ * anyone" line: a real deployment writes `domainPolicy`, `allowlistPolicy`, or
+ * both here, and everything downstream — sessions, scopes, revocation — is the
+ * same. Sandbox identities are excluded so a visitor playing admin still meets
+ * the wall on the dashboard and has to mint themselves a link to get through.
+ */
+const anyoneButSandbox = (scopes: string[]): EmailPolicy => email => (isSandbox(email) ? null : scopes)
+
+/**
+ * Will the demo actually mail this address? Only with a sender configured *and*
+ * the recipient's domain on the operator's short list; everyone else sees the
+ * message on screen instead.
+ */
+export function mailable(email: string, env: Env): boolean {
+  if (!env.RESEND_API_KEY || !env.MAIL_FROM) return false
+  const domains = (env.MAIL_DOMAINS ?? '')
+    .split(',')
+    .map(d => d.trim().toLowerCase())
+    .filter(Boolean)
+  const at = email.lastIndexOf('@')
+  return at > 0 && domains.includes(email.slice(at + 1).toLowerCase())
+}
 
 export function gates(env: Env, req: Request) {
   const secret = secretFor(env, req)
   const store = d1GrantStore(env.DB)
   const requests = d1RequestStore(env.DB)
   const audit = d1AuditSink(env.DB)
+  const profiles = d1ProfileStore(env.DB)
   const staffDomain = env.STAFF_DOMAIN ?? 'openathena.ai'
 
   const viewGate = createGate({
     store,
     requests,
     audit,
+    profiles,
     secret,
     cookieName: VIEW_COOKIE,
-    // Staff get in via SSO; everyone else needs a link. Sandbox identities
-    // deliberately do NOT match, so a visitor playing admin still meets the
-    // wall and has to mint themselves a link to get through it.
-    policy: domainPolicy([staffDomain], [VIEW_SCOPE]),
+    // An email session (SSO, Google, or an emailed code — they all end in
+    // `gate.signIn`) re-derives its scopes from this policy on every request,
+    // so "who may sign in by email" is decided here and nowhere else.
+    policy: firstMatch(domainPolicy([staffDomain], [VIEW_SCOPE]), anyoneButSandbox([VIEW_SCOPE])),
     approvalGrant: { scopes: [VIEW_SCOPE], expiresInS: 7 * 86400 },
     // On for the demo, because the access log is the point. A real app should
     // ship this switch together with the disclosure copy, never silently.
     logViews: true,
   })
 
+  // Strangers' access requests go through *this* gate (`/api/admin/request`):
+  // its policy doesn't admit them, so a request stays pending for the staff
+  // queue rather than being auto-approved by the admit-anyone view policy.
   const adminGate = createGate({
     store,
     requests,
     audit,
+    profiles,
     secret,
     cookieName: ADMIN_COOKIE,
     policy: firstMatch(
@@ -110,5 +146,5 @@ export function gates(env: Env, req: Request) {
 export const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data, null, 2) + '\n', {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
   })

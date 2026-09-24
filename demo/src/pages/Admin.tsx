@@ -1,9 +1,8 @@
 import { type Grant, subjectName } from '@open-athena/auth'
-import { type AppWhoami, Avatar, useWhoami } from '@open-athena/auth/react'
+import { AllowlistPanel, type AppWhoami, Avatar, useWhoami } from '@open-athena/auth/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
-import { Link } from '../router.js'
 
 const SOURCE = { kind: 'app', endpoint: '/api/admin/whoami' } as const
 const SANDBOX_KEY = 'oa-auth-demo:sandbox'
@@ -19,7 +18,7 @@ function StartSandbox({ onStarted }: { onStarted: () => void }) {
   const [busy, setBusy] = useState(false)
   return (
     <div className="wall">
-      <h1>Console</h1>
+      <h1>Admin</h1>
       <p className="muted">
         A sandbox gives you a throwaway identity so you can mint links, watch their activity and revoke them. Every read
         and write is filtered to grants <em>you</em> created — other visitors' links are invisible to you, and someone
@@ -51,6 +50,14 @@ function StartSandbox({ onStarted }: { onStarted: () => void }) {
   )
 }
 
+/** `demo-brave-otter@sandbox.invalid` → `brave-otter`; a staff address stays as is. */
+const sandboxName = (email: string): string | null => {
+  const m = /^demo-([a-z]+-[a-z]+)@sandbox\.invalid$/.exec(email)
+  return m ? m[1]! : null
+}
+
+const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
 function Console({ whoami }: { whoami: AppWhoami }) {
   const qc = useQueryClient()
   const [tokens, setTokens] = useState<Record<string, string>>({})
@@ -62,15 +69,16 @@ function Console({ whoami }: { whoami: AppWhoami }) {
   const grants = useQuery({ queryKey: ['grants'], queryFn: api.grants, refetchInterval: 5000 })
   const log = useQuery({ queryKey: ['log'], queryFn: () => api.log(60), refetchInterval: 5000 })
 
+  // The only moment a raw token exists outside the recipient's browser is the
+  // response that minted (or rotated) it.
+  const showToken = (id: string, token: string) => setTokens(t => ({ ...t, [id]: token }))
   const mint = useMutation({
     mutationFn: api.mint,
     onSuccess: ({ grant, token }) => {
-      // The only moment this token exists outside the recipient's browser.
-      setTokens(t => ({ ...t, [grant.id]: token }))
+      showToken(grant.id, token)
       invalidate()
     },
   })
-  const revoke = useMutation({ mutationFn: api.revoke, onSuccess: invalidate })
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -78,7 +86,7 @@ function Console({ whoami }: { whoami: AppWhoami }) {
     const days = Number(f.get('days'))
     const max = Number(f.get('max'))
     mint.mutate({
-      name: String(f.get('name') || '').trim() || null,
+      name: String(f.get('memo') || '').trim() || null,
       first: String(f.get('first') || '').trim(),
       last: String(f.get('last') || '').trim(),
       scopes: ['reports'],
@@ -87,28 +95,41 @@ function Console({ whoami }: { whoami: AppWhoami }) {
     })
   }
 
-  const identity = whoami.kind === 'sso' ? whoami.email : 'unknown'
+  const email = whoami.kind === 'sso' ? whoami.email : 'unknown'
+  const sandbox = sandboxName(email)
 
   return (
     <div className="console">
       <header className="dash-head">
         <div>
-          <h1>Console</h1>
+          <h1>Admin</h1>
           <p className="muted small">
-            Acting as <code>{identity}</code>
+            {sandbox ? (
+              <>
+                Sandbox <code>{sandbox}</code> — throwaway, and yours alone.
+              </>
+            ) : (
+              <>
+                Acting as <code>{email}</code>
+              </>
+            )}
           </p>
         </div>
       </header>
 
       <section className="panel">
         <h2>Mint a share link</h2>
+        <p className="muted small">
+          A link minted here is real: it opens the dashboard for anyone in the world, until you disable, rotate or
+          revoke it.
+        </p>
         <form className="mint" onSubmit={submit}>
           <label>
             Memo <span className="muted">(what is this link for?)</span>
             {/* Pre-filled and optional: minting should cost one click. It's a
                 note to whoever reads this table later, not a recipient's name —
                 the recipient's identity is the fields below, when you want it. */}
-            <input name="name" defaultValue={`test-${Math.floor(Date.now() / 1000)}`} />
+            <input name="memo" defaultValue={`${sandbox ?? 'test'} · ${clock()}`} />
           </label>
           <label>
             Recipient <span className="muted">(optional — puts a name on the page)</span>
@@ -149,11 +170,16 @@ function Console({ whoami }: { whoami: AppWhoami }) {
 
       <section className="panel">
         <h2>Your links</h2>
+        <p className="muted small">
+          Three verbs, because "stop handing this out" and "throw everyone out" are different actions:{' '}
+          <strong>disable</strong> stops new redemptions and is reversible; <strong>rotate</strong> re-keys a leaked
+          link and keeps its terms; <strong>revoke</strong> ends every session it ever minted, permanently.
+        </p>
         {grants.isPending && <p className="muted">Loading…</p>}
         {grants.data?.length === 0 && <p className="muted">None yet — mint one above.</p>}
         <div className="grants">
           {grants.data?.map(g => (
-            <GrantCard key={g.id} grant={g} token={tokens[g.id]} onRevoke={() => revoke.mutate(g.id)} />
+            <GrantCard key={g.id} grant={g} token={tokens[g.id]} onChanged={invalidate} onToken={showToken} />
           ))}
         </div>
       </section>
@@ -197,19 +223,44 @@ function Console({ whoami }: { whoami: AppWhoami }) {
         </table>
       </section>
 
+      <Allowlist />
+
       {whoami.scopes.includes('requests') && <RequestQueue onChange={invalidate} />}
     </div>
   )
 }
 
-function GrantCard({ grant, token, onRevoke }: { grant: Grant; token?: string; onRevoke: () => void }) {
+function GrantCard({
+  grant,
+  token,
+  onChanged,
+  onToken,
+}: {
+  grant: Grant
+  token?: string
+  onChanged: () => void
+  onToken: (id: string, token: string) => void
+}) {
   const [copied, setCopied] = useState(false)
   const activity = useQuery({
     queryKey: ['activity', grant.id],
     queryFn: () => api.activity(grant.id),
     refetchInterval: 5000,
   })
+  const revoke = useMutation({ mutationFn: api.revoke, onSuccess: onChanged })
+  const disable = useMutation({ mutationFn: api.disable, onSuccess: onChanged })
+  const enable = useMutation({ mutationFn: api.enable, onSuccess: onChanged })
+  const rotate = useMutation({
+    mutationFn: api.rotate,
+    onSuccess: r => {
+      onToken(r.id, r.token)
+      onChanged()
+    },
+  })
+  const busy = revoke.isPending || disable.isPending || enable.isPending || rotate.isPending
+
   const revoked = grant.revokedAt !== null
+  const disabled = grant.disabledAt !== null
   const expired = grant.expiresAt !== null && grant.expiresAt * 1000 < Date.now()
   const url = token ? `${window.location.origin}/dashboard?key=${token}` : null
   // 1–3 redemptions is one person on their phone, laptop and work machine.
@@ -220,18 +271,37 @@ function GrantCard({ grant, token, onRevoke }: { grant: Grant; token?: string; o
   return (
     <article className={`grant${revoked ? ' revoked' : ''}`}>
       <header>
-        <h3>{grant.name ?? 'Unnamed link'}</h3>
+        <h3>{grant.name ?? 'No memo'}</h3>
         {revoked ? (
           <span className="tag dead">revoked</span>
         ) : expired ? (
           <span className="tag dead">expired</span>
         ) : (
-          <button className="btn small danger" type="button" onClick={onRevoke}>
-            Revoke
-          </button>
+          <div className="row">
+            {disabled ? (
+              <button className="btn small" type="button" disabled={busy} onClick={() => enable.mutate(grant.id)}>
+                Enable
+              </button>
+            ) : (
+              <button className="btn small" type="button" disabled={busy} onClick={() => disable.mutate(grant.id)}>
+                Disable
+              </button>
+            )}
+            <button className="btn small" type="button" disabled={busy} onClick={() => rotate.mutate(grant.id)}>
+              Rotate
+            </button>
+            <button className="btn small danger" type="button" disabled={busy} onClick={() => revoke.mutate(grant.id)}>
+              Revoke
+            </button>
+          </div>
         )}
       </header>
-      {grant.note && <p className="muted small">{grant.note}</p>}
+      {disabled && !revoked && (
+        <p className="muted small">
+          <span className="tag soft">disabled</span> No new redemptions; anyone already in stays in.
+        </p>
+      )}
+      {grant.subject && <p className="muted small">for {subjectName(grant.subject)}</p>}
 
       <dl className="facts">
         <div>
@@ -290,9 +360,54 @@ function GrantCard({ grant, token, onRevoke }: { grant: Grant; token?: string; o
           </div>
         </div>
       ) : (
-        !revoked && <p className="muted small">Link shown once at mint. Revoke and mint a fresh one if you lost it.</p>
+        !revoked && <p className="muted small">Link shown once at mint. Rotate it for a fresh one if you lost it.</p>
       )}
     </article>
+  )
+}
+
+/**
+ * The allowlist table an SSO policy can read, with a directory sync. Not wired
+ * into any policy here — the demo admits anyone by email — which is the honest
+ * demonstration of a real property: mounting the editor never changes who gets
+ * in; `allowlistPolicy(store)` in the gate's `policy` is the separate line that
+ * does.
+ */
+function Allowlist() {
+  return (
+    <section className="panel">
+      <h2>Allowlist</h2>
+      <p className="muted small">
+        "Who's allowed" as a table, not a redeploy: <code>allowlistPolicy(store)</code> reads it on every sign-in, so a
+        change here is live on the next request. Rows arrive by hand (below) or from a directory sync that owns its
+        own <code>source</code> — <strong>Sync now</strong> here runs a <em>simulated</em> one, a random subset of a
+        five-person <code>staff@example.org</code>, so you can watch a member drop out and come back. A real deployment
+        calls <code>syncGroupsToAllowlist</code> at that spot, with a service-account key; see the README.
+      </p>
+      <AllowlistPanel
+        endpoint="/api/admin/allowed"
+        defaultScopes={['reports']}
+        sync
+        classNames={{
+          root: 'allowlist',
+          form: 'row',
+          input: 'input',
+          button: 'btn',
+          sync: 'btn sync',
+          table: 'allow-table',
+          source: 'tag soft',
+          remove: 'btn small',
+          message: 'muted small',
+          empty: 'muted small',
+        }}
+        labels={{ email: 'someone@example.org', synced: 'synced from staff@example.org', manual: 'added by you' }}
+      />
+      <p className="muted small">
+        Hand-added rows are yours alone; synced rows are shared across sandboxes (the simulated group is one group).
+        This table isn't wired to a policy in the demo, which admits any address — mounting the editor never changes
+        who gets in.
+      </p>
+    </section>
   )
 }
 
@@ -351,13 +466,5 @@ function RequestQueue({ onChange }: { onChange: () => void }) {
         </p>
       ))}
     </section>
-  )
-}
-
-export function AdminFooter() {
-  return (
-    <p className="muted small">
-      Sandboxes are throwaway. <Link to="/">What is this?</Link>
-    </p>
   )
 }

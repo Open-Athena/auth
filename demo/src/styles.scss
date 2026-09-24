@@ -312,32 +312,6 @@ textarea {
   color: var(--muted);
 }
 
-.totals {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.75rem;
-}
-
-.stat {
-  display: grid;
-  gap: 0.1rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-
-  .stat-label {
-    font-size: 0.775rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-  }
-  .stat-value {
-    font-size: 1.35rem;
-    font-variant-numeric: tabular-nums;
-  }
-}
-
 table {
   width: 100%;
   border-collapse: collapse;
@@ -554,4 +528,164 @@ table {
 
 .input {
   flex: 1 1 14rem;
+}
+
+// ---- Library components -----------------------------------------------------
+// Everything below styles `@open-athena/auth/react` primitives, which ship no
+// CSS: `SignInPanel`, `EmailCodeForm`, `GoogleOneTap`, `AllowlistPanel`,
+// `ProfilePanel`. Each takes its class names as props; these are the names the
+// demo passes.
+
+.signin {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.signin-panel {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 26rem;
+
+  .signin-title {
+    font-size: 1.4rem;
+    margin: 0 0 0.2rem;
+  }
+  > .btn {
+    text-align: center;
+  }
+  .btn.google {
+    background: var(--panel);
+    font-weight: 600;
+  }
+  .divider {
+    height: 1px;
+    margin: 0.5rem 0;
+    background: var(--line);
+  }
+  .stack {
+    margin-top: 0;
+  }
+  .hint {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+}
+
+// GSI renders an iframe-backed button of its own; reserve its height so the
+// panel doesn't jump when it arrives.
+.onetap {
+  min-height: 44px;
+}
+
+.inert {
+  margin: 0;
+  padding: 0.55rem 0.85rem;
+  border-left: 3px solid var(--line);
+  background: var(--soft);
+  border-radius: 0 8px 8px 0;
+}
+
+// The captured mail. Lives inside the form's hint `<p>`, hence inline-level
+// elements only.
+.outbox {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--ink);
+
+  .outbox-mail {
+    font-size: 1rem;
+  }
+}
+
+.code {
+  font-size: 1.35rem;
+  letter-spacing: 0.15em;
+  padding: 0.1em 0.4em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.signed-in {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+
+  p {
+    margin: 0;
+    flex-basis: 100%;
+  }
+}
+
+.panel.featured {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+
+// The two demo links are cards *and* anchors: whole card is the target.
+a.card {
+  h3 {
+    color: var(--accent);
+  }
+}
+
+// The chip's face + name become one `<button>` when a profile is editable.
+.chip-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover .chip-name {
+    text-decoration: underline;
+  }
+}
+
+.placeholder.identity {
+  text-align: left;
+  place-items: stretch;
+  padding: 1.5rem;
+}
+
+.facts.big {
+  margin: 0;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+
+  dt {
+    font-size: 0.75rem;
+  }
+  dd {
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+}
+
+.allowlist {
+  display: grid;
+  gap: 0.75rem;
+
+  form.row {
+    flex-wrap: wrap;
+  }
+  .btn.sync {
+    justify-self: start;
+    border-color: var(--accent);
+  }
+  .allow-table {
+    td:last-child {
+      text-align: right;
+    }
+  }
 }

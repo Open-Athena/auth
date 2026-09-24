@@ -31,9 +31,12 @@ export interface SandboxIdentity {
 
 export const startSandbox = (id: string | null) => post<SandboxIdentity>('/api/sandbox', { id })
 
+/** The recipient-side identity. One object, shared, so Home and Dashboard share one whoami cache entry. */
+export const VIEW_SOURCE = { kind: 'app', endpoint: '/api/view/whoami' } as const
+
 export interface MintInput {
+  /** The memo: a note to whoever reads the admin table later, not the recipient's name. */
   name: string | null
-  note?: string
   /** Optional recipient identity — becomes the grant's `Subject`. */
   first?: string
   last?: string
@@ -42,29 +45,38 @@ export interface MintInput {
   expiresInS: number | null
 }
 
+/** What `/auth/google/client` says about this deployment. */
+export interface GoogleClient {
+  clientId: string | null
+}
+
+/** What the demo's email mount captured instead of (or as well as) sending. */
+export interface Outbox {
+  email: string
+  sent: boolean
+  code?: string
+  link?: string
+  at: number
+}
+
 export const api = {
   grants: () => call<{ grants: Grant[] }>('/api/admin/grants').then(r => r.grants),
   mint: (input: MintInput) => post<{ grant: Grant; token: string }>('/api/admin/grants', input),
   revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
   disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
   enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),
+  rotate: (id: string) => post<{ id: string; token: string }>(`/api/admin/grants/${id}/rotate`, { endSessions: false }),
   activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),
   log: (limit = 60) => call<{ events: StoredEvent[] }>(`/api/admin/log?limit=${limit}`).then(r => r.events),
   requests: () => call<{ requests: AccessRequest[] }>('/api/admin/requests?status=pending').then(r => r.requests),
   approve: (id: string) => post<{ token: string; grant: Grant }>(`/api/admin/requests/${id}/approve`),
   deny: (id: string) => post<{ request: AccessRequest }>(`/api/admin/requests/${id}/deny`),
-  summary: () => call<Summary>('/api/data/summary'),
+  /** The gated fetch. Its only content is that it answered. */
+  privateData: () => call<{ ok: true; at: number }>('/api/data/private'),
+  googleClient: () => call<GoogleClient>('/auth/google/client'),
+  /** `null` when this browser has nothing in the outbox (404). */
+  outbox: () => call<Outbox>('/auth/email/outbox').catch(e => (e instanceof ApiError && e.status === 404 ? null : Promise.reject(e))),
 }
-
-export interface Summary {
-  title: string
-  updated: string
-  totals: { committed: number; received: number; pledged: number }
-  funds: { name: string; committed: number; received: number }[]
-  donors: { name: string; amount: number; status: string }[]
-}
-
-export const money = (n: number): string => `$${(n / 1000).toLocaleString('en-US', { maximumFractionDigits: 0 })}k`
 
 export function ago(ts: number | null): string {
   if (ts === null) return 'never'

@@ -35,7 +35,7 @@ export function App() {
       </main>
       <footer>
         <p className="muted small">
-          A demo. The figures are invented; the auth is real. Access to the gated pages is logged — that's the point.
+          A demo. Nothing behind the gate is real; the gate is. Access to the gated page is logged — that's the point.
         </p>
       </footer>
     </Router>

@@ -10,7 +10,9 @@ compatibility_date = "2026-06-01"
 binding = "DB"
 database_name = "oa-auth-demo"
 database_id = "84d1f21d-2d54-4b30-ae43-2712ab44f0db"
-migrations_dir = "../migrations"
+# Symlinks to the package's numbered migrations (`scripts/link-migrations.sh`):
+# pointing straight at `../migrations` would also apply its `schema.sql`.
+migrations_dir = "migrations"
 
 [vars]
 # The Zero Trust team domain whose JWTs `/auth/sso` will accept. Only the
@@ -20,5 +22,11 @@ ACCESS_TEAM_DOMAIN = "https://openathena-ai-pages.cloudflareaccess.com"
 STAFF_DOMAIN = "openathena.ai"
 
 # Secrets (set with `wrangler pages secret put <NAME>`):
-#   SESSION_SECRET  - HMAC key for session cookies and IP hashing
-#   ACCESS_AUD      - the Access application's AUD tag
+#   SESSION_SECRET        - HMAC key for session cookies and IP hashing
+#   ACCESS_AUD            - the Access application's AUD tag
+#   RESEND_API_KEY        - sending-only key; with MAIL_FROM, email codes go out for real
+#   MAIL_FROM             - `Name <addr@verified-domain>` (scripts/provision-resend.mjs stores both)
+#   MAIL_DOMAINS          - comma-separated recipient domains that get real mail; everyone else sees the mail on screen
+#   MAIL_ADMIN_TO         - where access requests are announced
+#   GOOGLE_CLIENT_ID      - OAuth "Web application" client; without it /auth/google/* answers 503
+#   GOOGLE_CLIENT_SECRET  - its secret (scripts/provision-oauth-client.mjs stores both)
