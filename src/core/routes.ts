@@ -13,6 +13,7 @@ import type { AllowEntry, AllowlistStore, AuditQuery } from './store.js'
 import type { Gate, ProfileInput } from './gate.js'
 import { type AvatarSource, type ResolveAvatarOptions, isSafeAvatarUrl, resolveAvatar } from './avatar.js'
 import { cleanSubject, isEmailish } from './requests.js'
+import { readCookie } from './session.js'
 import { hashToken } from './tokens.js'
 import { type GrantPatch, hasScope } from './types.js'
 
@@ -190,7 +191,14 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // ---- public -------------------------------------------------------------
 
     if (rest === '/whoami' && method === 'GET') {
-      return auth ? json(gate.whoami(auth)) : json({ error: 'unauthenticated' }, 401)
+      if (auth) return json(gate.whoami(auth))
+      // A dead cookie (revoked or expired grant, delisted email) is cleared
+      // here, where the browser asks "who am I" — but only when the cookie is
+      // what failed: a bad `?key=`/`Bearer` beside a live cookie is not a
+      // reason to log the browser out.
+      const presented = req.headers.get('Authorization')?.startsWith('Bearer ') || url.searchParams.has('key')
+      const stale = !presented && readCookie(req, gate.cookieName) !== null
+      return json({ error: 'unauthenticated' }, 401, stale ? { 'set-cookie': gate.expireCookie(req) } : {})
     }
 
     if (rest === '/exchange' && method === 'POST') {

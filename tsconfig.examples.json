@@ -1,0 +1,16 @@
+{
+  // `examples/` are copy-in reference files for consumers, importing the
+  // package by name as a consumer would. Typechecked against `src/` (not a
+  // build) so they can't drift from the API they document.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@open-athena/auth": ["./src/index.ts"],
+      "@open-athena/auth/react": ["./src/react/index.ts"],
+      "@open-athena/auth/testing": ["./src/testing/index.ts"],
+      "@open-athena/auth/*": ["./src/adapters/*.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts"],
+  "exclude": []
+}

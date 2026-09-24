@@ -53,7 +53,7 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.react.json",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.react.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "gen:schema": "node scripts/gen-schema.mjs"

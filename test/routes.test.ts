@@ -87,6 +87,32 @@ describe('whoami', () => {
       body: { kind: 'sso', email: 'boss@openathena.ai', admin: true, scopes: ['*'], subject: null },
     })
   })
+
+  describe('a dead session cookie', () => {
+    const EXPIRED = 'oa_auth=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+
+    it('is cleared when a revoked grant is behind it', async () => {
+      const admin = await asAdmin()
+      const minted = await post('/grants', { name: 'Bob', scopes: ['reports'] }, admin)
+      const session = pair((await post('/exchange', { token: minted.body.token })).setCookie!)
+      expect((await call('/whoami', {}, session)).status).toBe(200)
+      await post(`/grants/${minted.body.grant.id}/revoke`, {}, admin)
+      expect(await call('/whoami', {}, session)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: EXPIRED })
+    })
+
+    it('is cleared when the session itself has expired', async () => {
+      const cookie = await asAdmin()
+      vi.setSystemTime(NOW + 31 * 24 * 3600 * 1000)
+      expect(await call('/whoami', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: EXPIRED })
+    })
+
+    it('is not touched when no cookie was sent, or when a bad ?key= failed beside a live cookie', async () => {
+      expect(await call('/whoami')).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: null })
+      const cookie = await asAdmin()
+      expect(await call('/whoami?key=bogus', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: null })
+      expect((await call('/whoami', {}, cookie)).status).toBe(200)
+    })
+  })
 })
 
 describe('exchange', () => {

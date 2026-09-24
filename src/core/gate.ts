@@ -454,6 +454,17 @@ export function createGate(opts: GateOptions) {
     return clearCookie({ name: cookieName, secure: isSecureRequest(req) })
   }
 
+  /**
+   * The `Set-Cookie` that drops this gate's session cookie, with no sign-out
+   * event: for the deny path, where the browser is still sending a cookie
+   * whose grant was revoked or expired, or whose email was delisted. Left
+   * alone it would ride every request until its own `Max-Age` ran out —
+   * failing correctly, but noisily, and on the cookie's schedule not ours.
+   */
+  function expireCookie(req: Request): string {
+    return clearCookie({ name: cookieName, secure: isSecureRequest(req) })
+  }
+
   async function mint(draft: NewGrant, nowMs = Date.now()): Promise<MintResult> {
     const nowS = sec(nowMs)
     const token = generateToken()
@@ -952,6 +963,7 @@ export function createGate(opts: GateOptions) {
     signIn,
     admits,
     signOut,
+    expireCookie,
     mint,
     revoke,
     rotate,
