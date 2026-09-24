@@ -56,7 +56,7 @@ import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLo
 import { ssoHandler, verifyAccessJwt } from '@open-athena/auth/cf-access'
 import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/auth/package.json', import.meta.url), 'utf8'))
 // What the installed package actually carries, discovered (not listed) so a
