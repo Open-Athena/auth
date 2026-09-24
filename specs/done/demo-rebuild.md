@@ -67,9 +67,9 @@ The page is the identity placeholder §5 asks for: chip with avatar (click it, o
 
 ## Migrations: a pre-existing breakage, worked around in the demo
 
-`pnpm dev` didn't boot on a fresh local DB before any of this: `demo/wrangler.toml` pointed `migrations_dir` straight at the package's `migrations/`, which since `7267e66` also contains `schema.sql`, and wrangler applies every `.sql` it finds — so after `0012_*` it applies `schema.sql` and dies on `table grants already exists`. (The main checkout's local DB is stuck at `0009`; the deployed DB will hit the same thing on its next `db:remote`.) wrangler has no per-file filter, so the demo now has `demo/migrations/` — symlinks to the package's numbered files only, (re)created by `scripts/link-migrations.sh`, which the `db:local` / `db:remote` scripts run first. A new numbered migration in the package shows up as a new untracked symlink, which is the reminder to commit it.
+`pnpm dev` didn't boot on a fresh local DB before any of this: `demo/wrangler.toml` pointed `migrations_dir` straight at the package's `migrations/`, which since `7267e66` also contained `schema.sql`, and wrangler applies every `.sql` it finds — so after `0012_*` it applied `schema.sql` and died on `table grants already exists`. (Any consumer pointing a migration runner at the package directory, and the deployed demo DB via `db:remote`, would have hit the same.)
 
-The package-level fix — moving `schema.sql` out of `migrations/` (root README, `scripts/gen-schema.mjs`, the lockstep test and `examples/pages-functions/README.md` reference it) — is a package decision and was not made here.
+**Fixed at the package level** (`ca3f3e1`, folded in before merge): `schema.sql` moved to the package root (`files` + a `./schema.sql` export; `gen-schema`, the lockstep test, README and `verify-dist` follow), and the demo's interim symlink workaround (`demo/migrations/` + `scripts/link-migrations.sh`) was dropped — `migrations_dir = "../migrations"` again.
 
 ## README, wrangler, styles
 
@@ -88,4 +88,4 @@ Not verified here: the rendered UI in a browser (the user does that), and the Go
 - `EmailCodeForm` has no hook that sees the `start` response or the pending `id`, so an app can't surface delivery status (or drive `poll`) from it. The demo goes around it with the outbox cookie + `sentHint`. A small `onStarted?: (res: { id: string; email: string }) => void` prop would remove the workaround.
 - `SignInPanel` has no slot *beside* the Google button, so One Tap renders above the panel rather than inside it.
 - `AllowlistStore.list()` takes no filter and `authRoutes` scopes grants but not allowlist rows by creator, so per-sandbox isolation needs the wrapper store above.
-- `migrations/schema.sql` living inside `migrations/` breaks any consumer that points a migration runner at that directory (above).
+- ~~`migrations/schema.sql` living inside `migrations/` breaks any consumer that points a migration runner at that directory~~ — fixed upstream (`ca3f3e1`).

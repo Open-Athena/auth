@@ -55,7 +55,7 @@ Open **http://localhost:4187** — that's `wrangler pages dev`, which serves the
 
 With no `SESSION_SECRET` set, a fixed dev secret is used **only** for requests to localhost; a deployed instance without one fails loudly instead.
 
-Migrations come straight from the package — `demo/migrations/` is symlinks to its numbered files (`scripts/link-migrations.sh`, re-run by the `db:*` scripts) — so the demo can't drift from the schema it documents. Symlinks rather than `migrations_dir = "../migrations"` because that directory also holds `schema.sql`, which wrangler would apply as a thirteenth migration.
+Migrations come straight from the package (`migrations_dir = "../migrations"`), so the demo can't drift from the schema it documents. (`schema.sql`, the one-file dump for fresh installs, lives at the package root precisely so a migration runner pointed at `migrations/` never sees it.)
 
 ## Deploying
 

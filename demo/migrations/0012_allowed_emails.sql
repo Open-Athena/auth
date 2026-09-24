@@ -1,1 +1,0 @@
-../../migrations/0012_allowed_emails.sql

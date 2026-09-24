@@ -1,1 +1,0 @@
-../../migrations/0004_access_log_daily.sql

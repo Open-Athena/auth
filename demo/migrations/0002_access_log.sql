@@ -1,1 +1,0 @@
-../../migrations/0002_access_log.sql

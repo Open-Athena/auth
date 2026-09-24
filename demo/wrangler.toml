@@ -10,9 +10,7 @@ compatibility_date = "2026-06-01"
 binding = "DB"
 database_name = "oa-auth-demo"
 database_id = "84d1f21d-2d54-4b30-ae43-2712ab44f0db"
-# Symlinks to the package's numbered migrations (`scripts/link-migrations.sh`):
-# pointing straight at `../migrations` would also apply its `schema.sql`.
-migrations_dir = "migrations"
+migrations_dir = "../migrations"
 
 [vars]
 # The Zero Trust team domain whose JWTs `/auth/sso` will accept. Only the
