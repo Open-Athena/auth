@@ -79,6 +79,6 @@ Both are the same class of bug — a default that every consumer immediately had
 ## Still open, and worth deciding before a second Tier-2 consumer
 
 - **Anonymous traffic isn't logged.** §4 wants middleware logging every request; today the log starts once someone has an identity, so "how much of last week was Bob vs. strangers" stays half-answered.
-- **Stale cookies after expiry.** A grant's `session_ttl` and its `expires_at` are independent, so an expired grant leaves a live cookie the browser keeps sending. It fails correctly (and now quietly, post-dedupe), but clearing it on the deny path would be tidier.
+- ~~**Stale cookies after expiry.**~~ Done (2026-09-24, `3924815`): `/whoami` answers a dead cookie with 401 + the clearing `Set-Cookie`; `gate.expireCookie(req)` for apps on `authenticate` directly.
 - **Admin UI**: the demo's console is app-specific, which is evidence for §6's "vendor the UI" position but not yet a decision.
 - **`resource` column** (mortgage-viz, above).
