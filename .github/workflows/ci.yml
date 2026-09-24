@@ -50,7 +50,10 @@ jobs:
           # a consumer copying the package's migrations then hits `no such
           # column` (`0006`/`0007` were dropped this way; `verify-dist` now
           # fails the publish if the shipped set ever diverges from source).
-          extra_files: migrations,README.md
+          # `schema.sql` is the one-file dump for fresh installs, kept *out* of
+          # `migrations/` so a migration runner never sweeps it — so it too must
+          # be carried over (npm-dist validates every `exports` entry).
+          extra_files: migrations,schema.sql,README.md
 
   # Install the published branch exactly as a consumer would, and use it.
   # The `test` job runs against `src/`, which says nothing about whether the
