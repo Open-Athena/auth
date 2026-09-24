@@ -53,7 +53,7 @@ pnpm dev              # builds the lib, applies migrations, serves on :4187
 
 Open **http://localhost:4187** — that's `wrangler pages dev`, which serves the Functions and proxies the rest to Vite on `:4188`. Hitting 4188 directly gets you the frontend with no API.
 
-With no `SESSION_SECRET` set, a fixed dev secret is used **only** for requests to localhost; a deployed instance without one fails loudly instead.
+With no `SESSION_SECRET` set, a fixed dev secret is used **only** for requests to localhost; a deployed instance without one fails loudly instead. To reach the dev server from another device (e.g. `m3:4187` over Tailscale — `pnpm dev` binds all interfaces), put a `SESSION_SECRET` in `demo/.dev.vars` (git-ignored): the non-localhost hostname doesn't get the fallback, on purpose.
 
 Migrations come straight from the package (`migrations_dir = "../migrations"`), so the demo can't drift from the schema it documents. (`schema.sql`, the one-file dump for fresh installs, lives at the package root precisely so a migration runner pointed at `migrations/` never sees it.)
 

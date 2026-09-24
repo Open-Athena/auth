@@ -4,7 +4,7 @@
   "type": "module",
   "devPort": 4187,
   "scripts": {
-    "dev": "pnpm -w run build && pnpm db:local && wrangler pages dev --port 4187 -- pnpm vite --port 4188 --strictPort",
+    "dev": "pnpm -w run build && pnpm db:local && wrangler pages dev --ip 0.0.0.0 --port 4187 -- pnpm vite --port 4188 --strictPort",
     "build": "pnpm -w run build && vite build",
     "typecheck": "tsc --noEmit",
     "db:local": "wrangler d1 migrations apply oa-auth-demo --local",
