@@ -29,7 +29,7 @@ export class UsageError extends Error {}
 const err = (...a) => console.error(...a)
 
 export function parseArgs(argv) {
-  const opts = { groups: [], api: 'directory', subject: null, pagesProject: null, worker: null, help: false }
+  const opts = { groups: [], api: 'cloud-identity', subject: null, pagesProject: null, worker: null, help: false }
   let i = 0
   const need = flag => {
     const v = argv[++i]
@@ -83,7 +83,7 @@ const HELP = `verify-group-sync — list a Workspace group as a service account,
 Reads the service-account key JSON on stdin.
 
   --group <email>           group to list (repeatable; required)
-  --api <directory|cloud-identity>   which Google API to read (default directory)
+  --api <cloud-identity|directory>   which Google API to read (default cloud-identity; directory needs an admin-role/DWD SA)
   --subject <admin@…>       domain-wide delegation only: the admin to impersonate
   --store-pages <project>   on success, pipe the key to: wrangler pages secret put ${KEY_VAR} --project-name <project>
   --store-worker <name>     …or: wrangler secret put ${KEY_VAR} --name <name>

@@ -73,9 +73,9 @@ describe('main', () => {
     const { code, lines, execs } = await run(['--group', 'board@x.test', '--group', 'team@x.test'], adapter)
     expect(code).toBe(0)
     expect(calls).toEqual([
-      { fn: 'token', key: KEY, scopes: ['dir-scope'], subject: undefined },
-      { fn: 'list', group: 'board@x.test', token: 'tok', api: 'directory' },
-      { fn: 'list', group: 'team@x.test', token: 'tok', api: 'directory' },
+      { fn: 'token', key: KEY, scopes: ['ci-scope'], subject: undefined },
+      { fn: 'list', group: 'board@x.test', token: 'tok', api: 'cloud-identity' },
+      { fn: 'list', group: 'team@x.test', token: 'tok', api: 'cloud-identity' },
     ])
     expect(lines).toEqual([
       'token: ok (sa@p.iam.gserviceaccount.com)',
@@ -111,11 +111,11 @@ describe('main', () => {
     expect(execs).toEqual([])
   })
 
-  it('passes --subject and the cloud-identity scope through', async () => {
+  it('passes --subject and the directory scope through', async () => {
     const { calls, adapter } = fakeAdapter({ 'g@x.test': [] })
-    await run(['--group', 'g@x.test', '--api', 'cloud-identity', '--subject', 'admin@x.test'], adapter)
-    expect(calls[0]).toEqual({ fn: 'token', key: KEY, scopes: ['ci-scope'], subject: 'admin@x.test' })
-    expect(calls[1]).toEqual({ fn: 'list', group: 'g@x.test', token: 'tok', api: 'cloud-identity' })
+    await run(['--group', 'g@x.test', '--api', 'directory', '--subject', 'admin@x.test'], adapter)
+    expect(calls[0]).toEqual({ fn: 'token', key: KEY, scopes: ['dir-scope'], subject: 'admin@x.test' })
+    expect(calls[1]).toEqual({ fn: 'list', group: 'g@x.test', token: 'tok', api: 'directory' })
   })
 
   it('rejects empty stdin before touching Google', async () => {

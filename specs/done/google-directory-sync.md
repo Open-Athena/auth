@@ -26,8 +26,8 @@ Bootstrap caveat: whoever runs the IaC (or `gcloud`) that grants the SA its role
 
 Both supported; the SA's role/ownership authorizes either.
 
-- **Admin SDK Directory** (default): `GET admin.googleapis.com/admin/directory/v1/groups/{group}/members?includeDerivedMembership=true&maxResults=200` — flattens nested groups on every Workspace edition; scope `admin.directory.group.member.readonly`. Keep `type === 'USER'`, drop `status === 'SUSPENDED'`.
-- **Cloud Identity**: `groups:lookup?groupKey.id=…` → `GET cloudidentity.googleapis.com/v1/{name}/memberships?pageSize=…`; scope `cloud-identity.groups.readonly`. Direct members only (transitive search is Enterprise/Premium-gated); keep `type === 'USER'`.
+- **Cloud Identity** (default — see the live-verification addendum): `groups:lookup?groupKey.id=…` → `GET cloudidentity.googleapis.com/v1/{name}/memberships?view=FULL&pageSize=500`; scope `cloud-identity.groups.readonly`. Direct members only (transitive search is Enterprise/Premium-gated); keep `type === 'USER'` (`view=FULL` is required — BASIC omits `type`).
+- **Admin SDK Directory** (`api: 'directory'`): `GET admin.googleapis.com/admin/directory/v1/groups/{group}/members?includeDerivedMembership=true&maxResults=200` — flattens nested groups on every Workspace edition; scope `admin.directory.group.member.readonly`. Keep `type === 'USER'`, drop `status === 'SUSPENDED'`. Needs an admin-role or DWD SA.
 
 ## Shape
 
@@ -79,3 +79,13 @@ wrangler secret put GOOGLE_SA_KEY < sa.json
 ## Addendum (2026-09-23): `POST /allowed/sync` — Pages apps need no cron Worker
 
 Both first consumers (hccs-funds, gcs) are Pages projects, so "sibling Worker with `[triggers] crons`" was the wrong default. `authRoutes(gate, { allowlist, sync: { run, token? } })` now mounts `POST <base>/allowed/sync`: gated by `adminScope`, or by `token` as a bearer (compared as SHA-256 hashes) so a scheduled GitHub Action `curl`s it with a `SYNC_TOKEN` secret. `run` is a plain callback (typically `() => syncGroupsToAllowlist(store, …)`), so `core/routes.ts` stays ignorant of Google. A throwing `run` → 502 `{ ok: false, error }`, table untouched. `<AllowlistPanel sync />` adds a "Sync now" button that reports the per-group counts. Tests: `test/allowlist.test.ts` (5) + `test/react/allowlist.test.tsx` (3).
+
+## Addendum (2026-09-24): live verification against HCCS — Cloud Identity is the default
+
+First real run (`group-sync@gws-auth-494405`, an OWNER of `board@hudcostreets.org`, no admin role, no DWD), via `scripts/verify-group-sync.mjs`:
+
+- **A just-minted SA key fails for ~30 s** with `invalid_grant: Invalid JWT Signature` — propagation, not a signing bug. The same key succeeded 30 s later. `verify-group-sync` is the right tool precisely because it separates "token ok" from "group readable".
+- **Admin SDK Directory refuses a group-owner SA**: `403 Not Authorized to access this resource/api`. It needs a Groups Reader admin role or DWD.
+- **Cloud Identity honours the owner**, but its default `BASIC` view omits `type`, so the USER filter dropped every row (`0 members`) — fixed by `view=FULL`. With that: 11 members, the SA itself (`SERVICE_ACCOUNT`) correctly excluded.
+
+So the adapter's default flipped to `api: 'cloud-identity'` (`directory` stays opt-in for admin-role/DWD setups that want nested groups flattened), error messages now carry Google's response body, and the key went straight into `hccs-funds`'s `GOOGLE_SA_KEY` Pages secret from stdin.

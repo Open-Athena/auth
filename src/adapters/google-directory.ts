@@ -61,15 +61,22 @@ export interface AccessToken {
   clientEmail: string
 }
 
-/** Which Google API lists the group. Both accept a role-assigned or owner SA. */
+/**
+ * Which Google API lists the group. Verified 2026-09-24 against a real
+ * Workspace: `cloud-identity` honours a service account that is merely an
+ * OWNER of the group (the lightest, fully-IaC provisioning); the Admin SDK
+ * `directory` refuses it ("Not Authorized") and needs a Groups Reader admin
+ * role or domain-wide delegation.
+ */
 export type GroupsApi = 'directory' | 'cloud-identity'
 
 export interface ListMembersOptions {
   token: string
   /**
-   * `directory` (default) flattens nested groups (`includeDerivedMembership`)
-   * on every Workspace edition. `cloud-identity` lists direct members only —
-   * its transitive search is Enterprise/Premium-gated.
+   * `cloud-identity` (default) works for a group-owner SA; direct members only
+   * (its transitive search is Enterprise/Premium-gated). `directory` flattens
+   * nested groups (`includeDerivedMembership`) on every edition, but needs an
+   * admin-role or DWD service account.
    */
   api?: GroupsApi
   fetch?: typeof globalThis.fetch
@@ -144,7 +151,9 @@ export async function googleAccessToken({
 
 async function getJson<T>(fetch: typeof globalThis.fetch, url: string, token: string): Promise<T> {
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`${new URL(url).pathname}: HTTP ${res.status}`)
+  // Google's error body names the missing privilege — the one thing an
+  // operator needs when a freshly provisioned SA is refused.
+  if (!res.ok) throw new Error(`${new URL(url).pathname}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
   return res.json() as Promise<T>
 }
 
@@ -190,6 +199,9 @@ async function cloudIdentityMembers(fetch: typeof globalThis.fetch, token: strin
   let pageToken: string | undefined
   do {
     const url = new URL(`${CLOUD_IDENTITY_API}/${lookup.name}/memberships`)
+    // BASIC (the default view) omits `type`, so the USER filter below would
+    // drop everyone; FULL carries it (max page 500).
+    url.searchParams.set('view', 'FULL')
     url.searchParams.set('pageSize', '500')
     if (pageToken) url.searchParams.set('pageToken', pageToken)
     const page = await getJson<{ memberships?: CloudIdentityMembership[]; nextPageToken?: string }>(fetch, url.href, token)
@@ -207,7 +219,7 @@ async function cloudIdentityMembers(fetch: typeof globalThis.fetch, token: strin
  */
 export async function listGroupMembers(
   group: string,
-  { token, api = 'directory', fetch = globalThis.fetch }: ListMembersOptions,
+  { token, api = 'cloud-identity', fetch = globalThis.fetch }: ListMembersOptions,
 ): Promise<string[]> {
   const raw = api === 'directory' ? await directoryMembers(fetch, token, group) : await cloudIdentityMembers(fetch, token, group)
   return [...new Set(raw.map(e => e.toLowerCase()))].sort()
@@ -246,7 +258,7 @@ export const syncSource = (group: string): string => `sync:${group.toLowerCase()
  */
 export async function syncGroupsToAllowlist(
   store: Pick<AllowlistStore, 'replaceSource'>,
-  { groups, api = 'directory', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }: SyncOptions,
+  { groups, api = 'cloud-identity', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }: SyncOptions,
 ): Promise<SyncResult[]> {
   const scope = api === 'directory' ? DIRECTORY_SCOPE : CLOUD_IDENTITY_SCOPE
   const { accessToken, clientEmail } = await googleAccessToken({ key, scopes: [scope], subject, fetch, nowMs })

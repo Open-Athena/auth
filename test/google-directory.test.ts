@@ -139,7 +139,7 @@ describe('googleAccessToken', () => {
 })
 
 describe('listGroupMembers', () => {
-  it('directory: follows pages, keeps active users only, lowercases, de-dups and sorts', async () => {
+  it('directory (opt-in): follows pages, keeps active users only, lowercases, de-dups and sorts', async () => {
     const g = fakeGoogle({
       [membersUrl('board@x.test')]: {
         members: [
@@ -156,39 +156,39 @@ describe('listGroupMembers', () => {
         ],
       },
     })
-    expect(await listGroupMembers('board@x.test', { token: 'tok-1', fetch: g.fetch })).toEqual(['amy@x.test', 'zed@x.test'])
+    expect(await listGroupMembers('board@x.test', { token: 'tok-1', api: 'directory', fetch: g.fetch })).toEqual(['amy@x.test', 'zed@x.test'])
     expect(g.urls).toEqual([membersUrl('board@x.test'), membersUrl('board@x.test', 'p2')])
   })
 
-  it('cloud-identity: looks the group up, then pages its memberships', async () => {
+  it('cloud-identity (default): looks the group up, then pages its memberships in FULL view', async () => {
     const g = fakeGoogle({
       [`${CLOUD_IDENTITY}/groups:lookup?groupKey.id=board%40x.test`]: { name: 'groups/abc' },
-      [`${CLOUD_IDENTITY}/groups/abc/memberships?pageSize=500`]: {
+      [`${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500`]: {
         memberships: [
           { preferredMemberKey: { id: 'Bo@x.test' }, type: 'USER' },
           { preferredMemberKey: { id: 'sub@x.test' }, type: 'GROUP' },
         ],
         nextPageToken: 'n',
       },
-      [`${CLOUD_IDENTITY}/groups/abc/memberships?pageSize=500&pageToken=n`]: {
+      [`${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500&pageToken=n`]: {
         memberships: [{ preferredMemberKey: { id: 'al@x.test' }, type: 'USER' }],
       },
     })
-    expect(await listGroupMembers('board@x.test', { token: 'tok-1', api: 'cloud-identity', fetch: g.fetch })).toEqual([
+    expect(await listGroupMembers('board@x.test', { token: 'tok-1', fetch: g.fetch })).toEqual([
       'al@x.test',
       'bo@x.test',
     ])
     expect(g.urls).toEqual([
       `${CLOUD_IDENTITY}/groups:lookup?groupKey.id=board%40x.test`,
-      `${CLOUD_IDENTITY}/groups/abc/memberships?pageSize=500`,
-      `${CLOUD_IDENTITY}/groups/abc/memberships?pageSize=500&pageToken=n`,
+      `${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500`,
+      `${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500&pageToken=n`,
     ])
   })
 
   it('throws on a non-2xx, naming the path', async () => {
     const g = fakeGoogle({ [membersUrl('board@x.test')]: { status: 403 } })
-    await expect(listGroupMembers('board@x.test', { token: 'tok-1', fetch: g.fetch })).rejects.toThrow(
-      '/admin/directory/v1/groups/board%40x.test/members: HTTP 403',
+    await expect(listGroupMembers('board@x.test', { token: 'tok-1', api: 'directory', fetch: g.fetch })).rejects.toThrow(
+      '/admin/directory/v1/groups/board%40x.test/members: HTTP 403 denied',
     )
   })
 })
@@ -217,6 +217,7 @@ describe('syncGroupsToAllowlist', () => {
         { group: 'board@x.test', scopes: ['board'] },
         { group: 'staff@x.test', scopes: ['staff', 'view'] },
       ],
+      api: 'directory',
       fetch: g.fetch,
       nowMs: NOW_MS,
     })
@@ -235,10 +236,32 @@ describe('syncGroupsToAllowlist', () => {
     ])
   })
 
+  it('defaults to cloud-identity: one token with its scope, lookup + FULL-view list per group', async () => {
+    const store = d1Allowlist(testDb())
+    const g = fakeGoogle({
+      [`${CLOUD_IDENTITY}/groups:lookup?groupKey.id=board%40x.test`]: { name: 'groups/abc' },
+      [`${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500`]: {
+        memberships: [
+          { preferredMemberKey: { id: 'bo@x.test' }, type: 'USER' },
+          { preferredMemberKey: { id: SA_EMAIL }, type: 'SERVICE_ACCOUNT' },
+        ],
+      },
+    })
+    const results = await syncGroupsToAllowlist(store, { key: saKey, groups: [{ group: 'board@x.test', scopes: ['board'] }], fetch: g.fetch, nowMs: NOW_MS })
+    expect(results).toEqual([{ group: 'board@x.test', source: 'sync:board@x.test', count: 1 }])
+    expect(g.assertion?.claims.scope).toBe(CLOUD_IDENTITY_SCOPE)
+    expect(g.urls).toEqual([
+      GOOGLE_TOKEN_URL,
+      `${CLOUD_IDENTITY}/groups:lookup?groupKey.id=board%40x.test`,
+      `${CLOUD_IDENTITY}/groups/abc/memberships?view=FULL&pageSize=500`,
+    ])
+    expect(await store.list()).toEqual([row('bo@x.test', ['board'], 'board@x.test')])
+  })
+
   it('a removed member is denied by allowlistPolicy after the next sync', async () => {
     const store = d1Allowlist(testDb())
     const policy = allowlistPolicy(store)
-    const opts = { key: saKey, groups: [{ group: 'board@x.test', scopes: ['board'] }], nowMs: NOW_MS }
+    const opts = { key: saKey, groups: [{ group: 'board@x.test', scopes: ['board'] }], api: 'directory' as const, nowMs: NOW_MS }
     await syncGroupsToAllowlist(store, { ...opts, fetch: fakeGoogle(directory('board@x.test', ['bo@x.test', 'al@x.test'])).fetch })
     expect(await policy('bo@x.test')).toEqual(['board'])
     await syncGroupsToAllowlist(store, { ...opts, fetch: fakeGoogle(directory('board@x.test', ['al@x.test'])).fetch })
@@ -248,11 +271,11 @@ describe('syncGroupsToAllowlist', () => {
 
   it('leaves the table untouched when Google errors mid-run', async () => {
     const store = d1Allowlist(testDb())
-    const opts = { key: saKey, groups: [{ group: 'board@x.test', scopes: ['board'] }], nowMs: NOW_MS }
+    const opts = { key: saKey, groups: [{ group: 'board@x.test', scopes: ['board'] }], api: 'directory' as const, nowMs: NOW_MS }
     await syncGroupsToAllowlist(store, { ...opts, fetch: fakeGoogle(directory('board@x.test', ['bo@x.test'])).fetch })
     await expect(
       syncGroupsToAllowlist(store, { ...opts, fetch: fakeGoogle({ [membersUrl('board@x.test')]: { status: 500 } }).fetch }),
-    ).rejects.toThrow('/admin/directory/v1/groups/board%40x.test/members: HTTP 500')
+    ).rejects.toThrow('/admin/directory/v1/groups/board%40x.test/members: HTTP 500 denied')
     expect(await store.list()).toEqual([row('bo@x.test', ['board'], 'board@x.test')])
   })
 })
