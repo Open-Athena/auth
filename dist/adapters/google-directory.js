@@ -90,8 +90,10 @@ export async function googleAccessToken({ key, scopes, subject, fetch = globalTh
 }
 async function getJson(fetch, url, token) {
     const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    // Google's error body names the missing privilege — the one thing an
+    // operator needs when a freshly provisioned SA is refused.
     if (!res.ok)
-        throw new Error(`${new URL(url).pathname}: HTTP ${res.status}`);
+        throw new Error(`${new URL(url).pathname}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
     return res.json();
 }
 async function directoryMembers(fetch, token, group) {
@@ -123,6 +125,9 @@ async function cloudIdentityMembers(fetch, token, group) {
     let pageToken;
     do {
         const url = new URL(`${CLOUD_IDENTITY_API}/${lookup.name}/memberships`);
+        // BASIC (the default view) omits `type`, so the USER filter below would
+        // drop everyone; FULL carries it (max page 500).
+        url.searchParams.set('view', 'FULL');
         url.searchParams.set('pageSize', '500');
         if (pageToken)
             url.searchParams.set('pageToken', pageToken);
@@ -139,7 +144,7 @@ async function cloudIdentityMembers(fetch, token, group) {
  * The group's active user members: lowercased, de-duplicated, sorted. Throws
  * on a non-2xx from Google (a permissions or provisioning problem).
  */
-export async function listGroupMembers(group, { token, api = 'directory', fetch = globalThis.fetch }) {
+export async function listGroupMembers(group, { token, api = 'cloud-identity', fetch = globalThis.fetch }) {
     const raw = api === 'directory' ? await directoryMembers(fetch, token, group) : await cloudIdentityMembers(fetch, token, group);
     return [...new Set(raw.map(e => e.toLowerCase()))].sort();
 }
@@ -154,7 +159,7 @@ export const syncSource = (group) => `sync:${group.toLowerCase()}`;
  * Call this from a Worker `scheduled()` handler (or any cron) with the same
  * `AllowlistStore` the app's `allowlistPolicy` reads.
  */
-export async function syncGroupsToAllowlist(store, { groups, api = 'directory', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }) {
+export async function syncGroupsToAllowlist(store, { groups, api = 'cloud-identity', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }) {
     const scope = api === 'directory' ? DIRECTORY_SCOPE : CLOUD_IDENTITY_SCOPE;
     const { accessToken, clientEmail } = await googleAccessToken({ key, scopes: [scope], subject, fetch, nowMs });
     const updatedAt = Math.floor(nowMs / 1000);

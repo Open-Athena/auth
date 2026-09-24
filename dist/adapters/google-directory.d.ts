@@ -33,14 +33,21 @@ export interface AccessToken {
     /** The service account's `client_email` — handy for logs and `addedBy`. */
     clientEmail: string;
 }
-/** Which Google API lists the group. Both accept a role-assigned or owner SA. */
+/**
+ * Which Google API lists the group. Verified 2026-09-24 against a real
+ * Workspace: `cloud-identity` honours a service account that is merely an
+ * OWNER of the group (the lightest, fully-IaC provisioning); the Admin SDK
+ * `directory` refuses it ("Not Authorized") and needs a Groups Reader admin
+ * role or domain-wide delegation.
+ */
 export type GroupsApi = 'directory' | 'cloud-identity';
 export interface ListMembersOptions {
     token: string;
     /**
-     * `directory` (default) flattens nested groups (`includeDerivedMembership`)
-     * on every Workspace edition. `cloud-identity` lists direct members only —
-     * its transitive search is Enterprise/Premium-gated.
+     * `cloud-identity` (default) works for a group-owner SA; direct members only
+     * (its transitive search is Enterprise/Premium-gated). `directory` flattens
+     * nested groups (`includeDerivedMembership`) on every edition, but needs an
+     * admin-role or DWD service account.
      */
     api?: GroupsApi;
     fetch?: typeof globalThis.fetch;

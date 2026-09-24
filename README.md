@@ -243,7 +243,7 @@ gcloud identity groups memberships add --group-email=board@example.org \
 wrangler secret put GOOGLE_SA_KEY < sa.json && rm sa.json
 ```
 
-Orgs already wired for domain-wide delegation pass `subject: 'admin@…'` and get the impersonation path instead; `api: 'cloud-identity'` swaps the Admin SDK Directory read for the Cloud Identity one. The "live, signed at each sign-in" tier — a **SAML** adapter consuming Google's group-attribute assertion — stays specced but unbuilt ([`specs/saml-groups.md`](specs/saml-groups.md)): it only refreshes at login, so it is *slower* to revoke than this sync unless it writes into the same table anyway.
+The default read is the Cloud Identity API, which is what honours a group-*owner* SA (verified against a real Workspace: the Admin SDK Directory API refuses one with "Not Authorized"). `api: 'directory'` switches to the Admin SDK — it flattens nested groups — for an SA holding the Groups Reader admin role, or with `subject: 'admin@…'` for orgs wired for domain-wide delegation. The "live, signed at each sign-in" tier — a **SAML** adapter consuming Google's group-attribute assertion — stays specced but unbuilt ([`specs/saml-groups.md`](specs/saml-groups.md)): it only refreshes at login, so it is *slower* to revoke than this sync unless it writes into the same table anyway.
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
 
