@@ -235,13 +235,17 @@ A failing sync answers 502 with the error and leaves the table as it was.
 Provisioning is `gcloud`, and needs **no domain-wide delegation**: the service account acts as itself once it can read the group — either as an *owner of just that group* (lightest), or holding the *Groups Reader* admin role (Admin console → *Assign service accounts*, or Terraform's `googleworkspace_role_assignment`). Whoever runs this once must be a Workspace admin or the group's owner; after that, membership is edited in Workspace and nothing here changes.
 
 ```bash
-gcloud iam service-accounts create group-sync --project $PROJECT
-gcloud services enable admin.googleapis.com --project $PROJECT
-gcloud iam service-accounts keys create sa.json --iam-account group-sync@$PROJECT.iam.gserviceaccount.com
-gcloud identity groups memberships add --group-email=board@example.org \
-  --member-email=group-sync@$PROJECT.iam.gserviceaccount.com --roles=OWNER
-wrangler secret put GOOGLE_SA_KEY < sa.json && rm sa.json
+P=<gcp-project>; SA=group-sync@$P.iam.gserviceaccount.com; G=board@example.org
+gcloud services enable cloudidentity.googleapis.com --project $P
+gcloud iam service-accounts create group-sync --project $P
+gcloud identity groups memberships add --group-email=$G --member-email=$SA --project $P
+gcloud identity groups memberships modify-membership-roles --group-email=$G --member-email=$SA --add-roles=OWNER --project $P
+# prove the SA reads the group, then land the key as the app's secret — it exists once, on stdin, never on disk:
+gcloud iam service-accounts keys create /dev/stdout --iam-account $SA \
+  | scripts/verify-group-sync.mjs --group $G --store-pages <pages-project>    # or --store-worker <name>
 ```
+
+Three things the first real run taught (`specs/done/google-directory-sync.md`): `gcloud identity …` resolves groups under its quota project, so pass `--project` for one with the Cloud Identity API enabled; a multi-role `--roles=MEMBER,OWNER` trips a gcloud validation bug, hence add-then-modify; and a just-minted key can fail with `invalid_grant` for ~30 s before it propagates — [`scripts/verify-group-sync.mjs`](scripts/verify-group-sync.mjs) separates "token ok" from "group readable" and stores nothing until both pass.
 
 The default read is the Cloud Identity API, which is what honours a group-*owner* SA (verified against a real Workspace: the Admin SDK Directory API refuses one with "Not Authorized"). `api: 'directory'` switches to the Admin SDK — it flattens nested groups — for an SA holding the Groups Reader admin role, or with `subject: 'admin@…'` for orgs wired for domain-wide delegation. The "live, signed at each sign-in" tier — a **SAML** adapter consuming Google's group-attribute assertion — stays specced but unbuilt ([`specs/saml-groups.md`](specs/saml-groups.md)): it only refreshes at login, so it is *slower* to revoke than this sync unless it writes into the same table anyway.
 

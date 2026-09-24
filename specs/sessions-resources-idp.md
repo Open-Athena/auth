@@ -36,7 +36,9 @@ Add an optional `resource: string | null`. `hasScope(auth, scope)` gains a resou
 
 This is the whole tie-in to the state-sharing work, and deliberately the only one — see §4.
 
-## 3. Stop needing Cloudflare Access
+## 3. Stop needing Cloudflare Access — **built** (2026-09)
+
+*Both paths shipped: `adapters/oidc.ts` (`oidcStart`/`oidcCallback`, One Tap; `specs/done/google-oidc-idp.md`) and `core/email-codes.ts` (magic link + 6-digit code over `adapters/resend.ts`, with `scripts/provision-resend.mjs` for the domain). gcs is cutting over from Access on this basis. Kept below as written.*
 
 Two paths, neither of which makes this an IdP (no password store, no OAuth server — that stays out of scope):
 
