@@ -7,9 +7,11 @@ import {
   consoleCreateUrl,
   enableServiceArgs,
   formatCommand,
+  missingFromClient,
+  parseClientJson,
   parseArgs,
   secretPutArgs,
-  setProjectArgs,
+  upsertDevVars,
   validateJsOrigin,
   validateRedirectUri,
 } from '../scripts/provision-oauth-client.mjs'
@@ -75,13 +77,12 @@ describe('command + URL builders', () => {
   })
 
   it('builds the exact gcloud/wrangler argv', () => {
-    expect(setProjectArgs('p')).toEqual(['config', 'set', 'project', 'p'])
     expect(enableServiceArgs('iap.googleapis.com', 'p')).toEqual(['services', 'enable', 'iap.googleapis.com', '--project', 'p'])
     expect(secretPutArgs(ID_VAR, 'myapp')).toEqual(['pages', 'secret', 'put', 'GOOGLE_CLIENT_ID', '--project-name', 'myapp'])
   })
 
   it('renders a command, quoting only args that need it', () => {
-    expect(formatCommand('gcloud', setProjectArgs('p'))).toBe('gcloud config set project p')
+    expect(formatCommand('gcloud', enableServiceArgs('x.googleapis.com', 'p'))).toBe('gcloud services enable x.googleapis.com --project p')
     expect(formatCommand('npx', ['wrangler', ...secretPutArgs(SECRET_VAR, 'my app')])).toBe(
       "npx wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name 'my app'",
     )
@@ -94,16 +95,23 @@ describe('parseArgs', () => {
       parseArgs([
         '--project', 'p',
         '--app-origin', 'https://x.pages.dev/',
+        '--app-origin', 'http://localhost:4187',
         '--redirect-uri', 'https://x.pages.dev/auth/google/callback',
         '--pages-project', 'myapp',
+        '--wrangler', 'scripts/oa-wrangler.sh',
+        '--from-json', 'client.json',
+        '--dev-vars', '.dev.vars',
         '--enable-service', 'people.googleapis.com',
         '--run',
       ]),
     ).toEqual({
       project: 'p',
-      appOrigin: 'https://x.pages.dev',
+      appOrigins: ['https://x.pages.dev', 'http://localhost:4187'],
       redirectUris: ['https://x.pages.dev/auth/google/callback'],
       pagesProject: 'myapp',
+      wrangler: 'scripts/oa-wrangler.sh',
+      fromJson: 'client.json',
+      devVars: '.dev.vars',
       enableServices: ['people.googleapis.com'],
       idVar: ID_VAR,
       secretVar: SECRET_VAR,
@@ -114,7 +122,9 @@ describe('parseArgs', () => {
 
   it('defaults optionals and stays a dry run', () => {
     const o = parseArgs(['--project', 'p', '--app-origin', 'https://x.pages.dev'])
-    expect([o.run, o.redirectUris, o.pagesProject, o.idVar, o.secretVar]).toEqual([false, [], null, ID_VAR, SECRET_VAR])
+    expect([o.run, o.redirectUris, o.pagesProject, o.wrangler, o.fromJson, o.devVars, o.idVar, o.secretVar]).toEqual([
+      false, [], null, 'npx wrangler', null, null, ID_VAR, SECRET_VAR,
+    ])
   })
 
   it('requires --project and --app-origin, and rejects unknown/dangling flags', () => {
@@ -124,7 +134,67 @@ describe('parseArgs', () => {
     expect(caught(() => parseArgs(['--project'])).message).toBe('--project needs a value')
   })
 
+  it('needs neither --project nor --app-origin with --from-json (the client knows both)', () => {
+    expect(parseArgs(['--from-json', 'c.json']).fromJson).toBe('c.json')
+  })
+
   it('skips required-flag checks under --help', () => {
     expect(parseArgs(['--help']).help).toBe(true)
+  })
+})
+
+const CLIENT_JSON = JSON.stringify({
+  web: {
+    client_id: 'id-123.apps.googleusercontent.com',
+    project_id: 'oa-auth-509611',
+    client_secret: 'shh',
+    javascript_origins: ['https://auth.oa.dev', 'http://localhost:4187'],
+    redirect_uris: ['https://auth.oa.dev/auth/google/callback'],
+  },
+})
+
+describe('parseClientJson', () => {
+  it("reads a Web client's id, secret, project, origins and redirect URIs", () => {
+    expect(parseClientJson(CLIENT_JSON)).toEqual({
+      project: 'oa-auth-509611',
+      clientId: 'id-123.apps.googleusercontent.com',
+      clientSecret: 'shh',
+      origins: ['https://auth.oa.dev', 'http://localhost:4187'],
+      redirectUris: ['https://auth.oa.dev/auth/google/callback'],
+    })
+  })
+
+  it('rejects a non-Web client (e.g. Desktop, keyed "installed")', () => {
+    const e = caught(() => parseClientJson(JSON.stringify({ installed: { client_id: 'x' } })))
+    expect([e instanceof UsageError, e.message]).toEqual([true, 'client JSON has no "web" key — create a "Web application" client'])
+  })
+})
+
+describe('missingFromClient', () => {
+  const client = parseClientJson(CLIENT_JSON)
+
+  it('is empty when the client lists everything asked for', () => {
+    expect(
+      missingFromClient(client, { appOrigins: ['https://auth.oa.dev'], redirectUris: ['https://auth.oa.dev/auth/google/callback'] }),
+    ).toEqual([])
+  })
+
+  it('names each origin / redirect URI the client lacks', () => {
+    expect(
+      missingFromClient(client, {
+        appOrigins: ['https://auth.oa.dev', 'https://m3.tail4a3a97.ts.net'],
+        redirectUris: ['http://localhost:4187/auth/google/callback'],
+      }),
+    ).toEqual(['origin https://m3.tail4a3a97.ts.net', 'redirect URI http://localhost:4187/auth/google/callback'])
+  })
+})
+
+describe('upsertDevVars', () => {
+  it('appends to an empty file', () => {
+    expect(upsertDevVars('', { A: '1', B: '2' })).toBe('A=1\nB=2\n')
+  })
+
+  it('replaces existing lines in place and keeps the others', () => {
+    expect(upsertDevVars('SESSION_SECRET=s\nA=old\n', { A: 'new', B: '2' })).toBe('SESSION_SECRET=s\nA=new\nB=2\n')
   })
 })

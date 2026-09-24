@@ -2,12 +2,14 @@ import type { ReactElement } from 'react'
 import { Admin } from './pages/Admin.js'
 import { Dashboard } from './pages/Dashboard.js'
 import { Home } from './pages/Home.js'
+import { Privacy } from './pages/Privacy.js'
 import { Link, Router, usePath } from './router.js'
 
 const ROUTES: Record<string, () => ReactElement> = {
   '/': Home,
   '/dashboard': Dashboard,
   '/admin': Admin,
+  '/privacy': Privacy,
 }
 
 export function App() {
@@ -35,7 +37,7 @@ export function App() {
       </main>
       <footer>
         <p className="muted small">
-          A demo. Nothing behind the gate is real; the gate is. Access to the gated page is logged — that's the point.
+          A demo. Nothing behind the gate is real; the gate is. Access to the gated page is logged — that's the point. <Link to="/privacy">Privacy</Link>
         </p>
       </footer>
     </Router>
