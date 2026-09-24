@@ -34,16 +34,17 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
         />
       ) : google.isSuccess ? (
         <p className="muted small inert">
-          No Google client id is configured on this deployment, so One Tap doesn't render and{' '}
-          <em>Continue with Google</em> answers 503. They're shown anyway because they're part of the panel; Google
-          offers no API to create the client, and <code>scripts/provision-oauth-client.mjs</code> walks the one
+          No Google client id is configured on this deployment, so there's no One Tap and no{' '}
+          <em>Continue with Google</em> — the panel drops a sign-in it can't complete, as any deployment should.
+          Google offers no API to create the client; <code>scripts/provision-oauth-client.mjs</code> walks the one
           manual step.
         </p>
       ) : null}
       <SignInPanel
         title={title}
-        googleUrl="/auth/google/start?next=%2Fdashboard"
-        signInUrl="/auth/sso?next=%2Fdashboard"
+        googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
+        // Cloudflare Access fronts `/auth/sso` only on the deployed host; in local dev it can only 401.
+        signInUrl={import.meta.env.DEV ? undefined : '/auth/sso?next=%2Fdashboard'}
         signInLabel="Sign in with SSO (staff)"
         withNext={false}
         emailAuth={{
