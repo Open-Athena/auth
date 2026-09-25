@@ -31,7 +31,14 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
         googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
         oneTap={
           clientId
-            ? { clientId, nonceEndpoint: '/auth/google/onetap/nonce', verifyEndpoint: '/auth/google/onetap', className: 'onetap' }
+            ? {
+                clientId,
+                nonceEndpoint: '/auth/google/onetap/nonce',
+                verifyEndpoint: '/auth/google/onetap',
+                className: 'onetap',
+                // Opt-in; on here because the toast is part of what the demo shows.
+                prompt: true,
+              }
             : undefined
         }
         onSignedIn={onSignedIn}

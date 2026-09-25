@@ -9,7 +9,7 @@ The button-first One Tap works: on a second visit the wall shows Google's person
 1. **First use of a new client.** The gcs client in `oa-auth-509611` was created that day, and the earlier sign-in went through the redirect flow, which the button flow doesn't count as a prior grant. Google issues the credential silently only once it holds a grant for that account on that client.
 2. **Third-party cookies.** Chrome's restrictions make the button flow fall back to a popup even with a prior grant. Google's answer is FedCM for the button flow: `use_fedcm_for_button: true` in `initialize()`, which lets Chrome (125+) show its own in-page account UI instead of a popup window. The component sets `use_fedcm_for_prompt: true` only.
 
-Ryan will report whether a second click, after that first grant, still opens the chooser.
+**Result:** Ryan signed out and clicked the personalized button again — same popup and account chooser. So (1) is ruled out and (2) is the cause: without FedCM, Chrome's third-party-cookie blocking makes every button click go through the popup, personalized or not. Ask 1 below is the fix; ask 2 is the streamlining on top of it. (Chrome had two Google accounts signed in, OA + personal; the button had already picked the OA one.)
 
 ## Asks
 
@@ -22,3 +22,15 @@ Ryan will report whether a second click, after that first grant, still opens the
 - gcs can set `oneTap={{ …, prompt: { autoSelect: true } }}` and a returning visitor with one Google account lands signed in without clicking.
 - A click on the rendered button in Chrome uses FedCM rather than a popup window.
 - The dist branch carries it; gcs bumps its pin and enables `prompt`.
+
+## Implemented (auth session, 2026-09-25)
+
+- `GoogleOneTap`'s `initialize()` now also passes `use_fedcm_for_button: true`.
+- New prop `prompt?: boolean | { autoSelect?: boolean }` (so also `SignInPanel`'s `oneTap`):
+  - When set, the component calls `google.accounts.id.prompt()` after rendering the button, with `auto_select` true only for `{ autoSelect: true }`.
+  - It calls `cancel()` on unmount, so a toast can't sign someone in to a page that's gone.
+  - Default off.
+- The docstring and the README's One Tap paragraph cover when silent issuance happens (a prior grant on *this* client via One Tap or the button, plus FedCM or third-party cookies) and why the prompt is opt-in.
+- Tests (`test/react/signin.test.tsx`, "GoogleOneTap") assert the exact `initialize` config for each mode, and that `prompt` / `cancel` fire.
+- The demo turns on `prompt: true` (no auto-select), because the toast is part of what it shows.
+- gcs: bump the pin and set `oneTap={{ …, prompt: { autoSelect: true } }}`.

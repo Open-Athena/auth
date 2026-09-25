@@ -110,6 +110,61 @@ describe('EmailCodeForm', () => {
 })
 
 describe('GoogleOneTap', () => {
+  /** A loaded GSI stub that records what the component asked of it. */
+  function stubGsi() {
+    const calls: { initialize: Record<string, unknown>[]; prompt: number; cancel: number } = { initialize: [], prompt: 0, cancel: 0 }
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.dataset.loaded = 'true'
+    document.head.appendChild(script)
+    ;(window as { google?: unknown }).google = {
+      accounts: {
+        id: {
+          initialize: (c: Record<string, unknown>) => calls.initialize.push(c),
+          renderButton: (parent: HTMLElement) => parent.appendChild(document.createElement('button')),
+          prompt: () => calls.prompt++,
+          cancel: () => calls.cancel++,
+        },
+      },
+    }
+    return calls
+  }
+  const withoutCallback = ({ callback: _, ...rest }: Record<string, unknown>) => rest
+
+  afterEach(() => {
+    document.head.querySelector('script[src="https://accounts.google.com/gsi/client"]')?.remove()
+    delete (window as { google?: unknown }).google
+  })
+
+  it('is button-only by default, with FedCM for both flows and no auto-select', async () => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
+    const calls = stubGsi()
+    renderWithQuery(<GoogleOneTap clientId="client-123" />)
+    await waitFor(() => expect(screen.getAllByRole('button')).toHaveLength(1))
+    expect([calls.initialize.map(withoutCallback), calls.prompt]).toEqual([
+      [{ client_id: 'client-123', nonce: 'n1', use_fedcm_for_prompt: true, use_fedcm_for_button: true, auto_select: false }],
+      0,
+    ])
+  })
+
+  it('surfaces the prompt when asked, auto-selecting only with autoSelect, and cancels it on unmount', async () => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
+    const calls = stubGsi()
+    const { unmount } = renderWithQuery(<GoogleOneTap clientId="client-123" prompt={{ autoSelect: true }} />)
+    await waitFor(() => expect(calls.prompt).toBe(1))
+    expect(calls.initialize.map(c => c.auto_select)).toEqual([true])
+    unmount()
+    expect(calls.cancel).toBe(1)
+  })
+
+  it('prompt: true surfaces the toast without auto-select', async () => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
+    const calls = stubGsi()
+    renderWithQuery(<GoogleOneTap clientId="client-123" prompt />)
+    await waitFor(() => expect(calls.prompt).toBe(1))
+    expect(calls.initialize.map(c => c.auto_select)).toEqual([false])
+  })
+
   it('renders the fallback when GSI cannot initialize', async () => {
     // No nonce comes back → init throws → the redirect button (fallback) shows,
     // so the page always has a working sign-in.
