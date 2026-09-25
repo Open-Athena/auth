@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { type EmailCodeFormProps } from './EmailCodeForm.js';
+import { type GoogleOneTapProps } from './GoogleOneTap.js';
 import { type RequestAccessFormProps } from './RequestAccessForm.js';
 export interface SignInPanelProps {
     /**
@@ -9,6 +10,12 @@ export interface SignInPanelProps {
      */
     googleUrl?: string;
     googleLabel?: ReactNode;
+    /**
+     * Google's own in-page button (`GoogleOneTap`), in the same slot: while it
+     * renders, the `googleUrl` redirect button is its fallback rather than a second
+     * "Continue with Google" beside it. `onSignedIn` is the panel's.
+     */
+    oneTap?: Omit<GoogleOneTapProps, 'fallback' | 'onSignedIn'>;
     /**
      * A generic SSO button (e.g. CF Access `/auth/sso`). Kept for Tier-1 apps and
      * back-compat; most consumers use `googleUrl` instead.
@@ -44,4 +51,4 @@ export declare function deniedEmail(): string | undefined;
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export declare function SignInPanel({ googleUrl, googleLabel, signInUrl, withNext, emailAuth, onSignedIn, title, hint, signInLabel, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;
+export declare function SignInPanel({ googleUrl, googleLabel, oneTap, signInUrl, withNext, emailAuth, onSignedIn, title, hint, signInLabel, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;
