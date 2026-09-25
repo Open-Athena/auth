@@ -1,4 +1,4 @@
-import { type AppWhoami, WhoamiChip, useWhoami } from '@open-athena/auth/react'
+import { type AppWhoami, displayName, useWhoami } from '@open-athena/auth/react'
 import { VIEW_SOURCE } from '../api.js'
 import { Link, useNavigate } from '../router.js'
 import { SignIn } from '../SignIn.js'
@@ -51,8 +51,7 @@ export function Home() {
           <a className="card" href="/api/demo-link?named=1">
             <h3>A link for Mona Octocat →</h3>
             <p>
-              Carries a name and a face. The page greets her, the watermark repeats her name across it, and the log
-              records her. Awkward to forward.
+              Carries a name and a face. The page greets her, and the log records her. Awkward to forward.
             </p>
           </a>
           <a className="card" href="/api/demo-link?named=0">
@@ -130,16 +129,13 @@ export function Home() {
 function SignedIn({ whoami }: { whoami: AppWhoami }) {
   return (
     <div className="signed-in">
-      <WhoamiChip
-        whoami={whoami}
-        avatar
-        logoutEndpoint="/api/view/logout"
-        classNames={{ root: 'chip', name: 'chip-name', button: 'btn small', avatar: 'avatar' }}
-      />
+      <p>
+        Signed in as <strong>{displayName(whoami) ?? (whoami.kind === 'sso' ? whoami.email : 'an anonymous link')}</strong>.
+      </p>
       <Link to="/dashboard" className="btn primary">
         Open the dashboard →
       </Link>
-      <p className="muted small">You're already in. Sign out to try another door.</p>
+      <p className="muted small">You're already in. Sign out (top right) to try another door.</p>
     </div>
   )
 }

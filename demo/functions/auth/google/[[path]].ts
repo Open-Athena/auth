@@ -45,7 +45,7 @@ export const onRequest = async ({ request, env }: Ctx): Promise<Response> => {
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     redirectUri: `${url.origin}/auth/google/callback`,
     // A first Google sign-in gets the name and face Google vouched for, so the
-    // chip and watermark say "Ada Lovelace" rather than initials.
+    // chip says "Ada Lovelace" rather than initials.
     seedProfile: true,
   }
 

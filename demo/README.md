@@ -12,7 +12,7 @@ Three pages:
 
 ## The walkthrough
 
-1. On `/`, click **A link for Mona Octocat →**, then come back and click **An anonymous link →**. Same dashboard; compare the chip, the watermark and the access notice. That difference — one link is awkward to forward, the other costs nothing — is the whole social design of share links.
+1. On `/`, click **A link for Mona Octocat →**, then come back and click **An anonymous link →**. Same dashboard; compare the chip (top right) and the access notice. That difference — one link is awkward to forward, the other costs nothing — is the whole social design of share links.
 2. Sign out and sign in with any email address. The demo shows you the code and link it *would* have mailed (below). Enter the code, or open the link, and you're on the same dashboard as an email session.
 3. Open `/admin`, start a sandbox (you get a two-word name like `brave-otter`), and mint a link. Copy it — the raw token is shown exactly once, because only its SHA-256 is stored.
 4. Open it in a private window. Back in `/admin`, watch the redemption and the views appear.

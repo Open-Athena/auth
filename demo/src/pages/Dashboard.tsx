@@ -1,15 +1,12 @@
 import {
   AccessNotice,
   AuthGate,
-  ProfilePanel,
   RequestAccessForm,
-  Watermark,
-  WhoamiChip,
   type AppWhoami,
   displayName,
 } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { ApiError, VIEW_SOURCE, api } from '../api.js'
 import { Link } from '../router.js'
 import { SignIn } from '../SignIn.js'
@@ -65,8 +62,6 @@ function Wall({ onSignedIn }: { onSignedIn: () => void }) {
 }
 
 function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
-  const [watermark, setWatermark] = useState(true)
-  const [editing, setEditing] = useState(false)
   // The gated fetch, polled: a link revoked in the admin page fails it within
   // five seconds, and the page drops back to the wall instead of showing a
   // stale page with an error tucked in a corner.
@@ -78,56 +73,12 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
 
   if (probe.error) return <p className="err">Access ended: {probe.error.message}</p>
 
-  // Only an email session owns a profile row; a link session is the link's.
-  const canEdit = whoami.kind === 'sso'
-
   return (
     <div className="dash">
-      {watermark && <Watermark whoami={whoami} className="watermark" />}
-
-      <header className="dash-head">
-        <div>
-          <h1>You're in.</h1>
-          <p className="muted small">
-            The private data would be here. It isn't the interesting part; what the gate knows about you is.
-          </p>
-        </div>
-        {/* No `onSignedOut` on purpose: forgetting the identity is the hook's
-            job, and an app-side refresh here would mask a regression in it —
-            which is exactly how the `removeQueries` bug survived this demo. */}
-        <WhoamiChip
-          whoami={whoami}
-          avatar
-          logoutEndpoint="/api/view/logout"
-          onOpenProfile={canEdit ? () => setEditing(e => !e) : undefined}
-          classNames={{ root: 'chip', name: 'chip-name', button: 'btn small', avatar: 'avatar', identity: 'chip-identity' }}
-        />
-      </header>
-
-      {editing && canEdit && (
-        <section className="panel">
-          <h2>Your name and face</h2>
-          <p className="muted small">
-            Self-serve, from the chip: whatever you set here is what the chip, the watermark and the admin table
-            render. An avatar is fetched once server-side and stored inline — never hot-linked from a third party on
-            every view.
-          </p>
-          <ProfilePanel
-            endpoint="/api/view/profile"
-            whoami={whoami}
-            onSaved={() => setEditing(false)}
-            classNames={{
-              form: 'stack',
-              field: 'field',
-              input: 'input',
-              select: 'input',
-              button: 'btn primary',
-              message: 'ok small',
-              preview: 'row',
-            }}
-          />
-        </section>
-      )}
+      <h1>You're in.</h1>
+      <p className="muted small">
+        The private data would be here. It isn't the interesting part; what the gate knows about you is.
+      </p>
 
       <AccessNotice whoami={whoami} className="disclosure" />
 
@@ -152,7 +103,7 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
           <Link to="/">Sign in with an emailed code</Link>, or Google — one <code>gate.signIn</code> for both.
         </li>
         <li>
-          <Link to="/">Open the named or the anonymous demo link</Link> and compare the chip above.
+          <Link to="/">Open the named or the anonymous demo link</Link> and compare the chip in the corner.
         </li>
         <li>
           <Link to="/admin">Mint your own</Link>, then disable, rotate or revoke it and watch this page fall back to the
@@ -160,14 +111,6 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
         </li>
       </ul>
 
-      <label className="toggle">
-        <input type="checkbox" checked={watermark} onChange={e => setWatermark(e.target.checked)} /> Watermark this page
-        with the visitor's name
-      </label>
-      <p className="muted small">
-        The data-room convention: rendering the recipient's name in-page makes screenshots attributable. It costs
-        nothing — the gate already knows who this session is.
-      </p>
     </div>
   )
 }

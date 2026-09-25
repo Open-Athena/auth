@@ -99,6 +99,8 @@ h3 {
   }
   .nav-links {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 1rem;
     a.on {
       font-weight: 600;
@@ -341,17 +343,6 @@ table {
   input {
     width: auto;
   }
-}
-
-.watermark {
-  color: var(--ink);
-  opacity: 0.055;
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 3;
-  letter-spacing: 0.2em;
-  transform: rotate(-24deg) scale(1.6);
-  word-spacing: 1.5rem;
 }
 
 .panel {
