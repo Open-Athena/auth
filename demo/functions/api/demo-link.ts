@@ -39,7 +39,7 @@ export const onRequestGet = async ({ request, env }: Ctx): Promise<Response> => 
     // fall back to it and the contrast this page is making would evaporate.
     name: named ? 'demo link, named' : null,
     note: 'minted by the home page',
-    subject: named ? { first: 'Mona', last: 'Octocat', ...(avatar ? { avatar } : {}) } : null,
+    subject: named ? { name: 'Mona Octocat', ...(avatar ? { avatar } : {}) } : null,
     scopes: [VIEW_SCOPE],
     expiresAt: Math.floor(Date.now() / 1000) + TTL_S,
     createdBy: 'demo',

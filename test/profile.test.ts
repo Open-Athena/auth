@@ -56,10 +56,10 @@ describe('putProfile / getProfile', () => {
     const gate = createGate({ store: memoryStore(), profiles, secret: SECRET, policy: anyEmailPolicy(['internal']) })
     const { auth, cookie } = (await gate.signIn(EMAIL, req()))!
 
-    const res = await gate.putProfile(auth, { first: 'Staff', last: 'Member' })
+    const res = await gate.putProfile(auth, { name: 'Staff Member' })
     expect(res).toEqual({
       ok: true,
-      profile: { email: EMAIL, first: 'Staff', last: 'Member', avatar: null, avatarSrc: null, updatedAt: NOW / 1000 },
+      profile: { email: EMAIL, name: 'Staff Member', avatar: null, avatarSrc: null, updatedAt: NOW / 1000 },
     })
     expect(await gate.getProfile(auth)).toEqual(res.ok && res.profile)
 
@@ -70,7 +70,7 @@ describe('putProfile / getProfile', () => {
       email: EMAIL,
       admin: false,
       scopes: ['internal'],
-      subject: { first: 'Staff', last: 'Member' },
+      subject: { name: 'Staff Member' },
     })
   })
 
@@ -175,7 +175,7 @@ describe('policy', () => {
   it('reports unconfigured when no profile store is bound', async () => {
     const gate = createGate({ store: memoryStore(), secret: SECRET, policy: anyEmailPolicy(['internal']) })
     const { auth } = (await gate.signIn(EMAIL, req()))!
-    expect(await gate.putProfile(auth, { first: 'x' })).toEqual({ ok: false, reason: 'unconfigured' })
+    expect(await gate.putProfile(auth, { name: 'x' })).toEqual({ ok: false, reason: 'unconfigured' })
     expect(await gate.getProfile(auth)).toBeNull()
   })
 
@@ -183,7 +183,7 @@ describe('policy', () => {
     const denyGate = createGate({ store: memoryStore(), profiles: memoryProfileStore(), secret: SECRET })
     const denyMint = await denyGate.mint({ scopes: ['reports'], email: 'bound@example.com', createdBy: 'me' })
     const denyRedeem = await denyGate.redeem(denyMint.token, req())
-    expect(denyRedeem.ok && (await denyGate.putProfile(denyRedeem.auth, { first: 'x' }))).toEqual({
+    expect(denyRedeem.ok && (await denyGate.putProfile(denyRedeem.auth, { name: 'x' }))).toEqual({
       ok: false,
       reason: 'forbidden',
     })
@@ -197,7 +197,7 @@ describe('policy', () => {
     })
     const okMint = await okGate.mint({ scopes: ['reports'], email: 'bound@example.com', createdBy: 'me' })
     const okRedeem = await okGate.redeem(okMint.token, req())
-    const res = okRedeem.ok && (await okGate.putProfile(okRedeem.auth, { first: 'Bound' }))
+    const res = okRedeem.ok && (await okGate.putProfile(okRedeem.auth, { name: 'Bound' }))
     // Keyed by the grant's bound email, not the grant id.
     expect(res && res.ok && res.profile.email).toBe('bound@example.com')
   })
@@ -212,11 +212,11 @@ describe('policy', () => {
     })
     const { auth } = (await gate.signIn(EMAIL, req()))!
 
-    expect((await gate.putProfile(auth, { first: 'One' })).ok).toBe(true)
-    expect(await gate.putProfile(auth, { first: 'Two' })).toEqual({ ok: false, reason: 'rate-limited' })
+    expect((await gate.putProfile(auth, { name: 'One' })).ok).toBe(true)
+    expect(await gate.putProfile(auth, { name: 'Two' })).toEqual({ ok: false, reason: 'rate-limited' })
 
     vi.setSystemTime(NOW + 61_000)
-    expect((await gate.putProfile(auth, { first: 'Three' })).ok).toBe(true)
+    expect((await gate.putProfile(auth, { name: 'Three' })).ok).toBe(true)
   })
 })
 
@@ -253,13 +253,13 @@ describe('routes: /api/auth/profile', () => {
 
     const put = await call(
       handle,
-      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ first: 'Staff' }) },
+      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Staff' }) },
       cookie,
     )
-    expect(put).toEqual({ status: 200, body: { first: 'Staff', last: null, avatar: null } })
+    expect(put).toEqual({ status: 200, body: { name: 'Staff', avatar: null } })
     expect(await call(handle, { method: 'GET' }, cookie)).toEqual({
       status: 200,
-      body: { first: 'Staff', last: null, avatar: null },
+      body: { name: 'Staff', avatar: null },
     })
   })
 
@@ -268,7 +268,7 @@ describe('routes: /api/auth/profile', () => {
     const cookie = await signedInCookie(gate)
     const res = await call(
       handle,
-      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ first: 'x' }) },
+      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'x' }) },
       cookie,
     )
     expect(res).toEqual({ status: 501, body: { error: 'unconfigured' } })

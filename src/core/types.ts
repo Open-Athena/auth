@@ -1,9 +1,12 @@
 /** Grants (share links / magic links) and the identities they resolve to. */
 
-/** Optional pre-loaded identity, so a gated view can greet and watermark by name. */
+/**
+ * Optional pre-loaded identity, so a gated view can greet and watermark by name.
+ * One `name` field, not a given/family pair: name structure and order vary too
+ * much across cultures for a split to be anything but lossy.
+ */
 export interface Subject {
-  first?: string
-  last?: string
+  name?: string
   email?: string
   avatar?: string
 }

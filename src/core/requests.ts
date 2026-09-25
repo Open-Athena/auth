@@ -71,28 +71,23 @@ export function isEmailish(email: string): boolean {
  * client-side (`<Avatar>`) rather than collected. An app that genuinely wants
  * uploaded avatars can set `subject.avatar` itself after approval.
  */
-export const MAX_SUBJECT_FIELD = 64
+export const MAX_SUBJECT_FIELD = 80
 
-export function cleanSubject(input: {
-  first?: string | null
-  last?: string | null
-}): Subject | null {
+export function cleanSubject(input: { name?: string | null }): Subject | null {
   const clean = (v: string | null | undefined): string | undefined => {
     // Trim again after the cap: slicing mid-word can leave a trailing space.
     const t = v?.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, MAX_SUBJECT_FIELD).trim()
     return t || undefined
   }
   const subject: Subject = {}
-  const first = clean(input.first)
-  const last = clean(input.last)
-  if (first) subject.first = first
-  if (last) subject.last = last
+  const name = clean(input.name)
+  if (name) subject.name = name
   return Object.keys(subject).length ? subject : null
 }
 
 /** "Bob Smith" from a subject, or null if it holds no name. */
 export function subjectName(subject: Subject | null | undefined): string | null {
-  return [subject?.first, subject?.last].filter(Boolean).join(' ') || null
+  return subject?.name || null
 }
 
 export interface RateLimit {

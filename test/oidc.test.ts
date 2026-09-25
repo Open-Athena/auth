@@ -387,36 +387,46 @@ describe('profile seed', () => {
   const norm = (p: Awaited<ReturnType<MemoryProfileStore['get']>>) => (p ? { ...p, updatedAt: '<ts>' } : null)
 
   describe('gate.seedProfileFromClaims', () => {
-    it('seeds first/last (split from a single name) and the inlined avatar', async () => {
+    it('seeds the display name whole, and the inlined avatar', async () => {
       const { g, profiles } = seedGate()
       const subject = await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })
-      expect(subject).toEqual({ first: 'Ada', last: 'Lovelace', avatar: dataUri })
+      expect(subject).toEqual({ name: 'Ada Lovelace', avatar: dataUri })
       expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
         email: 'ada@openathena.ai',
-        first: 'Ada',
-        last: 'Lovelace',
+        name: 'Ada Lovelace',
         avatar: dataUri,
         avatarSrc: 'url',
         updatedAt: '<ts>',
       })
     })
 
-    it('prefers given_name/family_name over the display name, and tolerates no picture', async () => {
+    it('prefers the display name over given_name/family_name, and tolerates no picture', async () => {
       const { g, profiles } = seedGate()
-      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ignore Me', given_name: 'Ada', family_name: 'Lovelace' })
+      // The IdP's `name` is the person's own ordering (e.g. family-first); the
+      // parts are only a fallback.
+      await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Lovelace Ada', given_name: 'Ada', family_name: 'Lovelace' })
       expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
         email: 'ada@openathena.ai',
-        first: 'Ada',
-        last: 'Lovelace',
+        name: 'Lovelace Ada',
         avatar: null,
         avatarSrc: null,
         updatedAt: '<ts>',
       })
     })
 
+    it('joins given_name/family_name when there is no display name', async () => {
+      const { g, profiles } = seedGate()
+      await g.seedProfileFromClaims('ada@openathena.ai', { given_name: 'Ada', family_name: 'Lovelace' })
+      await g.seedProfileFromClaims('cher@openathena.ai', { given_name: 'Cher' })
+      expect([
+        (await profiles!.get('ada@openathena.ai'))?.name,
+        (await profiles!.get('cher@openathena.ai'))?.name,
+      ]).toEqual(['Ada Lovelace', 'Cher'])
+    })
+
     it('never overrides a self-set profile — a later sign-in is a no-op', async () => {
       const { g, profiles } = seedGate()
-      const self = { email: 'ada@openathena.ai', first: 'Self', last: 'Chosen', avatar: null, avatarSrc: null, updatedAt: 5 }
+      const self = { email: 'ada@openathena.ai', name: 'Self Chosen', avatar: null, avatarSrc: null, updatedAt: 5 }
       await profiles!.put(self)
       await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Google Name', picture: PICTURE })
       expect(await profiles!.get('ada@openathena.ai')).toEqual(self)
@@ -427,8 +437,7 @@ describe('profile seed', () => {
       await g.seedProfileFromClaims('ada@openathena.ai', { name: 'Ada Lovelace', picture: PICTURE })
       expect(norm(await profiles!.get('ada@openathena.ai'))).toEqual({
         email: 'ada@openathena.ai',
-        first: 'Ada',
-        last: 'Lovelace',
+        name: 'Ada Lovelace',
         avatar: null,
         avatarSrc: null,
         updatedAt: '<ts>',
@@ -492,7 +501,7 @@ describe('profile seed', () => {
       expect(res.status).toBe(302)
       expect((await profiles!.get('ada@openathena.ai'))?.avatar).toBe(dataUri)
       const auth = await g.authenticate(new Request('https://app.test/', { headers: { Cookie: sessionCookie } }))
-      expect(auth?.kind === 'sso' ? auth.subject : null).toEqual({ first: 'Ada', last: 'Lovelace', avatar: dataUri })
+      expect(auth?.kind === 'sso' ? auth.subject : null).toEqual({ name: 'Ada Lovelace', avatar: dataUri })
     })
 
     it('writes nothing when seedProfile is off (default)', async () => {

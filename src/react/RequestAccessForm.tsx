@@ -8,14 +8,11 @@ export interface RequestAccessFormProps {
   /** Must match the server's `honeypotField`. Default `website`. */
   honeypotField?: string
   /**
-   * `true` — one free-text "Name" field (posted as `name`).
-   * `'split'` — separate First / Last, posted as `first`/`last` and stored as
-   * the same `Subject` a grant carries, so approval yields a grant that knows a
-   * person. Prefer `true` unless you specifically need the parts: plenty of
-   * people don't have a two-part name, and a required Last is how you lose them.
-   * `false` — don't ask.
+   * Ask for a name: one free-text field, posted as `name` and stored as the
+   * request's `subject.name` — the same `Subject` a grant carries, so approval
+   * yields a grant that greets a person. Default true.
    */
-  askName?: boolean | 'split'
+  askName?: boolean
   askNote?: boolean
   notePlaceholder?: string
   /**
@@ -26,7 +23,7 @@ export interface RequestAccessFormProps {
   defaultEmail?: string
   onSubmitted?: (state: RequestState) => void
   classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'button' | 'message', string>>
-  labels?: Partial<Record<'email' | 'name' | 'first' | 'last' | 'note' | 'submit' | 'submitting', string>>
+  labels?: Partial<Record<'email' | 'name' | 'note' | 'submit' | 'submitting', string>>
 }
 
 const MESSAGES: Record<Exclude<RequestState, 'idle' | 'submitting'>, string> = {
@@ -95,30 +92,13 @@ export function RequestAccessForm({
         />
       </div>
 
-      {askName === 'split' ? (
-        <>
-          <div className={classNames.field}>
-            <label className={classNames.label} htmlFor="oa-auth-first">
-              {labels.first ?? 'First name'}
-            </label>
-            <input className={classNames.input} id="oa-auth-first" name="first" type="text" autoComplete="given-name" />
-          </div>
-          <div className={classNames.field}>
-            <label className={classNames.label} htmlFor="oa-auth-last">
-              {labels.last ?? 'Last name'}
-            </label>
-            <input className={classNames.input} id="oa-auth-last" name="last" type="text" autoComplete="family-name" />
-          </div>
-        </>
-      ) : (
-        askName && (
-          <div className={classNames.field}>
-            <label className={classNames.label} htmlFor="oa-auth-name">
-              {labels.name ?? 'Name'}
-            </label>
-            <input className={classNames.input} id="oa-auth-name" name="name" type="text" autoComplete="name" />
-          </div>
-        )
+      {askName && (
+        <div className={classNames.field}>
+          <label className={classNames.label} htmlFor="oa-auth-name">
+            {labels.name ?? 'Name'}
+          </label>
+          <input className={classNames.input} id="oa-auth-name" name="name" type="text" autoComplete="name" />
+        </div>
       )}
 
       {askNote && (

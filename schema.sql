@@ -87,13 +87,11 @@ CREATE INDEX grants_disabled_at ON grants (disabled_at);
 
 CREATE TABLE profiles (
   email       TEXT PRIMARY KEY,
-  first       TEXT,
-  last        TEXT,
   avatar      TEXT,
   -- Provenance for re-resolve/debug: 'upload' | 'url' | 'github' | 'gravatar'.
   avatar_src  TEXT,
   updated_at  INTEGER NOT NULL
-);
+, name TEXT);
 
 CREATE TABLE pending_auth (
   id          TEXT PRIMARY KEY,

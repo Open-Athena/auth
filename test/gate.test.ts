@@ -405,7 +405,7 @@ describe('rotate', () => {
   it('re-keys the link — old token stops redeeming, new token works, subject/scopes/expiry intact', async () => {
     const g = gate()
     const { grant, token } = await g.mint(
-      { scopes: ['internal'], name: 'Bob', subject: { first: 'Bob' }, expiresAt: NOW_S + 86400, createdBy: 'boss@openathena.ai' },
+      { scopes: ['internal'], name: 'Bob', subject: { name: 'Bob' }, expiresAt: NOW_S + 86400, createdBy: 'boss@openathena.ai' },
       NOW,
     )
     const rot = await g.rotate(grant.id, {}, NOW + 1000)
@@ -418,7 +418,7 @@ describe('rotate', () => {
       grant.id,
       'Bob',
       ['internal'],
-      { first: 'Bob' },
+      { name: 'Bob' },
       NOW_S + 86400,
     ])
     // Old link is dead; new one redeems.

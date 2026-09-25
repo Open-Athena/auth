@@ -97,8 +97,7 @@ function Console({ whoami }: { whoami: AppWhoami }) {
     const max = Number(f.get('max'))
     mint.mutate({
       name: String(f.get('memo') || '').trim() || null,
-      first: String(f.get('first') || '').trim(),
-      last: String(f.get('last') || '').trim(),
+      subjectName: String(f.get('recipient') || '').trim(),
       scopes: ['reports'],
       maxRedeems: max > 0 ? max : null,
       expiresInS: days > 0 ? days * 86400 : null,
@@ -138,16 +137,12 @@ function Console({ whoami }: { whoami: AppWhoami }) {
             Memo <span className="muted">(what is this link for?)</span>
             {/* Pre-filled and optional: minting should cost one click. It's a
                 note to whoever reads this table later, not a recipient's name —
-                the recipient's identity is the fields below, when you want it. */}
+                the recipient's identity is the field below, when you want it. */}
             <input name="memo" defaultValue={`${sandbox ?? 'test'} · ${clock()}`} />
           </label>
           <label>
             Recipient <span className="muted">(optional — puts a name on the page)</span>
-            <input name="first" placeholder="Ada" autoComplete="off" />
-          </label>
-          <label>
-            <span className="muted">Last name</span>
-            <input name="last" placeholder="Lovelace" autoComplete="off" />
+            <input name="recipient" placeholder="Ada Lovelace" autoComplete="off" />
           </label>
           <label>
             Expires in

@@ -182,14 +182,18 @@ describe('admin routes', () => {
 })
 
 describe('mint route: the person on the link', () => {
-  it('stores first/last and an https avatar on the grant', async () => {
+  it("stores the recipient's name and an https avatar on the grant's subject", async () => {
     const cookie = await asAdmin()
     const minted = await post(
       '/grants',
-      { name: 'Bob', scopes: ['reports'], first: 'Bob', last: 'Smith', avatar: 'https://cdn.test/bob.png' },
+      { name: 'Q3 packet', scopes: ['reports'], subjectName: 'Bob Smith', avatar: 'https://cdn.test/bob.png' },
       cookie,
     )
-    expect(minted.body.grant.subject).toEqual({ first: 'Bob', last: 'Smith', avatar: 'https://cdn.test/bob.png' })
+    // `name` stays the link's admin-side label; the person is `subject.name`.
+    expect([minted.body.grant.name, minted.body.grant.subject]).toEqual([
+      'Q3 packet',
+      { name: 'Bob Smith', avatar: 'https://cdn.test/bob.png' },
+    ])
   })
 
   it('drops an avatar that is not https, rather than minting a link that loads it', async () => {
@@ -197,10 +201,10 @@ describe('mint route: the person on the link', () => {
     const cases = ['http://cdn.test/bob.png', 'javascript:alert(1)', 'data:image/png;base64,AAAA']
     const minted = []
     for (const avatar of cases) {
-      const res = await post('/grants', { scopes: ['reports'], first: 'Bob', avatar }, cookie)
+      const res = await post('/grants', { scopes: ['reports'], subjectName: 'Bob', avatar }, cookie)
       minted.push(res.body.grant.subject)
     }
-    expect(minted).toEqual([{ first: 'Bob' }, { first: 'Bob' }, { first: 'Bob' }])
+    expect(minted).toEqual([{ name: 'Bob' }, { name: 'Bob' }, { name: 'Bob' }])
   })
 
   it('501s the avatar lookup until a deployment opts in', async () => {
@@ -226,18 +230,17 @@ describe('request-access route', () => {
     expect((await gate.listRequests()).map(r => r.email)).toEqual(['bob@example.com'])
   })
 
-  it('takes first/last from the form and drops everything else the body carries', async () => {
+  it('takes the name from the form as the subject, and drops everything else the body carries', async () => {
     await post('/request', {
       email: 'bob@example.com',
-      first: 'Bob',
-      last: 'Smith',
+      name: 'Bob Smith',
       // Neither of these is a field the form offers, and neither may reach an
       // admin's screen: `avatar` would render as <img src> on the request table.
       avatar: 'https://evil.test/pixel.gif',
       admin: true,
     })
-    expect((await gate.listRequests()).map(r => [r.email, r.subject])).toEqual([
-      ['bob@example.com', { first: 'Bob', last: 'Smith' }],
+    expect((await gate.listRequests()).map(r => [r.email, r.name, r.subject])).toEqual([
+      ['bob@example.com', 'Bob Smith', { name: 'Bob Smith' }],
     ])
   })
 

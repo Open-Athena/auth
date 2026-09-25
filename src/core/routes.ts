@@ -121,8 +121,7 @@ async function readProfileInput(req: Request): Promise<ProfileInput> {
     const form = await req.formData().catch(() => null)
     if (!form) return {}
     const input: ProfileInput = {}
-    if (form.has('first')) input.first = String(form.get('first'))
-    if (form.has('last')) input.last = String(form.get('last'))
+    if (form.has('name')) input.name = String(form.get('name'))
     const file = form.get('avatar')
     // A file part is a Blob at runtime; workers-types narrows `FormData.get` to
     // `string | null` in this build, so duck-type past it rather than trust it.
@@ -137,8 +136,7 @@ async function readProfileInput(req: Request): Promise<ProfileInput> {
   const b = (await req.json().catch(() => null)) as Record<string, unknown> | null
   if (!b || typeof b !== 'object') return {}
   const input: ProfileInput = {}
-  if ('first' in b) input.first = (b.first as string | null) ?? null
-  if ('last' in b) input.last = (b.last as string | null) ?? null
+  if ('name' in b) input.name = (b.name as string | null) ?? null
   if ('avatar' in b) input.avatar = normalizeAvatarJson(b.avatar)
   return input
 }
@@ -238,7 +236,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     if (rest === '/profile' && method === 'GET') {
       if (!auth) return json({ error: 'unauthenticated' }, 401)
       const p = await gate.getProfile(auth)
-      return json(p ? { first: p.first, last: p.last, avatar: p.avatar } : null)
+      return json(p ? { name: p.name, avatar: p.avatar } : null)
     }
 
     if (rest === '/profile' && method === 'PUT') {
@@ -249,23 +247,24 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           res.reason === 'forbidden' ? 403 : res.reason === 'rate-limited' ? 429 : res.reason === 'unconfigured' ? 501 : 400
         return json({ error: res.reason, ...('detail' in res ? { detail: res.detail } : {}) }, status)
       }
-      return json({ first: res.profile.first, last: res.profile.last, avatar: res.profile.avatar })
+      return json({ name: res.profile.name, avatar: res.profile.avatar })
     }
 
     if (rest === '/request' && method === 'POST') {
-      const input = await body<{ email: string; name: string; first: string; last: string; note: string } & Record<string, string>>(req)
+      const input = await body<{ email: string; name: string; note: string } & Record<string, string>>(req)
       // A filled honeypot gets the same answer a human gets: no signal back to
       // the bot about what tripped, and no row to clean up.
       if (input[honeypotField]) return json({ status: 'pending' })
       if (!input.email) return json({ error: 'email required' }, 400)
-      // `cleanSubject` caps and strips these: they are attacker-controlled
-      // strings destined for a table an admin reads.
+      // `cleanSubject` caps and strips the name: it's an attacker-controlled
+      // string destined for a table an admin reads, and for the subject an
+      // approved grant greets them by.
       const res = await gate.requestAccess(
         {
           email: input.email,
           name: input.name,
           note: input.note,
-          subject: cleanSubject({ first: input.first, last: input.last }),
+          subject: cleanSubject({ name: input.name }),
         },
         req,
       )
@@ -313,8 +312,8 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           name: string
           note: string
           email: string
-          first: string
-          last: string
+          /** The recipient's name (`subject.name`); `name` is the link's admin-side label. */
+          subjectName: string
           avatar: string
           scopes: string[]
           maxRedeems: number | null
@@ -326,7 +325,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         // Unlike the request form, the supplier here is an admin, so an avatar
         // *is* accepted — still `https:`-only, since the value lands in an
         // `<img src>` on every recipient's page.
-        const subject = cleanSubject({ first: b.first, last: b.last })
+        const subject = cleanSubject({ name: b.subjectName })
         const avatar = b.avatar && isSafeAvatarUrl(b.avatar) ? b.avatar : null
         const { grant, token } = await gate.mint({
           name: b.name ?? null,

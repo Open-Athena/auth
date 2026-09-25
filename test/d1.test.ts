@@ -33,7 +33,7 @@ describe('grant round-trip', () => {
       {
         name: 'Bob Smith (donor)',
         note: 'Q3 board packet',
-        subject: { first: 'Bob', last: 'Smith', email: 'bob@example.com' },
+        subject: { name: 'Bob Smith', email: 'bob@example.com' },
         email: 'bob@example.com',
         scopes: ['reports', 'finances'],
         maxRedeems: 3,

@@ -37,9 +37,8 @@ export const VIEW_SOURCE = { kind: 'app', endpoint: '/api/view/whoami' } as cons
 export interface MintInput {
   /** The memo: a note to whoever reads the admin table later, not the recipient's name. */
   name: string | null
-  /** Optional recipient identity — becomes the grant's `Subject`. */
-  first?: string
-  last?: string
+  /** Optional recipient name — becomes the grant's `subject.name`. */
+  subjectName?: string
   scopes: string[]
   maxRedeems: number | null
   expiresInS: number | null

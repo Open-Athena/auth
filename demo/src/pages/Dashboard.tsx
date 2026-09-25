@@ -47,7 +47,7 @@ function Wall({ onSignedIn }: { onSignedIn: () => void }) {
           // pending for the queue instead of being auto-approved by the
           // admit-anyone view policy.
           endpoint="/api/admin/request"
-          askName="split"
+          askName
           notePlaceholder="Board member, reviewing Q3"
           classNames={{ form: 'stack', field: 'field', input: 'input', button: 'btn', message: 'ok' }}
           labels={{ submit: 'Request access' }}

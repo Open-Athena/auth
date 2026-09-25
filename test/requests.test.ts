@@ -43,39 +43,40 @@ describe('isEmailish', () => {
 })
 
 describe('cleanSubject', () => {
-  it('keeps only the parts that were filled in, and nothing when none were', () => {
+  it('keeps a name that was filled in, and nothing when none was', () => {
     expect([
-      cleanSubject({ first: 'Bob', last: 'Smith' }),
-      cleanSubject({ first: 'Cher', last: '' }),
-      cleanSubject({ first: '   ', last: null }),
+      cleanSubject({ name: '  Bob Smith ' }),
+      cleanSubject({ name: 'Cher' }),
+      cleanSubject({ name: '   ' }),
+      cleanSubject({ name: null }),
       cleanSubject({}),
-    ]).toEqual([{ first: 'Bob', last: 'Smith' }, { first: 'Cher' }, null, null])
+    ]).toEqual([{ name: 'Bob Smith' }, { name: 'Cher' }, null, null, null])
   })
 
   it('clamps what a stranger can put on an admin screen', () => {
     // Control characters (a newline forging a second table row, a NUL) and
     // unbounded length are the two things a free-text field hands an attacker.
     expect([
-      cleanSubject({ first: 'Bob\nSmith\u0000<script>' }),
-      cleanSubject({ first: 'x'.repeat(MAX_SUBJECT_FIELD + 40) }),
-    ]).toEqual([{ first: 'Bob Smith <script>' }, { first: 'x'.repeat(MAX_SUBJECT_FIELD) }])
+      cleanSubject({ name: 'Bob\nSmith\u0000<script>' }),
+      cleanSubject({ name: 'x'.repeat(MAX_SUBJECT_FIELD + 40) }),
+    ]).toEqual([{ name: 'Bob Smith <script>' }, { name: 'x'.repeat(MAX_SUBJECT_FIELD) }])
   })
 
   it('never accepts an avatar from the form', () => {
     // A URL from an unauthenticated submitter, rendered as <img src> on the
     // admin page, is a tracking pixel pointed at whoever reviews requests.
-    expect(cleanSubject({ first: 'Bob', avatar: 'https://evil.test/p.gif' } as never)).toEqual({ first: 'Bob' })
+    expect(cleanSubject({ name: 'Bob', avatar: 'https://evil.test/p.gif' } as never)).toEqual({ name: 'Bob' })
   })
 })
 
 describe('subjectName', () => {
-  it('joins what it has, and admits when it has nothing', () => {
+  it('returns the name, and admits when there is none', () => {
     expect([
-      subjectName({ first: 'Bob', last: 'Smith' }),
-      subjectName({ last: 'Smith' }),
+      subjectName({ name: 'Bob Smith' }),
+      subjectName({ name: '' }),
       subjectName({ avatar: 'x' }),
       subjectName(null),
-    ]).toEqual(['Bob Smith', 'Smith', null, null])
+    ]).toEqual(['Bob Smith', null, null, null])
   })
 })
 
@@ -207,9 +208,9 @@ describe('approveRequest', () => {
 
   it('carries the requester onto the grant, so the watermark names a person', async () => {
     const g = gate()
-    // No `name`: a split-name form posts first/last and nothing else.
+    // No request `name`: only the subject carries the person.
     const pending = await g.requestAccess(
-      { email: 'bob@example.com', subject: cleanSubject({ first: 'Bob', last: 'Smith' }) },
+      { email: 'bob@example.com', subject: cleanSubject({ name: 'Bob Smith' }) },
       req(),
       NOW,
     )
@@ -218,12 +219,12 @@ describe('approveRequest', () => {
     const res = await g.approveRequest(pending.request.id, 'boss@openathena.ai', {}, NOW + 1000)
     if (!res) throw new Error('expected approval to succeed')
     // `name` falls back through the subject before the address: without that,
-    // a grant minted from a split-name request would be labelled `bob@…`.
-    expect([res.grant.name, res.grant.subject]).toEqual(['Bob Smith', { first: 'Bob', last: 'Smith' }])
+    // a grant minted from a subject-only request would be labelled `bob@…`.
+    expect([res.grant.name, res.grant.subject]).toEqual(['Bob Smith', { name: 'Bob Smith' }])
 
     // And it survives the round-trip through the store, not just this call.
     const reread = await g.listRequests()
-    expect(reread.map(r => [r.email, r.subject])).toEqual([['bob@example.com', { first: 'Bob', last: 'Smith' }]])
+    expect(reread.map(r => [r.email, r.subject])).toEqual([['bob@example.com', { name: 'Bob Smith' }]])
   })
 
   it('honours a scope override', async () => {

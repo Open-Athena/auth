@@ -70,15 +70,12 @@ export function displayName(whoami: Whoami | null | undefined): string | null {
   const w = whoami as Partial<GrantWhoami> & Partial<SsoWhoami> & EdgeWhoami
   if (w.kind === 'grant') {
     const subject: Subject = w.subject ?? {}
-    const full = [subject.first, subject.last].filter(Boolean).join(' ')
-    return full || w.name || subject.email || w.email || null
+    return subject.name || w.name || subject.email || w.email || null
   }
   if (w.kind === 'sso') {
     // A self-set name wins over the bare email, same as a grant's subject wins
     // over its memo — it's who the person said they are.
-    const subject: Subject = w.subject ?? {}
-    const full = [subject.first, subject.last].filter(Boolean).join(' ')
-    return full || w.email || null
+    return w.subject?.name || w.email || null
   }
   return w.name ?? w.email ?? null
 }

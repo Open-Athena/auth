@@ -40,12 +40,12 @@ afterEach(() => {
 
 describe('displayName', () => {
   it('prefers the person over the memo, then the email', () => {
-    const subjectOnly = { ...GRANT, name: null, subject: { first: 'Bob', last: 'Smith' } }
+    const subjectOnly = { ...GRANT, name: null, subject: { name: 'Bob Smith' } }
     const emailOnly = { ...GRANT, name: null, subject: null }
     // The case that motivated the ordering: `name` is an admin's memo about the
     // link, `subject` is who it was minted for. Preferring the memo rendered
     // "Private link for Q3 board packet".
-    const both = { ...GRANT, name: 'Q3 board packet', subject: { first: 'Bob', last: 'Smith' } }
+    const both = { ...GRANT, name: 'Q3 board packet', subject: { name: 'Bob Smith' } }
     expect([
       displayName(both),
       displayName(GRANT),
@@ -217,25 +217,6 @@ describe('RequestAccessForm', () => {
     ])
     // The form is replaced, so a re-submit isn't one click away.
     expect(screen.queryByRole('button')).toBe(null)
-  })
-
-  it("posts first/last in split mode, and doesn't also post a `name`", async () => {
-    const calls = stubFetch({ '/api/auth/request': { status: 200, body: { status: 'pending' } } })
-    renderWithQuery(<RequestAccessForm askName="split" askNote={false} />)
-    expect(screen.queryByLabelText('Name')).toBe(null)
-    await userEvent.type(screen.getByLabelText('Email'), 'bob@example.com')
-    await userEvent.type(screen.getByLabelText('First name'), 'Bob')
-    await userEvent.type(screen.getByLabelText('Last name'), 'Smith')
-    await userEvent.click(screen.getByRole('button', { name: 'Request access' }))
-
-    await waitFor(() => expect(screen.getByText(/we'll email you a link/)).toBeDefined())
-    expect(calls).toEqual([
-      {
-        url: '/api/auth/request',
-        method: 'POST',
-        body: { email: 'bob@example.com', first: 'Bob', last: 'Smith', website: '' },
-      },
-    ])
   })
 
   it('surfaces rate-limiting and invalid addresses distinctly', async () => {
@@ -442,7 +423,7 @@ describe('Avatar', () => {
   })
 
   it("renders a subject's avatar without handing the referrer to whoever hosts it", () => {
-    const withAvatar: AppWhoami = { ...GRANT, subject: { first: 'Bob', avatar: 'https://cdn.test/bob.png' } }
+    const withAvatar: AppWhoami = { ...GRANT, subject: { name: 'Bob', avatar: 'https://cdn.test/bob.png' } }
     const { container } = renderWithQuery(<Avatar whoami={withAvatar} />)
     const img = container.querySelector('img')!
     expect([img.getAttribute('src'), img.getAttribute('referrerpolicy'), img.getAttribute('alt')]).toEqual([

@@ -180,8 +180,7 @@ export type AvatarInput =
   | undefined
 
 export interface ProfileInput {
-  first?: string | null
-  last?: string | null
+  name?: string | null
   avatar?: AvatarInput
 }
 
@@ -275,8 +274,7 @@ export function createGate(opts: GateOptions) {
     const p = await profiles.get(email)
     if (!p) return null
     const subject: Subject = {}
-    if (p.first) subject.first = p.first
-    if (p.last) subject.last = p.last
+    if (p.name) subject.name = p.name
     if (p.avatar) subject.avatar = p.avatar
     return Object.keys(subject).length ? subject : null
   }
@@ -849,8 +847,7 @@ export function createGate(opts: GateOptions) {
       return { ok: false, reason: 'rate-limited' }
     }
 
-    const first = 'first' in input ? cleanName(input.first) : (existing?.first ?? null)
-    const last = 'last' in input ? cleanName(input.last) : (existing?.last ?? null)
+    const name = 'name' in input ? cleanName(input.name) : (existing?.name ?? null)
 
     let avatar = existing?.avatar ?? null
     let avatarSrc = existing?.avatarSrc ?? null
@@ -874,7 +871,7 @@ export function createGate(opts: GateOptions) {
       }
     }
 
-    const profile: Profile = { email, first, last, avatar, avatarSrc, updatedAt: nowS }
+    const profile: Profile = { email, name, avatar, avatarSrc, updatedAt: nowS }
     await profiles.put(profile)
     return { ok: true, profile }
   }
@@ -903,19 +900,9 @@ export function createGate(opts: GateOptions) {
     // first sign-in for an email with no row seeds; every later one is a no-op.
     if (await profiles.get(email)) return subjectFor(email)
 
-    let first: string | null
-    let last: string | null
-    if (claims.given_name != null || claims.family_name != null) {
-      first = cleanName(claims.given_name ?? null)
-      last = cleanName(claims.family_name ?? null)
-    } else {
-      // Best-effort split of a single display name on its last space — the same
-      // lossy first/last split the self-serve panel already tolerates.
-      const whole = cleanName(claims.name ?? null)
-      const i = whole ? whole.lastIndexOf(' ') : -1
-      first = whole ? (i < 0 ? whole : whole.slice(0, i)) : null
-      last = whole && i >= 0 ? whole.slice(i + 1) : null
-    }
+    // The IdP's own display name, in the order and form the person uses; the
+    // given/family pair only when that's all the IdP sent.
+    const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '))
 
     let avatar: string | null = null
     if (claims.picture && isSafeAvatarUrl(claims.picture)) {
@@ -933,7 +920,7 @@ export function createGate(opts: GateOptions) {
       }
     }
 
-    const profile: Profile = { email, first, last, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) }
+    const profile: Profile = { email, name, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) }
     await profiles.put(profile)
     return subjectFor(email)
   }

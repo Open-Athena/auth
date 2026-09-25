@@ -19,7 +19,7 @@ export interface ProfilePanelProps {
     Record<'form' | 'field' | 'label' | 'input' | 'select' | 'button' | 'message' | 'preview', string>
   >
   labels?: Partial<
-    Record<'first' | 'last' | 'avatar' | 'save' | 'saving' | 'saved' | keyof Record<AvatarChoice, string>, string>
+    Record<'name' | 'avatar' | 'save' | 'saving' | 'saved' | keyof Record<AvatarChoice, string>, string>
   >
 }
 
@@ -32,8 +32,8 @@ const AVATAR_LABELS: Record<AvatarChoice, string> = {
   clear: 'Clear (use initials)',
 }
 
-const asSubject = (whoami: Whoami | null | undefined): { first?: string; last?: string } =>
-  (whoami as { subject?: { first?: string; last?: string } } | null | undefined)?.subject ?? {}
+const asSubject = (whoami: Whoami | null | undefined): { name?: string } =>
+  (whoami as { subject?: { name?: string } } | null | undefined)?.subject ?? {}
 
 /**
  * Let a signed-in principal set their own display name and face. Unstyled, like
@@ -53,8 +53,7 @@ export function ProfilePanel({
 }: ProfilePanelProps) {
   const seed = asSubject(whoami)
   const forget = useForgetWhoami()
-  const [first, setFirst] = useState(seed.first ?? '')
-  const [last, setLast] = useState(seed.last ?? '')
+  const [name, setName] = useState(seed.name ?? '')
   const [choice, setChoice] = useState<AvatarChoice>('keep')
   const [url, setUrl] = useState('')
   const [github, setGithub] = useState('')
@@ -70,12 +69,12 @@ export function ProfilePanel({
     try {
       const res =
         choice === 'upload' && file
-          ? await fetch(endpoint, { method: 'PUT', credentials: 'include', body: uploadBody(first, last, file) })
+          ? await fetch(endpoint, { method: 'PUT', credentials: 'include', body: uploadBody(name, file) })
           : await fetch(endpoint, {
               method: 'PUT',
               credentials: 'include',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ first, last, ...avatarField(choice, url, github) }),
+              body: JSON.stringify({ name, ...avatarField(choice, url, github) }),
             })
       if (res.ok) {
         setState('saved')
@@ -97,34 +96,20 @@ export function ProfilePanel({
   return (
     <form className={classNames.form} onSubmit={save}>
       <div className={classNames.preview}>
-        <Avatar whoami={whoami} name={[first, last].filter(Boolean).join(' ') || displayName(whoami)} size={64} />
+        <Avatar whoami={whoami} name={name.trim() || displayName(whoami)} size={64} />
       </div>
 
       <div className={classNames.field}>
-        <label className={classNames.label} htmlFor="oa-profile-first">
-          {labels.first ?? 'First name'}
+        <label className={classNames.label} htmlFor="oa-profile-name">
+          {labels.name ?? 'Name'}
         </label>
         <input
           className={classNames.input}
-          id="oa-profile-first"
+          id="oa-profile-name"
           type="text"
-          autoComplete="given-name"
-          value={first}
-          onChange={e => setFirst(e.target.value)}
-        />
-      </div>
-
-      <div className={classNames.field}>
-        <label className={classNames.label} htmlFor="oa-profile-last">
-          {labels.last ?? 'Last name'}
-        </label>
-        <input
-          className={classNames.input}
-          id="oa-profile-last"
-          type="text"
-          autoComplete="family-name"
-          value={last}
-          onChange={e => setLast(e.target.value)}
+          autoComplete="name"
+          value={name}
+          onChange={e => setName(e.target.value)}
         />
       </div>
 
@@ -204,10 +189,9 @@ function avatarField(choice: AvatarChoice, url: string, github: string): { avata
   }
 }
 
-function uploadBody(first: string, last: string, file: File): FormData {
+function uploadBody(name: string, file: File): FormData {
   const fd = new FormData()
-  fd.set('first', first)
-  fd.set('last', last)
+  fd.set('name', name)
   fd.set('avatar', file)
   return fd
 }

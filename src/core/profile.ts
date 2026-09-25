@@ -14,8 +14,7 @@ export type AvatarSourceKind = 'upload' | 'url' | 'github' | 'gravatar'
 export interface Profile {
   /** The verified principal (SSO email, or a magic-link-verified grant email). */
   email: string
-  first: string | null
-  last: string | null
+  name: string | null
   /**
    * A `data:` URI (default) or an `asset://<id>` ref — never a live remote URL,
    * so rendering it never phones a third party.
@@ -26,7 +25,7 @@ export interface Profile {
   updatedAt: number
 }
 
-/** Longest a self-asserted display-name field may be. */
+/** Longest a self-asserted display name may be. */
 export const MAX_PROFILE_NAME = 80
 
 /**

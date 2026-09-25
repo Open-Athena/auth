@@ -62,7 +62,7 @@ Composed as separate params: `?doc=<slug>&key=<token>` — the slug says *what*,
 The current demo funnels into a sandbox, which buries the thing worth showing.
 
 - **Home** — brief intro to the library, then the simplest possible gated flow. "Sign in with email" (qualified: this demo accepts anyone; a real deployment restricts by domain, allowlist, or approval), and below it, more prominently, the magic-link pitch with a real clickable `?key=` link that bypasses the flow above.
-- **Two demo links, side by side** — one carrying first/last/avatar, one bare. The chip/watermark/notice difference *is* the anti-forwarding argument, made visually: one of those is uncomfortable to pass along and the other costs nothing.
+- **Two demo links, side by side** — one carrying a name and avatar, one bare. The chip/watermark/notice difference *is* the anti-forwarding argument, made visually: one of those is uncomfortable to pass along and the other costs nothing.
 - **Dashboard** — one big placeholder instead of fake tables. The subject is the visitor's own identity: which subject they are, how they got in, when it expires, and a nudge to sign out and come back a different way.
 - **Admin** — a de-emphasised power-user tease, not the front door. Sandbox identities get Docker-style two-word names so "you're in a sandbox" is implicit rather than explained in a paragraph. Links minted there are full-fidelity for anyone in the world.
 - Throughout: "memo" rather than name/note, pre-filled so minting needs no typing; GitHub link in the header on every page; `/admin` labelled **Admin**, not "Console".
