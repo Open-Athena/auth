@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { type Whoami } from './types.js';
 export interface WhoamiChipProps {
     whoami: Whoami | null | undefined;
-    /** Default `/api/auth/logout`. Pass null for Tier 1, where the edge owns the session. */
+    /** Default `/api/auth/logout`. Pass null to hide the sign-out control. */
     logoutEndpoint?: string | null;
     signOutLabel?: ReactNode;
     /**

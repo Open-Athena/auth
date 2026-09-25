@@ -65,7 +65,7 @@ export async function verifySessionClaims(value, secret, nowMs) {
     if (v !== 1 || typeof sub !== 'string' || typeof exp !== 'number')
         return null;
     // `<=` so expiry is judged identically everywhere: grants (`expiresAt > nowS`),
-    // Access JWTs, and sessions all treat "exactly at exp" as expired.
+    // id_tokens, and sessions all treat "exactly at exp" as expired.
     if (exp * 1000 <= nowMs)
         return null;
     return { sub, iat: typeof iat === 'number' ? iat : 0, exp };

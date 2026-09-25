@@ -4,7 +4,7 @@
  * Any other SQLite (Turso, better-sqlite3) or Postgres backend is a sibling
  * file of about this size; nothing here needs a plugin registry to swap.
  *
- * Apply `migrations/0001_grants.sql` and `migrations/0002_access_log.sql` first.
+ * Apply `migrations/` first.
  */
 import type { AuditSink } from '../core/audit.js';
 import type { AllowlistStore, AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
@@ -43,7 +43,7 @@ export declare function d1AuditQuery(db: D1Database): AuditQuery;
  * than by a read-then-write race in the worker.
  */
 export declare function d1AuditSink(db: D1Database): AuditSink;
-/** Apply `migrations/0008_profiles.sql` and `migrations/0013_single_name.sql` first. */
+/** The `profiles` table (`migrations/`). */
 export declare function d1ProfileStore(db: D1Database): ProfileStore;
 export declare function d1PendingAuthStore(db: D1Database): PendingAuthStore;
 export declare function d1Allowlist(db: D1Database): AllowlistStore;

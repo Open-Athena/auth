@@ -1,16 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { DEFAULT_ENDPOINTS } from './types.js';
+import { DEFAULT_WHOAMI_ENDPOINT } from './types.js';
 export const WHOAMI_KEY = ['oa-auth', 'whoami'];
 /**
- * Probe the current identity from either source. `retry: false` because a 401
+ * Probe the current identity. `retry: false` because a 401
  * is a real answer, not a transient failure — retrying it just delays the wall.
  */
-export function useWhoami(source, { staleTime = 5 * 60_000, enabled = true, devIdentity } = {}) {
+export function useWhoami(source = {}, { staleTime = 5 * 60_000, enabled = true, devIdentity } = {}) {
     const client = useQueryClient();
-    const endpoint = source.endpoint ?? DEFAULT_ENDPOINTS[source.kind];
+    const endpoint = source.endpoint ?? DEFAULT_WHOAMI_ENDPOINT;
     const stubbed = devIdentity !== undefined;
     const query = useQuery({
-        queryKey: [...WHOAMI_KEY, source.kind, endpoint],
+        queryKey: [...WHOAMI_KEY, endpoint],
         enabled: enabled && !stubbed,
         /**
          * Fresh while signed in, always stale while signed out. Someone sitting on

@@ -16,11 +16,6 @@ export interface SignInPanelProps {
      * "Continue with Google" beside it. `onSignedIn` is the panel's.
      */
     oneTap?: Omit<GoogleOneTapProps, 'fallback' | 'onSignedIn'>;
-    /**
-     * A generic SSO button (e.g. CF Access `/auth/sso`). Kept for Tier-1 apps and
-     * back-compat; most consumers use `googleUrl` instead.
-     */
-    signInUrl?: string;
     /** Append the current path so a redirect returns the visitor where they started. Default true. */
     withNext?: boolean;
     /**
@@ -32,7 +27,6 @@ export interface SignInPanelProps {
     onSignedIn?: () => void;
     title?: ReactNode;
     hint?: ReactNode;
-    signInLabel?: ReactNode;
     /** Render the request-access form. `true` for defaults, or pass props. */
     requestAccess?: boolean | RequestAccessFormProps;
     children?: ReactNode;
@@ -51,4 +45,4 @@ export declare function deniedEmail(): string | undefined;
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export declare function SignInPanel({ googleUrl, googleLabel, oneTap, signInUrl, withNext, emailAuth, onSignedIn, title, hint, signInLabel, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;
+export declare function SignInPanel({ googleUrl, googleLabel, oneTap, withNext, emailAuth, onSignedIn, title, hint, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;

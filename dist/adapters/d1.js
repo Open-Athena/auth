@@ -364,7 +364,7 @@ const toProfile = (r) => ({
     avatarSrc: r.avatar_src ?? null,
     updatedAt: r.updated_at,
 });
-/** Apply `migrations/0008_profiles.sql` and `migrations/0013_single_name.sql` first. */
+/** The `profiles` table (`migrations/`). */
 export function d1ProfileStore(db) {
     return {
         async get(email) {

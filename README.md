@@ -1,14 +1,12 @@
 # `@open-athena/auth`
 
-> Named share links, SSO, and an access log for gated dashboards.
+> Named share links, Google sign-in, email codes, and an access log for gated dashboards.
 
-Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions + DB-backed grant tokens, an SSO IdP adapter) and source-agnostic React FE primitives (`useWhoami` / `AuthGate` / `SignInPanel` / `WhoamiChip`).
+Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes) and unstyled React primitives (`useWhoami` / `AuthGate` / `SignInPanel` / `WhoamiChip`).
 
-Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. SSO for staff; request-access for everyone else.
+Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
 
-Extraction target for the shipped implementations in [watchy] (Tier-2 reference), [marin-gcs-usage] (Tier 1), [mortgage-viz] (grants/nonce substrate), and applitrack (allowlist table).
-
-Scope note: this is *gating* — sessions, SSO hand-off, share links, request-access, audit — not a general-purpose auth framework (no password store, no OAuth server, no RBAC engine).
+Scope note: this is *gating* — sessions, sign-in, share links, request-access, audit — not a general-purpose auth framework (no password store, no OAuth server, no RBAC engine).
 
 ## Try it: **[auth.oa.dev](https://auth.oa.dev)**
 
@@ -18,27 +16,29 @@ Get a throwaway sandbox, mint a named link, open it, watch its access log fill i
 
 ## Status
 
-Backend kernel, request-access, the HTTP route surface, the React primitives, and the §4 analytics work (beacon, bot filtering, retention rollup) are **implemented and covered by 231 tests**, and deployed at [auth.oa.dev](https://auth.oa.dev). First adopter — [watchy](https://github.com/runsascoded/watchy), the code this was extracted from — is live on it; see `specs/adoption.md` for who's next.
+Pre-1.0 and moving: the backend kernel, Google and email-code sign-in, request-access, the HTTP route surface, the React primitives, and the analytics work (beacon, bot filtering, retention rollup) are implemented, tested, and deployed at [auth.oa.dev](https://auth.oa.dev). See `specs/adoption.md` for who uses it.
 
 - [`demo/`](demo/) — the deployed app: mint a link, watch its access log, revoke it and see the session die
 - [`specs/adoption.md`](specs/adoption.md) — which repos should adopt this, in what order, and what each costs
-- [`specs/overview.md`](specs/overview.md) — two-tier model, layer split, packaging
+- [`specs/overview.md`](specs/overview.md) — layer split, packaging
 - [`specs/share-links-and-audit.md`](specs/share-links-and-audit.md) — share-link config, request-access, access log, analytics
 
 ## Layout
 
-`core/` is runtime-agnostic — Web Crypto and a SQL-shaped store interface, nothing else. The Cloudflare coupling is exactly two adapters, kept as a *file boundary* rather than an abstraction layer (no plugin registry, no DI):
+`core/` is runtime-agnostic — Web Crypto and a SQL-shaped store interface, nothing else. Everything platform-specific is an adapter, kept as a *file boundary* rather than an abstraction layer (no plugin registry, no DI):
 
 ```
-src/core/       sessions, tokens, grants, policy, requests, audit, routes — no CF, no Node
-src/adapters/   d1.ts (grant + request stores, audit sink & queries), cf-access.ts (SSO IdP)
+src/core/       sessions, tokens, grants, policy, requests, email codes, audit, routes — no CF, no Node
+src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
+                r2 (avatar bytes), google-directory (group → allowlist sync)
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / disclosure — unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
-migrations/     grants, access_log, access_requests, access_log_daily, dedupe index, request subject
-demo/           a working Tier-2 app on Pages + Functions + D1
+migrations/     the schema (one baseline file pre-1.0; see below)
+scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
+demo/           a working app on Pages + Functions + D1
 ```
 
-Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; peers of `adapters/cf-access` are Google/GitHub OIDC, WorkOS, or no IdP at all. Every current consumer is on CF, so those stay the only two adapters until a non-CF consumer appears.
+Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; every current consumer is on Cloudflare, so D1 is the only store adapter until a non-CF consumer appears.
 
 ## Installing
 
@@ -61,9 +61,16 @@ Peer deps are all optional and only needed for what you use: `@cloudflare/worker
 
 ## Migrations
 
-`migrations/` holds the schema in two forms. **A fresh database** applies `schema.sql` (package root — kept *out* of `migrations/` because `wrangler d1 migrations apply` sweeps every `.sql` in that directory and would re-create the tables) — the whole current schema in one file. **An existing database** applies only the numbered deltas it hasn't yet (`0001_*.sql` … `0011_*.sql`); each is an incremental step (a `CREATE` or an `ALTER`) that carries a live DB forward without dropping data, so the numbered files are the upgrade path and can't be collapsed away while any consumer is mid-sequence.
+`migrations/0001_init.sql` is the whole schema. A fresh database applies it (`wrangler d1 migrations apply` with `migrations_dir` pointed at the package's `migrations/`, as the demo does, or its content copied into your own sequence alongside your app's tables).
 
-These are *reference DDL*, not drop-in files: apply them by **content**, integrated into your own migration runner and renumbered into your own sequence — don't assume the package's numbering matches yours. `schema.sql` is generated from the numbered migrations (`node scripts/gen-schema.mjs`) and a test keeps the two in lockstep, so it never drifts.
+**Pre-1.0, migrations are squashed**: a schema change lands as a new numbered file, and once every known database has applied it, the directory is collapsed back into one baseline rather than kept as history. To move an existing database across a squash, bring it to the previous head (apply the pre-squash files from the SHA you're on), then mark the new files applied without running them:
+
+```bash
+scripts/d1-rebaseline.mjs --db <name> --migrations-dir migrations --remote [--wrangler <cmd>]   # dry run
+scripts/d1-rebaseline.mjs --db <name> --migrations-dir migrations --remote --run
+```
+
+It builds the schema the directory describes in an in-memory SQLite, compares it structurally with the live database (columns, constraints, indexes — column order and comments ignored), and only then rewrites wrangler's `d1_migrations` rows; a mismatch prints the difference and writes nothing. It's schema-agnostic, so an app that squashes its own migrations (auth tables next to its own) uses it the same way.
 
 ## Quickstart
 
@@ -104,7 +111,7 @@ if (res.ok) return new Response(null, { headers: { 'set-cookie': res.cookie } })
 
 Every knob is optional; zero-config is an unlimited-use, never-expiring, unnamed link. `maxRedeems` counts **sessions minted** (≈ distinct browsers), not requests — which is what makes "one-use link" mean what a human predicts. Note that `maxRedeems: 1` is hostile UX in practice (the recipient opens it on their phone, then their laptop, and is locked out); prefer unlimited-redeem, named, logged, and revocable.
 
-**Sign in with Google** (or any OIDC issuer). `@open-athena/auth/oidc` signs people in against the provider directly — no Cloudflare Access, no Zero Trust seats, and a sign-in page you own. Pair it with One Tap (`GoogleOneTap`) in the page and email codes (below) for addresses Google can't vouch for:
+**Sign in with Google** (or any OIDC issuer). `@open-athena/auth/oidc` signs people in against the provider directly, on a sign-in page you own. Pair it with One Tap (`GoogleOneTap`) in the page and email codes (below) for addresses Google can't vouch for:
 
 ```ts
 import { GOOGLE, oidcCallback, oidcStart } from '@open-athena/auth/oidc'
@@ -115,23 +122,22 @@ export const start = oidcStart(cfg)        // -> /auth/google
 export const callback = oidcCallback(cfg)  // -> /auth/google/callback
 ```
 
-Provisioning the Google client is the one genuinely manual step, and not for lack of trying: Google exposes **no API** to create a "Web application" OAuth client or read its secret — it's Cloud-Console-only ([`specs/done/oauth-client-iac.md`](specs/done/oauth-client-iac.md) has the full spike). So instead of a nonexistent `terraform apply`, there's [`scripts/provision-oauth-client.mjs`](scripts/provision-oauth-client.mjs), which scripts the whole envelope around that click — orients `gcloud`, prints a deep link to the create form pre-filled with the exact field values, then captures the pasted id/secret straight into your Pages secrets (never echoing the secret). Default is a dry run:
+Provisioning the Google client is the one genuinely manual step, and not for lack of trying: Google exposes **no API** to create a "Web application" OAuth client or read its secret — it's Cloud-Console-only ([`specs/done/oauth-client-iac.md`](specs/done/oauth-client-iac.md) has the full spike). So instead of a nonexistent `terraform apply`, there's [`scripts/provision-oauth-client.mjs`](scripts/provision-oauth-client.mjs), which scripts the envelope around that click — prints a deep link to the create form with the exact field values, then reads the Console's "Download JSON" (checking the client lists every origin and redirect URI you asked for) and stores the id/secret in your Pages secrets and, optionally, a local `.dev.vars`, never echoing the secret. Default is a dry run:
 
 ```bash
 scripts/provision-oauth-client.mjs \
-  --project oa-internal-450019 \
-  --app-origin https://your-app.pages.dev \
+  --project <gcp-project> \
+  --app-origin https://your-app.pages.dev --app-origin http://localhost:4187 \
   --redirect-uri https://your-app.pages.dev/auth/google/callback \
-  --pages-project your-app            # add --run to actually store the secrets
+  --from-json client_secret_….json \
+  --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
-Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins — the CLI prints it as field 3.
+Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins. An External consent screen can't be published without a privacy-policy link on its Branding page.
 
 Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
 
 A verified address that policy rejects redirects with `?denied=<email>` rather than 403ing, which is what lets an app pre-fill request-access with an address the *provider* vouched for instead of one the visitor typed.
-
-**Legacy: Cloudflare Access** (`@open-athena/auth/cf-access`). The package began as a layer *on* Access — Access authenticated, the gate added share links and the log — and the adapter still exists for deployments that haven't cut over: `ssoHandler` trades an Access JWT on one Access-gated path (`/auth/sso`) for a gate session, and `ssoSessionHandler` does the same where the verifying gate lives in another worker. It's deprecated in favour of the OIDC + email-code path above, which does the same job without Access: every Access-authenticated user consumes a Zero Trust seat (the free tier caps at 50), and the hosted chooser can't be styled. It will be removed once its last consumers have migrated.
 
 **Revocation is instant.** Grant-backed sessions re-join their grant row on every request, so `gate.revoke(id)` kills every session that link ever minted — no waiting out a cookie TTL. That property is what makes the social story work: assume links get forwarded, and design so forwarding is *visible and revocable* rather than prevented.
 
@@ -246,10 +252,7 @@ The default read is the Cloud Identity API, which is what honours a group-*owner
 **On the frontend**, `@open-athena/auth/react` ships the logic and leaves the presentation to you — every string and class is a prop, and no CSS is bundled:
 
 ```tsx
-<AuthGate
-  source={{ kind: 'app' }}
-  signIn={<SignInPanel googleUrl="/auth/google" emailAuth requestAccess />}
->
+<AuthGate signIn={<SignInPanel googleUrl="/auth/google" oneTap={{ clientId }} emailAuth requestAccess />}>
   {whoami => <>
     <AccessNotice whoami={whoami} />   {/* "Private link for Bob Smith · access is logged" */}
     <Dashboard />
@@ -270,6 +273,3 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 `pnpm build` compiles `src/core` and `src/adapters` against `@cloudflare/workers-types` alone (no Node types), which is what keeps them honest about being runtime-agnostic. `src/react` is a separate compilation because DOM lib and workers-types declare conflicting globals.
 
 [`npm-dist`]: https://github.com/runsascoded/npm-dist
-[watchy]: https://github.com/runsascoded/watchy
-[marin-gcs-usage]: https://github.com/Open-Athena/marin-gcs-usage
-[mortgage-viz]: https://github.com/runsascoded/mortgage-viz

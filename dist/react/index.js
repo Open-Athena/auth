@@ -8,6 +8,6 @@ export { ProfilePanel } from './ProfilePanel.js';
 export { exchangeKeyParam, hasKeyParam, useKeyExchange } from './exchange.js';
 export { RequestAccessForm } from './RequestAccessForm.js';
 export { deniedEmail, SignInPanel } from './SignInPanel.js';
-export { DEFAULT_ENDPOINTS, displayName, hasScope } from './types.js';
+export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from './types.js';
 export { WHOAMI_KEY, useForgetWhoami, useWhoami } from './useWhoami.js';
 export { WhoamiChip } from './WhoamiChip.js';

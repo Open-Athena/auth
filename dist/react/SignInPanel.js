@@ -26,11 +26,10 @@ export function deniedEmail() {
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, signInUrl, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, signInLabel = 'Sign in', requestAccess, children, classNames = {}, }) {
+export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, requestAccess, children, classNames = {}, }) {
     const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl;
-    const href = signInUrl && withNext ? withNextParam(signInUrl) : signInUrl;
     const denied = deniedEmail();
-    const anyPrimary = Boolean(google || oneTap || href);
+    const anyPrimary = Boolean(google || oneTap);
     const redirect = google && (_jsx("a", { className: classNames.googleButton ?? classNames.button, href: google, children: googleLabel }));
     const emailProps = {
         ...(denied ? { defaultEmail: denied } : {}),
@@ -41,5 +40,5 @@ export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', o
         ...(denied ? { defaultEmail: denied } : {}),
         ...(requestAccess === true ? {} : requestAccess),
     };
-    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), oneTap ? (_jsx(GoogleOneTap, { ...oneTap, ...(onSignedIn ? { onSignedIn } : {}), fallback: redirect || null })) : (redirect), href && (_jsx("a", { className: classNames.button, href: href, children: signInLabel })), emailAuth && (_jsxs(_Fragment, { children: [anyPrimary && _jsx("div", { className: classNames.divider }), _jsx(EmailCodeForm, { ...emailProps })] })), children, requestAccess && (_jsxs(_Fragment, { children: [(anyPrimary || emailAuth) && _jsx("div", { className: classNames.divider }), _jsx(RequestAccessForm, { ...requestProps })] }))] }));
+    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), oneTap ? (_jsx(GoogleOneTap, { ...oneTap, ...(onSignedIn ? { onSignedIn } : {}), fallback: redirect || null })) : (redirect), emailAuth && (_jsxs(_Fragment, { children: [anyPrimary && _jsx("div", { className: classNames.divider }), _jsx(EmailCodeForm, { ...emailProps })] })), children, requestAccess && (_jsxs(_Fragment, { children: [(anyPrimary || emailAuth) && _jsx("div", { className: classNames.divider }), _jsx(RequestAccessForm, { ...requestProps })] }))] }));
 }
