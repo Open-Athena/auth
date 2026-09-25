@@ -28,7 +28,7 @@ grants (
   token_hash    TEXT NOT NULL,      -- SHA-256; raw token shown once at creation
   name          TEXT,               -- admin-side label: "Bob Smith (donor)"
   note          TEXT,               -- freeform: why this exists
-  subject_json  TEXT,               -- optional pre-loaded identity: {name,email,avatar} (a first/last pair before migration 0013)
+  subject_json  TEXT,               -- optional pre-loaded identity: {name,email,avatar}
   email         TEXT,               -- if set: magic-link semantics (bind on redeem)
   scopes        TEXT NOT NULL,      -- space-separated
   max_redeems   INTEGER,            -- NULL = unlimited

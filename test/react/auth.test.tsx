@@ -12,13 +12,13 @@ import { exchangeKeyParam } from '../../src/react/exchange.js'
 import { RequestAccessForm } from '../../src/react/RequestAccessForm.js'
 import { SignInPanel } from '../../src/react/SignInPanel.js'
 import { WhoamiChip } from '../../src/react/WhoamiChip.js'
-import { displayName, hasScope, type AppWhoami } from '../../src/react/types.js'
+import { displayName, hasScope, type Whoami } from '../../src/react/types.js'
 import { renderWithQuery, setLocation, stubFetch } from './helpers.js'
 
 const realFetch = globalThis.fetch
 
-const SSO: AppWhoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'], subject: null }
-const GRANT: AppWhoami = {
+const SSO: Whoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, scopes: ['internal'], subject: null }
+const GRANT: Whoami = {
   kind: 'grant',
   id: 'gTESTgrant01',
   name: 'Bob Smith',
@@ -52,8 +52,6 @@ describe('displayName', () => {
       displayName(subjectOnly),
       displayName(emailOnly),
       displayName(SSO),
-      displayName({ name: 'Edge User', email: 'e@x.test' }),
-      displayName({ email: 'e@x.test' }),
       displayName(null),
       displayName(undefined),
     ]).toEqual([
@@ -62,8 +60,6 @@ describe('displayName', () => {
       'Bob Smith',
       'bob@example.com',
       'staff@openathena.ai',
-      'Edge User',
-      'e@x.test',
       null,
       null,
     ])
@@ -71,14 +67,13 @@ describe('displayName', () => {
 })
 
 describe('hasScope', () => {
-  it('matches exactly, honours the wildcard, and is false for edge identities', () => {
+  it('matches exactly, honours the wildcard, and is false when signed out', () => {
     expect([
       hasScope(GRANT, 'reports'),
       hasScope(GRANT, 'finances'),
       hasScope({ ...SSO, scopes: ['*'] }, 'anything'),
-      hasScope({ email: 'e@x.test' }, 'reports'),
       hasScope(null, 'reports'),
-    ]).toEqual([true, false, true, false, false])
+    ]).toEqual([true, false, true, false])
   })
 })
 
@@ -137,7 +132,6 @@ describe('AuthGate', () => {
   const gate = (props: Partial<Parameters<typeof AuthGate>[0]> = {}) =>
     renderWithQuery(
       <AuthGate
-        source={{ kind: 'app' }}
         signIn={<div>WALL</div>}
         loading={<div>LOADING</div>}
         {...props}
@@ -174,29 +168,10 @@ describe('AuthGate', () => {
     ])
     expect(screen.queryByText('WALL')).toBe(null)
   })
-
-  it('uses the edge endpoint for Tier 1', async () => {
-    const calls = stubFetch({ '/cdn-cgi/access/get-identity': { status: 200, body: { email: 'e@x.test' } } })
-    renderWithQuery(
-      <AuthGate source={{ kind: 'edge' }} signIn={<div>WALL</div>}>
-        {w => <div>APP:{displayName(w)}</div>}
-      </AuthGate>,
-    )
-    await waitFor(() => expect(screen.getByText('APP:e@x.test')).toBeDefined())
-    expect(calls.map(c => c.url)).toEqual(['/cdn-cgi/access/get-identity'])
-  })
 })
 
 describe('SignInPanel', () => {
-  it('appends the current path so SSO returns you where you started', () => {
-    setLocation('https://x.test/finances/2025?q=1')
-    renderWithQuery(<SignInPanel signInUrl="/auth/sso" />)
-    expect(screen.getByRole('link', { name: 'Sign in' }).getAttribute('href')).toBe(
-      '/auth/sso?next=%2Ffinances%2F2025%3Fq%3D1',
-    )
-  })
-
-  it('omits the SSO link when no url is given', () => {
+  it('omits the Google link when no url is given', () => {
     renderWithQuery(<SignInPanel requestAccess />)
     expect(screen.queryByRole('link')).toBe(null)
     expect(screen.getByRole('button', { name: 'Request access' })).toBeDefined()
@@ -262,25 +237,21 @@ describe('AccessNotice', () => {
 })
 
 describe('devIdentity', () => {
-  it('stubs the identity without probing — Tier 1 has no get-identity locally', async () => {
+  it('stubs the identity without probing — a frontend with no gate behind it', async () => {
     const calls = stubFetch({})
     renderWithQuery(
-      <AuthGate
-        source={{ kind: 'edge' }}
-        devIdentity={{ email: 'dev@example.test' }}
-        signIn={<div>WALL</div>}
-      >
+      <AuthGate devIdentity={SSO} signIn={<div>WALL</div>}>
         {w => <div>APP:{displayName(w)}</div>}
       </AuthGate>,
     )
-    await waitFor(() => expect(screen.getByText('APP:dev@example.test')).toBeDefined())
+    await waitFor(() => expect(screen.getByText('APP:staff@openathena.ai')).toBeDefined())
     expect(calls).toEqual([])
   })
 
   it('null forces the wall, so it can be eyeballed without a deploy', async () => {
     const calls = stubFetch({})
     renderWithQuery(
-      <AuthGate source={{ kind: 'edge' }} devIdentity={null} signIn={<div>WALL</div>}>
+      <AuthGate devIdentity={null} signIn={<div>WALL</div>}>
         {() => <div>APP</div>}
       </AuthGate>,
     )
@@ -289,14 +260,14 @@ describe('devIdentity', () => {
   })
 
   it('undefined probes normally, so production is untouched', async () => {
-    const calls = stubFetch({ '/cdn-cgi/access/get-identity': { status: 200, body: { email: 'real@x.test' } } })
+    const calls = stubFetch({ '/api/auth/whoami': { status: 200, body: { ...SSO, email: 'real@x.test' } } })
     renderWithQuery(
-      <AuthGate source={{ kind: 'edge' }} devIdentity={undefined} signIn={<div>WALL</div>}>
+      <AuthGate devIdentity={undefined} signIn={<div>WALL</div>}>
         {w => <div>APP:{displayName(w)}</div>}
       </AuthGate>,
     )
     await waitFor(() => expect(screen.getByText('APP:real@x.test')).toBeDefined())
-    expect(calls.map(c => c.url)).toEqual(['/cdn-cgi/access/get-identity'])
+    expect(calls.map(c => c.url)).toEqual(['/api/auth/whoami'])
   })
 })
 
@@ -304,7 +275,7 @@ describe('signing out', () => {
   /** The gate and the chip over one client, which is how an app actually mounts them. */
   const signedIn = () =>
     renderWithQuery(
-      <AuthGate source={{ kind: 'app' }} signIn={<div>WALL</div>}>
+      <AuthGate signIn={<div>WALL</div>}>
         {w => (
           <div>
             APP:{displayName(w)}
@@ -334,7 +305,7 @@ describe('signing out', () => {
 })
 
 describe('an anonymous link', () => {
-  const ANON: AppWhoami = { ...GRANT, name: null, subject: null, email: null }
+  const ANON: Whoami = { ...GRANT, name: null, subject: null, email: null }
 
   it('still discloses that access is logged, without inventing a name', () => {
     // The case where the visitor is least identifiable is the case where the
@@ -368,7 +339,7 @@ describe('noticing a sign-in from another tab', () => {
     // The cookie is browser-wide, so a tab sitting on the wall only has to look
     // again after the *other* tab redeemed a link. This is what replaced the
     // "I just opened a link — retry" button.
-    let identity: AppWhoami | null = null
+    let identity: Whoami | null = null
     const calls: string[] = []
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       calls.push(String(input))
@@ -378,7 +349,7 @@ describe('noticing a sign-in from another tab', () => {
     }) as typeof globalThis.fetch
 
     renderWithQuery(
-      <AuthGate<AppWhoami> source={{ kind: 'app' }} signIn={<p>APP:wall</p>}>
+      <AuthGate<Whoami> signIn={<p>APP:wall</p>}>
         {w => <p>APP:{displayName(w)}</p>}
       </AuthGate>,
     )
@@ -423,7 +394,7 @@ describe('Avatar', () => {
   })
 
   it("renders a subject's avatar without handing the referrer to whoever hosts it", () => {
-    const withAvatar: AppWhoami = { ...GRANT, subject: { name: 'Bob', avatar: 'https://cdn.test/bob.png' } }
+    const withAvatar: Whoami = { ...GRANT, subject: { name: 'Bob', avatar: 'https://cdn.test/bob.png' } }
     const { container } = renderWithQuery(<Avatar whoami={withAvatar} />)
     const img = container.querySelector('img')!
     expect([img.getAttribute('src'), img.getAttribute('referrerpolicy'), img.getAttribute('alt')]).toEqual([

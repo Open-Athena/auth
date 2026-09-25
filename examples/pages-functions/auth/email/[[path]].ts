@@ -13,7 +13,7 @@
  * match (or put this file under `functions/api/auth/email/` instead — Pages
  * routes the more specific path first).
  *
- * All four converge on the same `gate.signIn` as Google OIDC / CF Access: same
+ * All four converge on the same `gate.signIn` as Google sign-in: same
  * allowlist, sessions, scopes. Dormant (503) until `RESEND_API_KEY` and
  * `MAIL_FROM` are set — which `scripts/provision-resend.mjs` does — so the file
  * can ship before the domain is provisioned.

@@ -1,14 +1,14 @@
 import { type Grant, subjectName } from '@open-athena/auth'
-import { AllowlistPanel, type AppWhoami, Avatar, useWhoami } from '@open-athena/auth/react'
+import { AllowlistPanel, type Whoami, Avatar, useWhoami } from '@open-athena/auth/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useEffect, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
 
-const SOURCE = { kind: 'app', endpoint: '/api/admin/whoami' } as const
+const SOURCE = { endpoint: '/api/admin/whoami' } as const
 const SANDBOX_KEY = 'oa-auth-demo:sandbox'
 
 export function Admin() {
-  const { whoami, refresh } = useWhoami<AppWhoami>(SOURCE)
+  const { whoami, refresh } = useWhoami<Whoami>(SOURCE)
   // A staff member who signed in with Google holds a *view* session; promote it
   // to the admin gate once (`/api/staff` 403s anyone outside the staff domain).
   const [promoted, setPromoted] = useState<boolean | null>(null)
@@ -68,7 +68,7 @@ const sandboxName = (email: string): string | null => {
 
 const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-function Console({ whoami }: { whoami: AppWhoami }) {
+function Console({ whoami }: { whoami: Whoami }) {
   const qc = useQueryClient()
   const [tokens, setTokens] = useState<Record<string, string>>({})
   const invalidate = () => {

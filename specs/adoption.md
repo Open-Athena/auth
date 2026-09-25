@@ -1,5 +1,7 @@
 # Who should adopt this, in what order
 
+**Status (2026-09-25):** the Tier-1 (Cloudflare Access) path described for marin below no longer exists; consumers move to Google/OIDC + email codes when they bump their pin (per-repo specs in each target).
+
 *(RW + session, 2026-08-16. Grounded in reading each candidate's actual auth code, not the consumer map's summary of it. Written here; the per-repo work lands as `specs/*.md` in each target, per the cross-project spec workflow.)*
 
 Ranked by (value of adopting) ÷ (cost of adopting). The short version: **watchy now, marin next, mortgage-viz only after a design decision, applitrack probably never.**

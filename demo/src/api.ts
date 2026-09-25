@@ -32,7 +32,7 @@ export interface SandboxIdentity {
 export const startSandbox = (id: string | null) => post<SandboxIdentity>('/api/sandbox', { id })
 
 /** The recipient-side identity. One object, shared, so Home and Dashboard share one whoami cache entry. */
-export const VIEW_SOURCE = { kind: 'app', endpoint: '/api/view/whoami' } as const
+export const VIEW_SOURCE = { endpoint: '/api/view/whoami' } as const
 
 export interface MintInput {
   /** The memo: a note to whoever reads the admin table later, not the recipient's name. */

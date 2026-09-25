@@ -2,7 +2,7 @@ import {
   AccessNotice,
   AuthGate,
   RequestAccessForm,
-  type AppWhoami,
+  type Whoami,
   displayName,
 } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
@@ -13,7 +13,7 @@ import { SignIn } from '../SignIn.js'
 
 export function Dashboard() {
   return (
-    <AuthGate<AppWhoami>
+    <AuthGate<Whoami>
       source={VIEW_SOURCE}
       exchange={{ endpoint: '/api/view/exchange' }}
       loading={<p className="muted">Checking your access…</p>}
@@ -61,7 +61,7 @@ function Wall({ onSignedIn }: { onSignedIn: () => void }) {
   )
 }
 
-function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
+function Gated({ whoami, onLost }: { whoami: Whoami; onLost: () => void }) {
   // The gated fetch, polled: a link revoked in the admin page fails it within
   // five seconds, and the page drops back to the wall instead of showing a
   // stale page with an error tucked in a corner.
@@ -116,7 +116,7 @@ function Gated({ whoami, onLost }: { whoami: AppWhoami; onLost: () => void }) {
 }
 
 /** What the gate knows, which is the actual subject of this page. */
-function identityFacts(whoami: AppWhoami): [string, string][] {
+function identityFacts(whoami: Whoami): [string, string][] {
   const when = (ts: number | null | undefined) => (ts ? new Date(ts * 1000).toLocaleString() : 'never')
   if (whoami.kind === 'sso') {
     return [

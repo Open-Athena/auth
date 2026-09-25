@@ -1,12 +1,6 @@
 /**
- * Sign in with an OIDC provider directly, instead of putting Cloudflare Access
- * in front of the app as an IdP.
- *
- * Requested by marin-gcs-usage (`specs/google-oidc-idp.md`) for two reasons
- * worth recording: Access's hosted chooser is generic and unstylable, and —
- * the harder constraint — every Access-authenticated user consumes a Zero
- * Trust seat, which is a ceiling a growing allowlist eventually hits. Share
- * links never touched Access, which is why they never had that problem.
+ * Sign in with an OIDC provider directly: the app's own sign-in page, no
+ * hosted chooser in front of it and no per-seat identity product.
  *
  * Generic rather than Google-only: an issuer is four URLs, and `GOOGLE` is a
  * preset rather than a special case. Only the authorization-code flow, only

@@ -1,6 +1,5 @@
 /**
- * Passwordless email sign-in for addresses that can't (or won't) use Google —
- * the non-Google tail that CF Access's OTP used to serve for free.
+ * Passwordless email sign-in for addresses that can't (or won't) use Google.
  *
  * One pending-auth row backs two ways to prove control of an inbox, the Slack
  * pattern:

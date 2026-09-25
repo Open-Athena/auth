@@ -1,5 +1,7 @@
 # `@open-athena/auth`: extract the reusable auth stack (backend + FE primitives) across OA/personal apps
 
+**Status (2026-09-25):** Tier 1 is gone. The Cloudflare Access adapter (`cf-access`), the edge identity source (`useWhoami({ kind: 'edge' })`) and `SignInPanel`'s `signInUrl` SSO button were removed; every app is on the one remaining shape — Google/OIDC + email codes + share links, with `useWhoami({ endpoint })`. The tier discussion below is historical.
+
 Goal (RW, 2026-08-12): converge the several OA/personal apps with the same "public site, gate a slice" shape onto **reusable, liftable auth layers**, extracted from the shipped implementations. Follow-on to [`auth-gate.md`][auth-gate.md] (which built watchy's app-level gate and already sketched the reuse path); triggered by [`marin-gcs-usage`] standing up its own gate (the "3rd consumer" auth-gate.md anticipated). Spec written from a marin-gcs-usage session into watchy, then seeded into this standalone repo (2026-08-13) — the extraction lives here; the canonical shipped Tier-2 code stays in watchy until re-pointed.
 
 ## Two tiers (not one pattern) — pick per app

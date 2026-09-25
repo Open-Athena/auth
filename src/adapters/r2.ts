@@ -1,5 +1,5 @@
 /**
- * R2 as an `AssetStore` — the fourth adapter, peer to `d1`/`cf-access`/`resend`,
+ * R2 as an `AssetStore` — a peer of the `d1`/`oidc`/`resend` adapters,
  * and the only one for avatar bytes until a non-CF consumer appears.
  *
  * A profile row holds `asset://<id>`; the app serves the bytes from its own

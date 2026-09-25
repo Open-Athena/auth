@@ -1,11 +1,11 @@
-import { type AppWhoami, displayName, useWhoami } from '@open-athena/auth/react'
+import { type Whoami, displayName, useWhoami } from '@open-athena/auth/react'
 import { VIEW_SOURCE } from '../api.js'
 import { Link, useNavigate } from '../router.js'
 import { SignIn } from '../SignIn.js'
 
 export function Home() {
   const navigate = useNavigate()
-  const { whoami, refresh } = useWhoami<AppWhoami>(VIEW_SOURCE)
+  const { whoami, refresh } = useWhoami<Whoami>(VIEW_SOURCE)
 
   return (
     <div className="prose">
@@ -22,7 +22,7 @@ export function Home() {
         <h2>Sign in</h2>
         <p className="muted small">
           The library's <code>SignInPanel</code>, composed the way an app would: Google (One Tap in the page, or a
-          redirect) and an emailed code or magic link for everyone else — no Cloudflare Access, no Zero Trust seats. Both end in one{' '}
+          redirect) and an emailed code or magic link for everyone else. Both end in one{' '}
           <code>gate.signIn</code>. This demo admits <em>any</em> address — that's one line of policy — where a real
           deployment restricts by domain, an allowlist table, or an approval queue.
         </p>
@@ -126,7 +126,7 @@ export function Home() {
   )
 }
 
-function SignedIn({ whoami }: { whoami: AppWhoami }) {
+function SignedIn({ whoami }: { whoami: Whoami }) {
   return (
     <div className="signed-in">
       <p>

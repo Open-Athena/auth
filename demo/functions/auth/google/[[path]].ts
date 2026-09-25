@@ -1,6 +1,5 @@
 /**
- * Sign in with Google directly — no Cloudflare Access in the loop, no Zero
- * Trust seat per user. Two shapes of the same identity:
+ * Sign in with Google. Two shapes of the same identity:
  *
  *   GET  /auth/google/start         -> redirect flow (`oidcStart`)
  *   GET  /auth/google/callback      -> `oidcCallback`: verify the id_token, sign in, 302 to `next`

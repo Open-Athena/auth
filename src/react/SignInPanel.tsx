@@ -17,11 +17,6 @@ export interface SignInPanelProps {
    * "Continue with Google" beside it. `onSignedIn` is the panel's.
    */
   oneTap?: Omit<GoogleOneTapProps, 'fallback' | 'onSignedIn'>
-  /**
-   * A generic SSO button (e.g. CF Access `/auth/sso`). Kept for Tier-1 apps and
-   * back-compat; most consumers use `googleUrl` instead.
-   */
-  signInUrl?: string
   /** Append the current path so a redirect returns the visitor where they started. Default true. */
   withNext?: boolean
   /**
@@ -33,7 +28,6 @@ export interface SignInPanelProps {
   onSignedIn?: () => void
   title?: ReactNode
   hint?: ReactNode
-  signInLabel?: ReactNode
   /** Render the request-access form. `true` for defaults, or pass props. */
   requestAccess?: boolean | RequestAccessFormProps
   children?: ReactNode
@@ -68,21 +62,18 @@ export function SignInPanel({
   googleUrl,
   googleLabel = 'Continue with Google',
   oneTap,
-  signInUrl,
   withNext = true,
   emailAuth,
   onSignedIn,
   title = 'This page is private',
   hint,
-  signInLabel = 'Sign in',
   requestAccess,
   children,
   classNames = {},
 }: SignInPanelProps) {
   const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl
-  const href = signInUrl && withNext ? withNextParam(signInUrl) : signInUrl
   const denied = deniedEmail()
-  const anyPrimary = Boolean(google || oneTap || href)
+  const anyPrimary = Boolean(google || oneTap)
   const redirect = google && (
     <a className={classNames.googleButton ?? classNames.button} href={google}>
       {googleLabel}
@@ -107,11 +98,6 @@ export function SignInPanel({
         <GoogleOneTap {...oneTap} {...(onSignedIn ? { onSignedIn } : {})} fallback={redirect || null} />
       ) : (
         redirect
-      )}
-      {href && (
-        <a className={classNames.button} href={href}>
-          {signInLabel}
-        </a>
       )}
       {emailAuth && (
         <>

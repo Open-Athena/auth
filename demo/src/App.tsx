@@ -1,4 +1,4 @@
-import { type AppWhoami, WhoamiChip, useWhoami } from '@open-athena/auth/react'
+import { type Whoami, WhoamiChip, useWhoami } from '@open-athena/auth/react'
 import type { ReactElement } from 'react'
 import { VIEW_SOURCE } from './api.js'
 import { Admin } from './pages/Admin.js'
@@ -56,7 +56,7 @@ export function App() {
  */
 function NavChip() {
   const navigate = useNavigate()
-  const { whoami } = useWhoami<AppWhoami>(VIEW_SOURCE)
+  const { whoami } = useWhoami<Whoami>(VIEW_SOURCE)
   if (!whoami) return null
   return (
     <WhoamiChip

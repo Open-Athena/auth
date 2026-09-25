@@ -1,4 +1,4 @@
-import { AuthGate, ProfilePanel, type AppWhoami } from '@open-athena/auth/react'
+import { AuthGate, ProfilePanel, type Whoami } from '@open-athena/auth/react'
 import { VIEW_SOURCE } from '../api.js'
 import { Link, useNavigate } from '../router.js'
 import { SignIn } from '../SignIn.js'
@@ -9,7 +9,7 @@ export function Profile() {
   return (
     <div className="prose">
       <h1>Your name and face</h1>
-      <AuthGate<AppWhoami>
+      <AuthGate<Whoami>
         source={VIEW_SOURCE}
         loading={<p className="muted">Checking…</p>}
         signIn={refresh => <SignIn title={null} onSignedIn={refresh} />}

@@ -2,10 +2,9 @@
  * RS256 JWT verification against a JWKS endpoint — the one piece every OIDC
  * issuer needs and every one of them does identically.
  *
- * Extracted from the Cloudflare Access adapter when a second issuer (Google)
- * appeared. One copy of "check the signature before trusting the payload"
- * matters more than most shared code: two copies drift, and the copy that
- * drifts is a signature check.
+ * One copy of "check the signature before trusting the payload" matters more
+ * than most shared code: two copies drift, and the copy that drifts is a
+ * signature check.
  */
 import { b64uDecodeBytes, b64uDecodeString } from './base64.js'
 

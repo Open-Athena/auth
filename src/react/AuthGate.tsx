@@ -4,7 +4,8 @@ import { useWhoami } from './useWhoami.js'
 import type { Whoami, WhoamiSource } from './types.js'
 
 export interface AuthGateProps<T extends Whoami = Whoami> {
-  source: WhoamiSource
+  /** Where the gate's `/whoami` is mounted. Default `/api/auth/whoami`. */
+  source?: WhoamiSource
   /** Rendered once an identity resolves. */
   children: ReactNode | ((whoami: T, refresh: () => void) => ReactNode)
   /** Rendered when nobody is signed in. */
@@ -23,13 +24,9 @@ export interface AuthGateProps<T extends Whoami = Whoami> {
   devIdentity?: T | null
 }
 
-/**
- * Probe identity, then render the app or the wall. Both tiers use this — marin
- * passes `{ kind: 'edge' }`, watchy passes `{ kind: 'app' }` — which is the
- * whole point of making the source a parameter.
- */
+/** Probe identity, then render the app or the wall. */
 export function AuthGate<T extends Whoami = Whoami>({
-  source,
+  source = {},
   children,
   signIn,
   loading = null,

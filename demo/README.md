@@ -1,6 +1,6 @@
 # `@open-athena/auth` demo
 
-A live Tier-2 deployment of the package: Cloudflare Pages + Functions + D1. Intended home: **auth.oa.dev**.
+A live deployment of the package: Cloudflare Pages + Functions + D1, at **auth.oa.dev**.
 
 Three pages:
 
@@ -55,18 +55,22 @@ Open **http://localhost:4187** — that's `wrangler pages dev`, which serves the
 
 With no `SESSION_SECRET` set, a fixed dev secret is used **only** for requests to localhost; a deployed instance without one fails loudly instead. To reach the dev server from another device (e.g. `m3:4187` over Tailscale — `pnpm dev` binds all interfaces), put a `SESSION_SECRET` in `demo/.dev.vars` (git-ignored): the non-localhost hostname doesn't get the fallback, on purpose.
 
-Migrations come straight from the package (`migrations_dir = "../migrations"`), so the demo can't drift from the schema it documents. (`schema.sql`, the one-file dump for fresh installs, lives at the package root precisely so a migration runner pointed at `migrations/` never sees it.)
+Migrations come straight from the package (`migrations_dir = "../migrations"`), so the demo can't drift from the schema it documents.
 
 ## Deploying
 
+The demo lives in the Open Athena Cloudflare account, so every wrangler call goes through `scripts/oa-wrangler.sh`, which pins that account (ambient credentials may be another account's) and needs `CLOUDFLARE_ADMIN_TOKEN` in the environment:
+
 ```bash
-wrangler d1 create oa-auth-demo          # paste database_id into wrangler.toml
-wrangler d1 migrations apply oa-auth-demo --remote
-wrangler pages secret put SESSION_SECRET # openssl rand -base64 32
-pnpm deploy
+scripts/oa-wrangler.sh d1 create oa-auth-demo          # fresh only: paste database_id into wrangler.toml
+pnpm db:remote                                         # apply migrations
+scripts/oa-wrangler.sh pages secret put SESSION_SECRET # openssl rand -base64 32
+pnpm deploy                                            # build + publish to production
 ```
 
-No Cloudflare Access / Zero Trust anywhere: the whole site is public at the edge, and the gate is the app's.
+After a migrations squash (see the package README), the live database is moved across it with `scripts/d1-rebaseline.mjs --db oa-auth-demo --migrations-dir migrations --remote --wrangler demo/scripts/oa-wrangler.sh` (dry run; add `--run` to write).
+
+The whole site is public at the edge; the gate is the app's.
 
 Optional, each turning a simulated thing real (see `wrangler.toml` for the full list):
 

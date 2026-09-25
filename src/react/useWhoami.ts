@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { DEFAULT_ENDPOINTS, type Whoami, type WhoamiSource } from './types.js'
+import { DEFAULT_WHOAMI_ENDPOINT, type Whoami, type WhoamiSource } from './types.js'
 
 export const WHOAMI_KEY = ['oa-auth', 'whoami'] as const
 
@@ -9,15 +9,15 @@ export interface UseWhoamiOptions<T> {
   /** Hold the probe until a `?key=` exchange has finished. */
   enabled?: boolean
   /**
-   * Skip the probe and use this identity instead. For local development against
-   * a Tier-1 (edge) source, where `/cdn-cgi/access/get-identity` doesn't exist
-   * and every page would otherwise show the wall.
+   * Skip the probe and use this identity instead. For local development of a
+   * frontend with no gate behind it, where every page would otherwise show the
+   * wall.
    *
    * The *policy* stays in the app, which is the only place that knows its own
    * build flags:
    *
    * ```ts
-   * devIdentity: import.meta.env.DEV && !forceWall ? { email: 'dev@example.test' } : undefined
+   * devIdentity: import.meta.env.DEV && !forceWall ? { kind: 'sso', email: 'dev@example.test', admin: false, scopes: [], subject: null } : undefined
    * ```
    *
    * `undefined` probes normally; `null` forces the signed-out state (handy for
@@ -35,19 +35,19 @@ export interface UseWhoamiResult<T> {
 }
 
 /**
- * Probe the current identity from either source. `retry: false` because a 401
+ * Probe the current identity. `retry: false` because a 401
  * is a real answer, not a transient failure — retrying it just delays the wall.
  */
 export function useWhoami<T extends Whoami = Whoami>(
-  source: WhoamiSource,
+  source: WhoamiSource = {},
   { staleTime = 5 * 60_000, enabled = true, devIdentity }: UseWhoamiOptions<T> = {},
 ): UseWhoamiResult<T> {
   const client = useQueryClient()
-  const endpoint = source.endpoint ?? DEFAULT_ENDPOINTS[source.kind]
+  const endpoint = source.endpoint ?? DEFAULT_WHOAMI_ENDPOINT
   const stubbed = devIdentity !== undefined
 
   const query = useQuery<T | null>({
-    queryKey: [...WHOAMI_KEY, source.kind, endpoint],
+    queryKey: [...WHOAMI_KEY, endpoint],
     enabled: enabled && !stubbed,
     /**
      * Fresh while signed in, always stale while signed out. Someone sitting on
