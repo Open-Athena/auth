@@ -44,8 +44,8 @@ function shim(db: DatabaseSync): D1Database {
 
 const migrationsDir = fileURLToPath(new URL('../migrations/', import.meta.url).href)
 
-/** Only `NNNN_*.sql` are migrations; `schema.sql` is the derived one-file dump. */
-const MIGRATION_RE = /^\d{4}_.*\.sql$/
+/** Every `.sql` in `migrations/`, in the order wrangler applies them. */
+const MIGRATION_RE = /\.sql$/
 
 /** A fresh in-memory database with every migration applied, discovered not listed. */
 export function testDb(): D1Database {

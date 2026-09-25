@@ -8,8 +8,8 @@
     "build": "pnpm -w run build && vite build",
     "typecheck": "tsc --noEmit",
     "db:local": "wrangler d1 migrations apply oa-auth-demo --local",
-    "db:remote": "wrangler d1 migrations apply oa-auth-demo --remote",
-    "deploy": "pnpm build && wrangler pages deploy dist"
+    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo --remote",
+    "deploy": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo --branch main"
   },
   "dependencies": {
     "@open-athena/auth": "workspace:*",

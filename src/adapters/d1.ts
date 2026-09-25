@@ -4,7 +4,7 @@
  * Any other SQLite (Turso, better-sqlite3) or Postgres backend is a sibling
  * file of about this size; nothing here needs a plugin registry to swap.
  *
- * Apply `migrations/0001_grants.sql` and `migrations/0002_access_log.sql` first.
+ * Apply `migrations/` first.
  */
 import type { AccessEvent, AuditSink } from '../core/audit.js'
 import type { PendingAuth } from '../core/email-codes.js'
@@ -519,7 +519,7 @@ const toProfile = (r: ProfileRow): Profile => ({
   updatedAt: r.updated_at,
 })
 
-/** Apply `migrations/0008_profiles.sql` and `migrations/0013_single_name.sql` first. */
+/** The `profiles` table (`migrations/`). */
 export function d1ProfileStore(db: D1Database): ProfileStore {
   return {
     async get(email) {

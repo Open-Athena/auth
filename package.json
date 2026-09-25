@@ -9,7 +9,6 @@
   "files": [
     "dist",
     "migrations",
-    "schema.sql",
     "src"
   ],
   "exports": {
@@ -29,10 +28,6 @@
       "types": "./dist/adapters/oidc.d.ts",
       "default": "./dist/adapters/oidc.js"
     },
-    "./cf-access": {
-      "types": "./dist/adapters/cf-access.d.ts",
-      "default": "./dist/adapters/cf-access.js"
-    },
     "./r2": {
       "types": "./dist/adapters/r2.d.ts",
       "default": "./dist/adapters/r2.js"
@@ -50,15 +45,13 @@
       "default": "./dist/testing/index.js"
     },
     "./migrations/*": "./migrations/*",
-    "./schema.sql": "./schema.sql",
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.react.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "gen:schema": "node scripts/gen-schema.mjs"
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.0",

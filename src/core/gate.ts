@@ -207,7 +207,7 @@ const withTimeout = (f: typeof globalThis.fetch, ms: number): typeof globalThis.
   ms > 0 ? ((input, init) => f(input, { ...init, signal: AbortSignal.timeout(ms) })) as typeof globalThis.fetch : f
 
 /**
- * Two different questions, deliberately separated (see migration 0007).
+ * Two different questions, deliberately separated.
  *
  * `canRedeem` — may this link mint a *new* session? Blocked by revoke, by
  * disable, and by expiry. (Redemption caps are checked in SQL, at redeem time,

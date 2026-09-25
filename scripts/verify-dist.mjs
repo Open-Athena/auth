@@ -13,7 +13,7 @@
  *   defaults: Open-Athena/auth, the current `dist` branch head
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -53,10 +53,9 @@ writeFileSync(
 const CHECK = String.raw`
 import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from '@open-athena/auth'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
-import { ssoHandler, verifyAccessJwt } from '@open-athena/auth/cf-access'
 import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/auth/package.json', import.meta.url), 'utf8'))
 // What the installed package actually carries, discovered (not listed) so a
@@ -64,8 +63,8 @@ const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/au
 const migrationsDir = new URL('./node_modules/@open-athena/auth/migrations/', import.meta.url)
 const shippedMigrations = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()
 const expectedMigrations = ${JSON.stringify(sourceMigrations)}
-const grantsDdl = shippedMigrations.includes('0001_grants.sql')
-  ? readFileSync(new URL('0001_grants.sql', migrationsDir), 'utf8')
+const initDdl = shippedMigrations.includes('0001_init.sql')
+  ? readFileSync(new URL('0001_init.sql', migrationsDir), 'utf8')
   : ''
 
 const rows = new Map(), hashes = new Map()
@@ -98,10 +97,9 @@ const checks = {
   'no dev-only fields':           !manifest.scripts && !manifest.devDependencies && !manifest.pnpm,
   'peer deps declared':           ['react', '@tanstack/react-query'].every(d => d in (manifest.peerDependencies ?? {})),
   'peer deps optional':           ['react', '@tanstack/react-query'].every(d => manifest.peerDependenciesMeta?.[d]?.optional),
-  'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, verifyAccessJwt, ssoHandler, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
+  'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
-  'migrations shipped':           shippedMigrations.length > 0 && grantsDdl.includes('CREATE TABLE grants'),
-  'schema.sql shipped, not in migrations/': existsSync(new URL('./node_modules/@open-athena/auth/schema.sql', import.meta.url)) && !shippedMigrations.includes('schema.sql'),
+  'baseline migration shipped':  initDdl.includes('CREATE TABLE grants') && initDdl.includes('CREATE TABLE profiles'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,
   'redeem mints a session':       redeemed.ok === true,
