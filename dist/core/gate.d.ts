@@ -145,8 +145,7 @@ export type AvatarInput = {
     gravatar: true;
 } | null | undefined;
 export interface ProfileInput {
-    first?: string | null;
-    last?: string | null;
+    name?: string | null;
     avatar?: AvatarInput;
 }
 export type PutProfileResult = {

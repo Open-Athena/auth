@@ -7,7 +7,7 @@
  * This stays *gating*, not a profile system: a name and an avatar, nothing
  * more. No bios, no preferences, no social graph.
  */
-/** Longest a self-asserted display-name field may be. */
+/** Longest a self-asserted display name may be. */
 export const MAX_PROFILE_NAME = 80;
 /**
  * A display-name field, made safe for a text node and for `initialsOf`: control

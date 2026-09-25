@@ -5,14 +5,11 @@ export interface RequestAccessFormProps {
     /** Must match the server's `honeypotField`. Default `website`. */
     honeypotField?: string;
     /**
-     * `true` — one free-text "Name" field (posted as `name`).
-     * `'split'` — separate First / Last, posted as `first`/`last` and stored as
-     * the same `Subject` a grant carries, so approval yields a grant that knows a
-     * person. Prefer `true` unless you specifically need the parts: plenty of
-     * people don't have a two-part name, and a required Last is how you lose them.
-     * `false` — don't ask.
+     * Ask for a name: one free-text field, posted as `name` and stored as the
+     * request's `subject.name` — the same `Subject` a grant carries, so approval
+     * yields a grant that greets a person. Default true.
      */
-    askName?: boolean | 'split';
+    askName?: boolean;
     askNote?: boolean;
     notePlaceholder?: string;
     /**
@@ -23,7 +20,7 @@ export interface RequestAccessFormProps {
     defaultEmail?: string;
     onSubmitted?: (state: RequestState) => void;
     classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'button' | 'message', string>>;
-    labels?: Partial<Record<'email' | 'name' | 'first' | 'last' | 'note' | 'submit' | 'submitting', string>>;
+    labels?: Partial<Record<'email' | 'name' | 'note' | 'submit' | 'submitting', string>>;
 }
 /**
  * The wall's second affordance, for everyone who isn't staff. Unstyled: every

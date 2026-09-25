@@ -359,18 +359,17 @@ export function d1AuditSink(db) {
 }
 const toProfile = (r) => ({
     email: r.email,
-    first: r.first,
-    last: r.last,
+    name: r.name,
     avatar: r.avatar,
     avatarSrc: r.avatar_src ?? null,
     updatedAt: r.updated_at,
 });
-/** Apply `migrations/0008_profiles.sql` first. */
+/** Apply `migrations/0008_profiles.sql` and `migrations/0013_single_name.sql` first. */
 export function d1ProfileStore(db) {
     return {
         async get(email) {
             const row = await db
-                .prepare(`SELECT email, first, last, avatar, avatar_src, updated_at FROM profiles WHERE email = ?`)
+                .prepare(`SELECT email, name, avatar, avatar_src, updated_at FROM profiles WHERE email = ?`)
                 .bind(email)
                 .first();
             return row ? toProfile(row) : null;
@@ -379,15 +378,14 @@ export function d1ProfileStore(db) {
             // Upsert: a profile is a property of the person, edited in place, not an
             // append-only log.
             await db
-                .prepare(`INSERT INTO profiles (email, first, last, avatar, avatar_src, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+                .prepare(`INSERT INTO profiles (email, name, avatar, avatar_src, updated_at)
+           VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(email) DO UPDATE SET
-             first = excluded.first,
-             last = excluded.last,
+             name = excluded.name,
              avatar = excluded.avatar,
              avatar_src = excluded.avatar_src,
              updated_at = excluded.updated_at`)
-                .bind(profile.email, profile.first, profile.last, profile.avatar, profile.avatarSrc, profile.updatedAt)
+                .bind(profile.email, profile.name, profile.avatar, profile.avatarSrc, profile.updatedAt)
                 .run();
         },
         async del(email) {

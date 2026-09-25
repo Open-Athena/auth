@@ -241,7 +241,7 @@ The default read is the Cloud Identity API, which is what honours a group-*owner
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
 
-**Request access** collects an address, and optionally a person: `<RequestAccessForm askName="split" />` posts first/last, stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the watermark says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
+**Request access** collects an address, and optionally a person: `<RequestAccessForm askName />` posts a single `name` (one field, not first/last: name structure varies too much across cultures to split), stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the page says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
 
 **On the frontend**, `@open-athena/auth/react` ships the logic and leaves the presentation to you — every string and class is a prop, and no CSS is bundled:
 

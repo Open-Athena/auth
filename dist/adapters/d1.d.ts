@@ -43,7 +43,7 @@ export declare function d1AuditQuery(db: D1Database): AuditQuery;
  * than by a read-then-write race in the worker.
  */
 export declare function d1AuditSink(db: D1Database): AuditSink;
-/** Apply `migrations/0008_profiles.sql` first. */
+/** Apply `migrations/0008_profiles.sql` and `migrations/0013_single_name.sql` first. */
 export declare function d1ProfileStore(db: D1Database): ProfileStore;
 export declare function d1PendingAuthStore(db: D1Database): PendingAuthStore;
 export declare function d1Allowlist(db: D1Database): AllowlistStore;

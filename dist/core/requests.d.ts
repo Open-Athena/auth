@@ -76,10 +76,9 @@ export declare function isEmailish(email: string): boolean;
  * client-side (`<Avatar>`) rather than collected. An app that genuinely wants
  * uploaded avatars can set `subject.avatar` itself after approval.
  */
-export declare const MAX_SUBJECT_FIELD = 64;
+export declare const MAX_SUBJECT_FIELD = 80;
 export declare function cleanSubject(input: {
-    first?: string | null;
-    last?: string | null;
+    name?: string | null;
 }): Subject | null;
 /** "Bob Smith" from a subject, or null if it holds no name. */
 export declare function subjectName(subject: Subject | null | undefined): string | null;

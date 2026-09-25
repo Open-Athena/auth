@@ -58,10 +58,8 @@ async function readProfileInput(req) {
         if (!form)
             return {};
         const input = {};
-        if (form.has('first'))
-            input.first = String(form.get('first'));
-        if (form.has('last'))
-            input.last = String(form.get('last'));
+        if (form.has('name'))
+            input.name = String(form.get('name'));
         const file = form.get('avatar');
         // A file part is a Blob at runtime; workers-types narrows `FormData.get` to
         // `string | null` in this build, so duck-type past it rather than trust it.
@@ -82,10 +80,8 @@ async function readProfileInput(req) {
     if (!b || typeof b !== 'object')
         return {};
     const input = {};
-    if ('first' in b)
-        input.first = b.first ?? null;
-    if ('last' in b)
-        input.last = b.last ?? null;
+    if ('name' in b)
+        input.name = b.name ?? null;
     if ('avatar' in b)
         input.avatar = normalizeAvatarJson(b.avatar);
     return input;
@@ -177,7 +173,7 @@ export function authRoutes(gate, opts = {}) {
             if (!auth)
                 return json({ error: 'unauthenticated' }, 401);
             const p = await gate.getProfile(auth);
-            return json(p ? { first: p.first, last: p.last, avatar: p.avatar } : null);
+            return json(p ? { name: p.name, avatar: p.avatar } : null);
         }
         if (rest === '/profile' && method === 'PUT') {
             if (!auth)
@@ -187,7 +183,7 @@ export function authRoutes(gate, opts = {}) {
                 const status = res.reason === 'forbidden' ? 403 : res.reason === 'rate-limited' ? 429 : res.reason === 'unconfigured' ? 501 : 400;
                 return json({ error: res.reason, ...('detail' in res ? { detail: res.detail } : {}) }, status);
             }
-            return json({ first: res.profile.first, last: res.profile.last, avatar: res.profile.avatar });
+            return json({ name: res.profile.name, avatar: res.profile.avatar });
         }
         if (rest === '/request' && method === 'POST') {
             const input = await body(req);
@@ -197,13 +193,14 @@ export function authRoutes(gate, opts = {}) {
                 return json({ status: 'pending' });
             if (!input.email)
                 return json({ error: 'email required' }, 400);
-            // `cleanSubject` caps and strips these: they are attacker-controlled
-            // strings destined for a table an admin reads.
+            // `cleanSubject` caps and strips the name: it's an attacker-controlled
+            // string destined for a table an admin reads, and for the subject an
+            // approved grant greets them by.
             const res = await gate.requestAccess({
                 email: input.email,
                 name: input.name,
                 note: input.note,
-                subject: cleanSubject({ first: input.first, last: input.last }),
+                subject: cleanSubject({ name: input.name }),
             }, req);
             if (res.status === 'invalid')
                 return json({ status: 'invalid', error: "that doesn't look like an email address" }, 400);
@@ -248,7 +245,7 @@ export function authRoutes(gate, opts = {}) {
                 // Unlike the request form, the supplier here is an admin, so an avatar
                 // *is* accepted — still `https:`-only, since the value lands in an
                 // `<img src>` on every recipient's page.
-                const subject = cleanSubject({ first: b.first, last: b.last });
+                const subject = cleanSubject({ name: b.subjectName });
                 const avatar = b.avatar && isSafeAvatarUrl(b.avatar) ? b.avatar : null;
                 const { grant, token } = await gate.mint({
                     name: b.name ?? null,

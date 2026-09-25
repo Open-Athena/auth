@@ -9,7 +9,7 @@ export interface ProfilePanelProps {
     /** Called after a successful save (the whoami cache is refetched regardless). */
     onSaved?: () => void;
     classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'select' | 'button' | 'message' | 'preview', string>>;
-    labels?: Partial<Record<'first' | 'last' | 'avatar' | 'save' | 'saving' | 'saved' | keyof Record<AvatarChoice, string>, string>>;
+    labels?: Partial<Record<'name' | 'avatar' | 'save' | 'saving' | 'saved' | keyof Record<AvatarChoice, string>, string>>;
 }
 /**
  * Let a signed-in principal set their own display name and face. Unstyled, like
