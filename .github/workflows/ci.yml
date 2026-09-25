@@ -49,10 +49,6 @@ jobs:
           # file list, which silently drops any migration added after it;
           # `verify-dist` fails the publish if the shipped set diverges from source.
           extra_files: migrations,README.md
-          # One publish only: the dist branch's package.json still carries
-          # `./cf-access` and `./schema.sql` (npm-dist deep-merges `exports`), and
-          # a non-empty exports_map makes it drop entries whose files are gone.
-          exports_map: '{}'
 
   # Install the published branch exactly as a consumer would, and use it.
   # The `test` job runs against `src/`, which says nothing about whether the
