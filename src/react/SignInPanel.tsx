@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { EmailCodeForm, type EmailCodeFormProps } from './EmailCodeForm.js'
+import { GoogleOneTap, type GoogleOneTapProps } from './GoogleOneTap.js'
 import { RequestAccessForm, type RequestAccessFormProps } from './RequestAccessForm.js'
 
 export interface SignInPanelProps {
@@ -10,6 +11,12 @@ export interface SignInPanelProps {
    */
   googleUrl?: string
   googleLabel?: ReactNode
+  /**
+   * Google's own in-page button (`GoogleOneTap`), in the same slot: while it
+   * renders, the `googleUrl` redirect button is its fallback rather than a second
+   * "Continue with Google" beside it. `onSignedIn` is the panel's.
+   */
+  oneTap?: Omit<GoogleOneTapProps, 'fallback' | 'onSignedIn'>
   /**
    * A generic SSO button (e.g. CF Access `/auth/sso`). Kept for Tier-1 apps and
    * back-compat; most consumers use `googleUrl` instead.
@@ -60,6 +67,7 @@ export function deniedEmail(): string | undefined {
 export function SignInPanel({
   googleUrl,
   googleLabel = 'Continue with Google',
+  oneTap,
   signInUrl,
   withNext = true,
   emailAuth,
@@ -74,7 +82,12 @@ export function SignInPanel({
   const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl
   const href = signInUrl && withNext ? withNextParam(signInUrl) : signInUrl
   const denied = deniedEmail()
-  const anyPrimary = Boolean(google || href)
+  const anyPrimary = Boolean(google || oneTap || href)
+  const redirect = google && (
+    <a className={classNames.googleButton ?? classNames.button} href={google}>
+      {googleLabel}
+    </a>
+  )
 
   const emailProps: EmailCodeFormProps = {
     ...(denied ? { defaultEmail: denied } : {}),
@@ -90,10 +103,10 @@ export function SignInPanel({
     <div className={classNames.root}>
       {title && <h1 className={classNames.title}>{title}</h1>}
       {hint && <p className={classNames.hint}>{hint}</p>}
-      {google && (
-        <a className={classNames.googleButton ?? classNames.button} href={google}>
-          {googleLabel}
-        </a>
+      {oneTap ? (
+        <GoogleOneTap {...oneTap} {...(onSignedIn ? { onSignedIn } : {})} fallback={redirect || null} />
+      ) : (
+        redirect
       )}
       {href && (
         <a className={classNames.button} href={href}>

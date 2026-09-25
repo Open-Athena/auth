@@ -34,6 +34,41 @@ describe('SignInPanel — Google-first', () => {
   })
 })
 
+describe('SignInPanel — oneTap', () => {
+  const ONE_TAP = { clientId: 'client-123', nonceEndpoint: '/n', verifyEndpoint: '/v' }
+
+  afterEach(() => {
+    document.head.querySelector('script[src="https://accounts.google.com/gsi/client"]')?.remove()
+    delete (window as { google?: unknown }).google
+  })
+
+  it("shows Google's rendered button and no redirect button beside it", async () => {
+    stubFetch({ '/n': { status: 200, body: { nonce: 'n1' } } })
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.dataset.loaded = 'true'
+    document.head.appendChild(script)
+    const renderButton = (parent: HTMLElement) => {
+      const b = document.createElement('button')
+      b.textContent = 'Sign in with Google (GSI)'
+      parent.appendChild(b)
+    }
+    ;(window as { google?: unknown }).google = { accounts: { id: { initialize: () => {}, renderButton } } }
+
+    renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} />)
+    await waitFor(() => expect(screen.getByRole('button').textContent).toBe('Sign in with Google (GSI)'))
+    expect(screen.queryAllByRole('link')).toEqual([])
+  })
+
+  it('falls back to the redirect button when GSI cannot load', async () => {
+    stubFetch({ '/n': { status: 200, body: {} } })
+    renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} />)
+    await waitFor(() =>
+      expect(screen.getAllByRole('link').map(a => a.getAttribute('href'))).toEqual(['/auth/google?next=%2Fdash']),
+    )
+  })
+})
+
 describe('EmailCodeForm', () => {
   it('advances from email to code entry, then signs in on a good code', async () => {
     const calls = stubFetch({

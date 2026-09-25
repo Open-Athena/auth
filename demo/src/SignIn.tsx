@@ -1,4 +1,4 @@
-import { GoogleOneTap, SignInPanel } from '@open-athena/auth/react'
+import { SignInPanel } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { api } from './api.js'
@@ -7,9 +7,9 @@ const FORM = { form: 'stack', field: 'field', input: 'input', button: 'btn', mes
 
 /**
  * The composed sign-in every gated page here shows — the library's own
- * `SignInPanel`, wired the way an adopter would wire it: Google (in-page One
- * Tap, then the redirect button) and an emailed
- * code for everyone else. All three end in the same `gate.signIn`, so the
+ * `SignInPanel`, wired the way an adopter would wire it: Google (its in-page
+ * button, degrading to the redirect when GSI can't load) and an emailed code for
+ * everyone else. All three end in the same `gate.signIn`, so the
  * dashboard can't tell them apart, which is the point.
  */
 export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: ReactNode }) {
@@ -18,31 +18,23 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
 
   return (
     <div className="signin">
-      {clientId ? (
-        <GoogleOneTap
-          clientId={clientId}
-          nonceEndpoint="/auth/google/onetap/nonce"
-          verifyEndpoint="/auth/google/onetap"
-          onSignedIn={onSignedIn}
-          className="onetap"
-          fallback={
-            <p className="muted small">
-              One Tap couldn't load (a blocked script, or an unsupported browser) — the button below is the same
-              sign-in as a redirect.
-            </p>
-          }
-        />
-      ) : google.isSuccess ? (
+      {!clientId && google.isSuccess && (
         <p className="muted small inert">
           No Google client id is configured on this deployment, so there's no One Tap and no{' '}
           <em>Continue with Google</em> — the panel drops a sign-in it can't complete, as any deployment should.
           Google offers no API to create the client; <code>scripts/provision-oauth-client.mjs</code> walks the one
           manual step.
         </p>
-      ) : null}
+      )}
       <SignInPanel
         title={title}
         googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
+        oneTap={
+          clientId
+            ? { clientId, nonceEndpoint: '/auth/google/onetap/nonce', verifyEndpoint: '/auth/google/onetap', className: 'onetap' }
+            : undefined
+        }
+        onSignedIn={onSignedIn}
         withNext={false}
         emailAuth={{
           startEndpoint: '/auth/email/start',
