@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.4c28b9d",
+  "version": "0.1.0-dist.2f70e25",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -14,16 +14,6 @@
     "./d1": {
       "types": "./dist/adapters/d1.d.ts",
       "default": "./dist/adapters/d1.js"
-    },
-    "./react": {
-      "types": "./dist/react/index.d.ts",
-      "default": "./dist/react/index.js"
-    },
-    "./migrations/*": "./migrations/*",
-    "./package.json": "./package.json",
-    "./testing": {
-      "types": "./dist/testing/index.d.ts",
-      "default": "./dist/testing/index.js"
     },
     "./resend": {
       "types": "./dist/adapters/resend.d.ts",
@@ -40,7 +30,17 @@
     "./google-directory": {
       "types": "./dist/adapters/google-directory.d.ts",
       "default": "./dist/adapters/google-directory.js"
-    }
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    },
+    "./migrations/*": "./migrations/*",
+    "./package.json": "./package.json"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "*",

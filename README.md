@@ -133,7 +133,9 @@ scripts/provision-oauth-client.mjs \
   --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
-Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins. An External consent screen can't be published without a privacy-policy link on its Branding page.
+Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins.
+
+One Tap is button-first: Google's rendered button, with the redirect as its fallback. The corner prompt is opt-in (`oneTap={{ clientId, prompt: true }}`), because it's an overlay the visitor didn't ask for; turn it on where nearly everyone signs in with Google. `prompt: { autoSelect: true }` signs a returning visitor in with no click at all. Silent sign-in needs two things: the account has already granted *this* client through One Tap or the button (a redirect sign-in doesn't count), and the browser supports FedCM or allows third-party cookies. Both flows request FedCM, so Chrome shows its own account UI in the page instead of a popup window. An External consent screen can't be published without a privacy-policy link on its Branding page.
 
 Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
 

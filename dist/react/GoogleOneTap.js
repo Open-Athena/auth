@@ -27,22 +27,29 @@ function loadScript(src) {
     });
 }
 /**
- * Google One Tap, **button-first**: a rendered "Sign in with Google" button, not
- * the auto-surfacing prompt (no overlay a visitor didn't ask for, no display
- * caps). It's the in-page, no-redirect variant of the Ask 3 button, and it
- * degrades to `fallback` whenever GSI can't run — so a page always has a working
- * sign-in, and this is pure upgrade.
+ * Google One Tap, **button-first**: a rendered "Sign in with Google" button. The
+ * auto-surfacing prompt is opt-in (`prompt`), since it's an overlay the visitor
+ * didn't ask for. It's the in-page, no-redirect variant of the redirect button,
+ * and it degrades to `fallback` whenever GSI can't run — so a page always has a
+ * working sign-in, and this is pure upgrade.
+ *
+ * Both the button and the prompt use FedCM where the browser has it (Chrome's own
+ * account UI in the page, rather than a popup window). Google issues a credential
+ * without showing its account chooser only once the account has granted *this*
+ * client (a redirect sign-in doesn't count), and only with FedCM or third-party
+ * cookies.
  *
  * The nonce is minted server-side (`googleOneTapNonce`) and echoed back with the
  * credential, so the POST is replay-bound without any client-trusted state.
  */
-export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/onetap/nonce', verifyEndpoint = '/api/auth/google/onetap', onSignedIn, onDenied, buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' }, className, fallback = null, scriptSrc = GSI_SRC, }) {
+export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/onetap/nonce', verifyEndpoint = '/api/auth/google/onetap', onSignedIn, onDenied, buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' }, className, prompt = false, fallback = null, scriptSrc = GSI_SRC, }) {
     const ref = useRef(null);
     const [failed, setFailed] = useState(false);
     useEffect(() => {
         if (typeof window === 'undefined')
             return;
         let cancelled = false;
+        let prompted = null;
         async function init() {
             try {
                 const res = await fetch(nonceEndpoint, { credentials: 'include', headers: { accept: 'application/json' } });
@@ -57,6 +64,8 @@ export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/oneta
                     client_id: clientId,
                     nonce,
                     use_fedcm_for_prompt: true,
+                    use_fedcm_for_button: true,
+                    auto_select: typeof prompt === 'object' && Boolean(prompt.autoSelect),
                     callback: async (resp) => {
                         try {
                             const r = await fetch(verifyEndpoint, {
@@ -77,6 +86,10 @@ export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/oneta
                     },
                 });
                 gsi.renderButton(ref.current, buttonOptions);
+                if (prompt) {
+                    gsi.prompt();
+                    prompted = gsi;
+                }
             }
             catch {
                 if (!cancelled)
@@ -86,6 +99,8 @@ export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/oneta
         void init();
         return () => {
             cancelled = true;
+            // A toast outliving the component would sign someone in to a page that's gone.
+            prompted?.cancel();
         };
         // Mount-only: re-initializing GSI on every prop change re-renders the button.
         // eslint-disable-next-line react-hooks/exhaustive-deps
