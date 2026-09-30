@@ -39,6 +39,9 @@ export interface MintInput {
   name: string | null
   /** Optional recipient name — becomes the grant's `subject.name`. */
   subjectName?: string
+  /** Who the link is for; with `allowlist`, also lets that address sign in by Google or an emailed code. */
+  email?: string | null
+  allowlist?: boolean
   scopes: string[]
   maxRedeems: number | null
   expiresInS: number | null
@@ -60,7 +63,7 @@ export interface Outbox {
 
 export const api = {
   grants: () => call<{ grants: Grant[] }>('/api/admin/grants').then(r => r.grants),
-  mint: (input: MintInput) => post<{ grant: Grant; token: string }>('/api/admin/grants', input),
+  mint: (input: MintInput) => post<{ grant: Grant; token: string; allowed?: { email: string; status: 'added' | 'widened' | 'already' } }>('/api/admin/grants', input),
   revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
   disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
   enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),

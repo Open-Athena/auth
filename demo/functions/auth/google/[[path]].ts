@@ -43,9 +43,6 @@ export const onRequest = async ({ request, env }: Ctx): Promise<Response> => {
     clientId,
     clientSecret: env.GOOGLE_CLIENT_SECRET,
     redirectUri: `${url.origin}/auth/google/callback`,
-    // A first Google sign-in gets the name and face Google vouched for, so the
-    // chip says "Ada Lovelace" rather than initials.
-    seedProfile: true,
   }
 
   switch (route) {
@@ -56,7 +53,7 @@ export const onRequest = async ({ request, env }: Ctx): Promise<Response> => {
     case 'onetap/nonce':
       return googleOneTapNonce({ gate: viewGate })()
     case 'onetap':
-      return googleOneTapVerify({ gate: viewGate, clientId, seedProfile: true })({ request })
+      return googleOneTapVerify({ gate: viewGate, clientId })({ request })
     default:
       return new Response('not found\n', { status: 404 })
   }

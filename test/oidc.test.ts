@@ -465,17 +465,18 @@ describe('profile seed', () => {
   })
 
   describe('wired into the sign-in handlers', () => {
-    const seedOpts = (g: ReturnType<typeof createGate>, fetch: typeof globalThis.fetch, seedProfile: boolean) => ({
+    /** `seedProfile` undefined = the adapter's default. */
+    const seedOpts = (g: ReturnType<typeof createGate>, fetch: typeof globalThis.fetch, seedProfile?: boolean) => ({
       gate: g,
       clientId: CLIENT_ID,
       clientSecret: 'shh',
       redirectUri: REDIRECT,
       fetch,
-      seedProfile,
+      ...(seedProfile === undefined ? {} : { seedProfile }),
     })
 
     /** Drive a full redirect sign-in against gate `g`, seeding per `seedProfile`. */
-    async function redirectSignIn(g: ReturnType<typeof createGate>, claims: Record<string, unknown>, seedProfile: boolean) {
+    async function redirectSignIn(g: ReturnType<typeof createGate>, claims: Record<string, unknown>, seedProfile?: boolean) {
       const startRes = await oidcStart(seedOpts(g, providerFetch(null), seedProfile))({
         request: new Request('https://app.test/auth/google?next=/reports'),
       })
@@ -491,32 +492,28 @@ describe('profile seed', () => {
       return { res, sessionCookie: setCookies(res)[0]!.split(';')[0]! }
     }
 
-    it('oidcCallback seeds on sign-in, and the seeded subject is live on the next authenticate', async () => {
+    it('oidcCallback seeds on sign-in by default, and the seeded subject is live on the next authenticate', async () => {
       const { g, profiles } = seedGate()
-      const { res, sessionCookie } = await redirectSignIn(
-        g,
-        { email: 'ada@openathena.ai', name: 'Ada Lovelace', picture: PICTURE },
-        true,
-      )
+      const { res, sessionCookie } = await redirectSignIn(g, { email: 'ada@openathena.ai', name: 'Ada Lovelace', picture: PICTURE })
       expect(res.status).toBe(302)
       expect((await profiles!.get('ada@openathena.ai'))?.avatar).toBe(dataUri)
       const auth = await g.authenticate(new Request('https://app.test/', { headers: { Cookie: sessionCookie } }))
       expect(auth?.kind === 'sso' ? auth.subject : null).toEqual({ name: 'Ada Lovelace', avatar: dataUri })
     })
 
-    it('writes nothing when seedProfile is off (default)', async () => {
+    it('writes nothing with seedProfile: false', async () => {
       const { g, profiles } = seedGate()
       const { res } = await redirectSignIn(g, { email: 'ada@openathena.ai', name: 'Ada Lovelace', picture: PICTURE }, false)
       expect(res.status).toBe(302)
       expect(await profiles!.get('ada@openathena.ai')).toBeNull()
     })
 
-    it('One Tap seeds on its success path too', async () => {
+    it('One Tap seeds on its success path too, by default', async () => {
       const { g, profiles } = seedGate()
       const nonceRes = await googleOneTapNonce({ gate: g })()
       const nonce = ((await nonceRes.json()) as { nonce: string }).nonce
       const credential = await idToken({ email: 'ada@openathena.ai', email_verified: true, nonce, name: 'Ada Lovelace', picture: PICTURE })
-      const res = await googleOneTapVerify({ gate: g, clientId: CLIENT_ID, fetch: providerFetch(null), seedProfile: true })({
+      const res = await googleOneTapVerify({ gate: g, clientId: CLIENT_ID, fetch: providerFetch(null) })({
         request: new Request('https://app.test/auth/onetap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },

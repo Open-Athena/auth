@@ -95,9 +95,12 @@ function Console({ whoami }: { whoami: Whoami }) {
     const f = new FormData(e.currentTarget)
     const days = Number(f.get('days'))
     const max = Number(f.get('max'))
+    const email = String(f.get('email') || '').trim()
     mint.mutate({
       name: String(f.get('memo') || '').trim() || null,
       subjectName: String(f.get('recipient') || '').trim(),
+      email: email || null,
+      allowlist: Boolean(email) && f.get('allowlist') === 'on',
       scopes: ['reports'],
       maxRedeems: max > 0 ? max : null,
       expiresInS: days > 0 ? days * 86400 : null,
@@ -143,6 +146,14 @@ function Console({ whoami }: { whoami: Whoami }) {
           <label>
             Recipient <span className="muted">(optional — puts a name on the page)</span>
             <input name="recipient" placeholder="Ada Lovelace" autoComplete="off" />
+          </label>
+          <label>
+            Email <span className="muted">(optional — who the link is for)</span>
+            <input name="email" type="email" placeholder="ada@example.org" autoComplete="off" />
+          </label>
+          <label className="check">
+            <input name="allowlist" type="checkbox" defaultChecked /> Also let this email sign in with Google or an
+            emailed code (adds it to the allowlist below)
           </label>
           <label>
             Expires in

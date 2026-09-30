@@ -368,6 +368,15 @@ table {
     gap: 0.25rem;
     font-size: 0.85rem;
   }
+  label.check {
+    display: flex;
+    align-items: flex-start;
+    grid-column: 1 / -1;
+    input {
+      width: auto;
+      margin-top: 0.15rem;
+    }
+  }
 }
 
 .grants {

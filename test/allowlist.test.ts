@@ -243,4 +243,58 @@ describe('/allowed admin routes', () => {
       expect((await store.list()).map(r => r.email)).toEqual(['member@x.test'])
     })
   })
+
+  describe('POST /grants with `allowlist`', () => {
+    const mint = async (body: Record<string, unknown>) =>
+      call('/grants', { method: 'POST', body: JSON.stringify({ scopes: ['view'], ...body }) }, await signIn('boss@x.test'))
+    const row = async (email: string) => (await store.list()).find(r => r.email === email) ?? null
+
+    it('adds the link email with the link scopes, noting the link', async () => {
+      const res = await mint({ name: 'Ada', email: 'Ada@Y.test', allowlist: true })
+      expect([res.status, res.body.allowed]).toEqual([200, { email: 'ada@y.test', status: 'added' }])
+      expect(await row('ada@y.test')).toEqual({
+        email: 'ada@y.test',
+        scopes: ['view'],
+        source: 'manual',
+        note: 'with link "Ada"',
+        addedBy: 'boss@x.test',
+        updatedAt: NOW / 1000,
+      })
+    })
+
+    it('leaves a row that already covers the scopes untouched', async () => {
+      const res = await mint({ email: 'member@x.test', allowlist: true })
+      expect(res.body.allowed).toEqual({ email: 'member@x.test', status: 'already' })
+      expect(await row('member@x.test')).toEqual(entry('member@x.test', ['view']))
+    })
+
+    it('widens a row missing some of the scopes, taking it over as manual', async () => {
+      await store.put(entry('synced@x.test', ['view'], 'sync:board@x.test'))
+      const res = await mint({ email: 'synced@x.test', scopes: ['view', 'reports'], allowlist: true })
+      expect(res.body.allowed).toEqual({ email: 'synced@x.test', status: 'widened' })
+      expect(await row('synced@x.test')).toEqual({
+        email: 'synced@x.test',
+        scopes: ['view', 'reports'],
+        source: 'manual',
+        note: 'with a share link',
+        addedBy: 'boss@x.test',
+        updatedAt: NOW / 1000,
+      })
+    })
+
+    it('without the flag, mints and leaves the allowlist alone', async () => {
+      const res = await mint({ email: 'ada@y.test' })
+      expect([res.status, Object.keys(res.body).sort(), await row('ada@y.test')]).toEqual([200, ['grant', 'token'], null])
+    })
+
+    it('refuses before minting when there is no valid email, or no allowlist mounted', async () => {
+      expect(await mint({ allowlist: true })).toEqual({ status: 400, body: { error: 'allowlist needs a valid email' } })
+      handle = authRoutes(gate)
+      expect(await mint({ email: 'ada@y.test', allowlist: true })).toEqual({
+        status: 501,
+        body: { error: 'allowlist not configured' },
+      })
+      expect(await gate.list()).toEqual([])
+    })
+  })
 })

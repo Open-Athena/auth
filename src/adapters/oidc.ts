@@ -57,9 +57,10 @@ export interface OidcOptions {
   nonceCookieName?: string
   /**
    * On a first-ever sign-in, seed the principal's profile (name + inlined
-   * avatar) from the id_token's `name`/`picture`. Default false — it only does
-   * anything when the gate has a `profiles` store, and an app opts into auto-
-   * capture rather than initials-only. Never overrides a self-set profile.
+   * avatar) from the id_token's `name`/`picture`. Default true, so a Google
+   * face and name Just Work; it only does anything when the gate has a
+   * `profiles` store. `false` keeps profiles initials-only until self-set.
+   * Never overrides a self-set profile.
    */
   seedProfile?: boolean
   fetch?: typeof globalThis.fetch
@@ -139,7 +140,7 @@ export function oidcStart(opts: OidcOptions) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts: OidcOptions) {
-  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = false } = opts
+  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true } = opts
   const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE
   const doFetch = opts.fetch ?? globalThis.fetch
 
@@ -307,7 +308,7 @@ async function nonceForms(nonce: string): Promise<Set<string>> {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts: OneTapVerifyOptions) {
-  const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = false } = opts
+  const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true } = opts
   const doFetch = opts.fetch ?? globalThis.fetch
   const deny = (why: string): Response => oneTapDeny(why, debug)
 

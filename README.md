@@ -133,6 +133,8 @@ scripts/provision-oauth-client.mjs \
   --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
+A first Google sign-in seeds the person's profile (their name, and their picture inlined as a `data:` URI) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves.
+
 Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins.
 
 One Tap is button-first: Google's rendered button, with the redirect as its fallback. The corner prompt is opt-in (`oneTap={{ clientId, prompt: true }}`), because it's an overlay the visitor didn't ask for; turn it on where nearly everyone signs in with Google. `prompt: { autoSelect: true }` signs a returning visitor in with no click at all. Silent sign-in needs two things: the account has already granted *this* client through One Tap or the button (a redirect sign-in doesn't count), and the browser supports FedCM or allows third-party cookies. Both flows request FedCM, so Chrome shows its own account UI in the page instead of a popup window. An External consent screen can't be published without a privacy-policy link on its Branding page.
@@ -201,6 +203,8 @@ authRoutes(gate, { allowlist })   // adds admin GET/POST/DELETE <base>/allowed; 
 ```
 
 Each row carries its own scopes, or pass `allowlistPolicy(store, { scopes })` to grant a fixed set to every member. Rows arrive by hand (the panel) or out of band: a directory sync owns a `source` and calls `store.replaceSource('sync:board@…', members)` — one transaction, so a sign-in mid-sync never sees the group empty and a sync never clobbers a hand-added guest. Mounting the editor doesn't change who gets in; that's the separate `policy` wiring, on purpose.
+
+A link can put its recipient on the list too. `POST <basePath>/grants` with `email` and `allowlist: true` mints the link and makes sure that address holds the link's scopes, so the person you sent it to can later sign in with Google or an emailed code instead of being turned away. An existing row that already covers the scopes is left alone; one that doesn't is widened and becomes `manual`. The response says which (`allowed: { email, status: 'added' | 'widened' | 'already' }`). Revoking the link doesn't remove the row: the link and the address are separate grants of access, and you revoke each where it lives.
 
 **Google groups, synced.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), and nothing pushes a group change to a custom app (Google's Shared Signals role is *receiver*, session-revocation only). So "gate this to `board@`" is a periodic pull into the table above, and `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`:
 
