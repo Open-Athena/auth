@@ -85,7 +85,7 @@ export function oidcStart(opts) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts) {
-    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = false } = opts;
+    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true } = opts;
     const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE;
     const doFetch = opts.fetch ?? globalThis.fetch;
     return async ({ request }) => {
@@ -213,7 +213,7 @@ async function nonceForms(nonce) {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts) {
-    const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = false } = opts;
+    const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true } = opts;
     const doFetch = opts.fetch ?? globalThis.fetch;
     const deny = (why) => oneTapDeny(why, debug);
     return async ({ request }) => {

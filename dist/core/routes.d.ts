@@ -70,4 +70,17 @@ export interface RouteOptions {
      */
     avatarLookup?: boolean | ResolveAvatarOptions;
 }
+/**
+ * Make sure `email` holds at least `scopes` on the allowlist. An existing row
+ * that already covers them is left alone (its source and note included); one
+ * that doesn't is widened to the union and becomes `manual`, since a directory
+ * sync would otherwise drop the scopes it never granted.
+ */
+export declare function allowForLink(store: AllowlistStore, email: string, scopes: string[], { note, addedBy }: {
+    note: string;
+    addedBy: string | null;
+}): Promise<{
+    email: string;
+    status: 'added' | 'widened' | 'already';
+}>;
 export declare function authRoutes(gate: Gate, opts?: RouteOptions): (req: Request) => Promise<Response | null>;

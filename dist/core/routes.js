@@ -101,6 +101,26 @@ function normalizeAvatarJson(a) {
         return { gravatar: true };
     return undefined;
 }
+/**
+ * Make sure `email` holds at least `scopes` on the allowlist. An existing row
+ * that already covers them is left alone (its source and note included); one
+ * that doesn't is widened to the union and becomes `manual`, since a directory
+ * sync would otherwise drop the scopes it never granted.
+ */
+export async function allowForLink(store, email, scopes, { note, addedBy }) {
+    const existing = await store.lookup(email);
+    if (existing && scopes.every(s => existing.includes(s)))
+        return { email, status: 'already' };
+    await store.put({
+        email,
+        scopes: existing ? [...existing, ...scopes.filter(s => !existing.includes(s))] : scopes,
+        source: 'manual',
+        note,
+        addedBy,
+        updatedAt: Math.floor(Date.now() / 1000),
+    });
+    return { email, status: existing ? 'widened' : 'added' };
+}
 export function authRoutes(gate, opts = {}) {
     const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, sync, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', avatarLookup = false, decisionPage, decisionAppName, } = opts;
     return async function handle(req) {
@@ -242,6 +262,15 @@ export function authRoutes(gate, opts = {}) {
                 const b = await body(req);
                 if (!b.scopes?.length)
                     return json({ error: 'scopes required' }, 400);
+                // Checked before minting, so a request that can't be honored in full
+                // doesn't leave a link behind.
+                const allowEmail = b.allowlist ? (b.email ?? '').trim().toLowerCase() : null;
+                if (allowEmail !== null) {
+                    if (!allowlist)
+                        return json({ error: 'allowlist not configured' }, 501);
+                    if (!isEmailish(allowEmail))
+                        return json({ error: 'allowlist needs a valid email' }, 400);
+                }
                 // Unlike the request form, the supplier here is an admin, so an avatar
                 // *is* accepted — still `https:`-only, since the value lands in an
                 // `<img src>` on every recipient's page.
@@ -259,8 +288,14 @@ export function authRoutes(gate, opts = {}) {
                     expiryEndsSessions: b.expiryEndsSessions ?? true,
                     createdBy: creatorOf(a),
                 });
+                const allowed = allowEmail !== null && allowlist
+                    ? await allowForLink(allowlist, allowEmail, b.scopes, {
+                        note: b.name?.trim() ? `with link "${b.name.trim()}"` : 'with a share link',
+                        addedBy: a.kind === 'sso' ? a.email : creatorOf(a),
+                    })
+                    : null;
                 // The only time the raw token is ever visible.
-                return json({ grant, token });
+                return json({ grant, token, ...(allowed ? { allowed } : {}) });
             }
             const id = seg[1];
             if (id && seg[2] === 'revoke' && method === 'POST') {

@@ -23,9 +23,10 @@ export interface OidcOptions {
     nonceCookieName?: string;
     /**
      * On a first-ever sign-in, seed the principal's profile (name + inlined
-     * avatar) from the id_token's `name`/`picture`. Default false — it only does
-     * anything when the gate has a `profiles` store, and an app opts into auto-
-     * capture rather than initials-only. Never overrides a self-set profile.
+     * avatar) from the id_token's `name`/`picture`. Default true, so a Google
+     * face and name Just Work; it only does anything when the gate has a
+     * `profiles` store. `false` keeps profiles initials-only until self-set.
+     * Never overrides a self-set profile.
      */
     seedProfile?: boolean;
     fetch?: typeof globalThis.fetch;
