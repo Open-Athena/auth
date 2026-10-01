@@ -8,7 +8,7 @@
  * more. No bios, no preferences, no social graph.
  */
 /** How a stored avatar was sourced — provenance for re-resolve/debug. */
-export type AvatarSourceKind = 'upload' | 'url' | 'github' | 'gravatar';
+export type AvatarSourceKind = 'upload' | 'url' | 'github' | 'gravatar' | 'bluesky' | 'mastodon';
 export interface Profile {
     /** The verified principal (SSO email, or a magic-link-verified grant email). */
     email: string;

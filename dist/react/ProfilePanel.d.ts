@@ -1,23 +1,27 @@
+import { type AvatarFieldProps } from './AvatarField.js';
 import { type Whoami } from './types.js';
-/** Where the avatar comes from on save. `keep` leaves the current one untouched. */
-export type AvatarChoice = 'keep' | 'upload' | 'url' | 'github' | 'gravatar' | 'clear';
 export interface ProfilePanelProps {
     /** Default `/api/auth/profile`. */
     endpoint?: string;
-    /** The current identity, to seed the name fields and preview the avatar. */
+    /** The avatar preview endpoint. Default: `endpoint` with `/profile` swapped for `/avatar`. */
+    avatarEndpoint?: string;
+    /** The current identity, to seed the name field and preview the avatar. */
     whoami?: Whoami | null;
     /** Called after a successful save (the whoami cache is refetched regardless). */
     onSaved?: () => void;
-    classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'select' | 'button' | 'message' | 'preview', string>>;
-    labels?: Partial<Record<'name' | 'avatar' | 'save' | 'saving' | 'saved' | keyof Record<AvatarChoice, string>, string>>;
+    classNames?: Partial<Record<'form' | 'field' | 'label' | 'input' | 'button' | 'message' | 'preview', string>> & {
+        avatar?: AvatarFieldProps['classNames'];
+    };
+    labels?: Partial<Record<'name' | 'avatar' | 'save' | 'saving' | 'saved', string>> & {
+        avatarField?: AvatarFieldProps['labels'];
+    };
 }
 /**
  * Let a signed-in principal set their own display name and face. Unstyled, like
  * the rest of `react/`: every visible string and class is a prop.
  *
- * The avatar is always copied server-side (`PUT /api/profile` calls
- * `resolveAvatar`/`validateUploadedImage`), so nothing here ever persists a live
- * third-party URL — a paste of an image URL is fetched once and inlined, not
- * rendered from its origin on every view.
+ * The face comes from `<AvatarField>` (a profile, an image address, an upload,
+ * or Gravatar on request), and is copied server-side on save — nothing here
+ * ever persists a live third-party URL.
  */
-export declare function ProfilePanel({ endpoint, whoami, onSaved, classNames, labels, }: ProfilePanelProps): import("react").JSX.Element;
+export declare function ProfilePanel({ endpoint, avatarEndpoint, whoami, onSaved, classNames, labels, }: ProfilePanelProps): import("react").JSX.Element;

@@ -9,6 +9,7 @@
  */
 import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
+import { type AvatarRef, type AvatarRefKind } from './avatar.js';
 import { type Profile } from './profile.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
@@ -63,8 +64,10 @@ export interface GateOptions {
      */
     profiles?: ProfileStore;
     /**
-     * Where uploaded avatar bytes live when too big to inline. Without it,
-     * avatars inline as `data:` URIs capped at `MAX_INLINE_AVATAR_BYTES`.
+     * Where copied avatar bytes live, out of the row. Without it, avatars inline
+     * as `data:` URIs capped at `MAX_INLINE_AVATAR_BYTES`. Either way the bytes
+     * are a copy: `authRoutes` serves an `asset://` avatar from its own origin
+     * (`GET <basePath>/avatar/:id`).
      */
     assets?: AssetStore;
     /**
@@ -82,20 +85,18 @@ export interface GateOptions {
      */
     profileMinEditIntervalS?: number;
     /**
-     * Byte cap for an *uploaded* avatar when an `AssetStore` is bound (larger
-     * faces live out of the row). Default 256 KB. Inlined sources (url/github/
-     * gravatar, and uploads with no asset store) stay capped at
-     * `MAX_INLINE_AVATAR_BYTES`.
+     * Byte cap for a copied avatar when an `AssetStore` is bound (larger faces
+     * live out of the row). Default 256 KB. Without an asset store every avatar
+     * is inlined, capped at `MAX_INLINE_AVATAR_BYTES`.
      */
-    profileUploadMaxBytes?: number;
+    avatarMaxBytes?: number;
     /**
-     * Abort the `seedProfileFromClaims` avatar fetch after this many ms, so a slow
-     * IdP picture host can't drag out sign-in (a timeout degrades to name-only).
-     * Default 3000; 0 disables. Only the seed path is bounded — a user-initiated
-     * `putProfile` avatar copy is not on anyone's login latency path.
+     * Abort an avatar fetch after this many ms, so a slow third-party host can't
+     * stall sign-in (the Google `picture` seed degrades to name-only) or a mint.
+     * Default 5000; 0 disables.
      */
-    seedAvatarTimeoutMs?: number;
-    /** Injectable fetch for server-side avatar copying (url/github/gravatar). Default global. */
+    avatarFetchTimeoutMs?: number;
+    /** Injectable fetch for server-side avatar copying. Default global. */
     fetch?: typeof globalThis.fetch;
 }
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
@@ -132,15 +133,14 @@ export interface MintResult {
 }
 /**
  * How a caller supplies an avatar to `putProfile`. Every source is copied
- * server-side (`resolveAvatar`/`validateUploadedImage`) — a live remote URL is
- * never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
+ * server-side (`copyAvatar`) — a live remote URL is never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
  */
 export type AvatarInput = {
     upload: Uint8Array;
-} | {
-    url: string;
-} | {
-    github: string;
+}
+/** Anything `parseAvatarRef` takes: a profile URL, handle, image URL, or `data:` URI. */
+ | {
+    ref: string;
 } | {
     gravatar: true;
 } | null | undefined;
@@ -240,6 +240,15 @@ export declare function createGate(opts: GateOptions): {
         family_name?: string;
         picture?: string;
     }, nowMs?: number) => Promise<Subject | null>;
+    copyAvatar: (source: AvatarRef | string) => Promise<{
+        value: string;
+        src: AvatarRefKind;
+    } | null>;
+    fetchAvatar: (ref: AvatarRef, { maxBytes }?: {
+        maxBytes?: number;
+    }) => Promise<import("./avatar.js").ValidatedImage | null>;
+    /** The bytes behind an `asset://` avatar, for serving; null without an asset store. */
+    getAsset: (id: string) => Promise<import("./assets.js").StoredAsset | null>;
     isAdmin: (email: string) => boolean;
     cookieName: string;
     /**

@@ -1,34 +1,24 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useState } from 'react';
 import { Avatar } from './Avatar.js';
+import { AvatarField } from './AvatarField.js';
 import { useForgetWhoami } from './useWhoami.js';
 import { displayName } from './types.js';
-const AVATAR_LABELS = {
-    keep: 'Keep current',
-    upload: 'Upload a file',
-    url: 'From a URL',
-    github: 'From GitHub',
-    gravatar: 'From Gravatar (my email)',
-    clear: 'Clear (use initials)',
-};
 const asSubject = (whoami) => whoami?.subject ?? {};
 /**
  * Let a signed-in principal set their own display name and face. Unstyled, like
  * the rest of `react/`: every visible string and class is a prop.
  *
- * The avatar is always copied server-side (`PUT /api/profile` calls
- * `resolveAvatar`/`validateUploadedImage`), so nothing here ever persists a live
- * third-party URL — a paste of an image URL is fetched once and inlined, not
- * rendered from its origin on every view.
+ * The face comes from `<AvatarField>` (a profile, an image address, an upload,
+ * or Gravatar on request), and is copied server-side on save — nothing here
+ * ever persists a live third-party URL.
  */
-export function ProfilePanel({ endpoint = '/api/auth/profile', whoami, onSaved, classNames = {}, labels = {}, }) {
+export function ProfilePanel({ endpoint = '/api/auth/profile', avatarEndpoint = endpoint.replace(/\/profile$/, '/avatar'), whoami, onSaved, classNames = {}, labels = {}, }) {
     const seed = asSubject(whoami);
     const forget = useForgetWhoami();
     const [name, setName] = useState(seed.name ?? '');
-    const [choice, setChoice] = useState('keep');
-    const [url, setUrl] = useState('');
-    const [github, setGithub] = useState('');
-    const [file, setFile] = useState(null);
+    // `undefined` = keep the current face; `null` = clear it; a `data:` URI = replace.
+    const [avatar, setAvatar] = useState(undefined);
     const [state, setState] = useState('idle');
     const [error, setError] = useState(null);
     async function save(e) {
@@ -38,14 +28,12 @@ export function ProfilePanel({ endpoint = '/api/auth/profile', whoami, onSaved, 
         setState('saving');
         setError(null);
         try {
-            const res = choice === 'upload' && file
-                ? await fetch(endpoint, { method: 'PUT', credentials: 'include', body: uploadBody(name, file) })
-                : await fetch(endpoint, {
-                    method: 'PUT',
-                    credentials: 'include',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ name, ...avatarField(choice, url, github) }),
-                });
+            const res = await fetch(endpoint, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ name, ...(avatar === undefined ? {} : { avatar: avatar === null ? null : { ref: avatar } }) }),
+            });
             if (res.ok) {
                 setState('saved');
                 forget(); // refetch whoami so the chip picks up the new name/face
@@ -62,26 +50,5 @@ export function ProfilePanel({ endpoint = '/api/auth/profile', whoami, onSaved, 
             setError('Could not save your profile.');
         }
     }
-    const label = (k) => labels[k] ?? AVATAR_LABELS[k];
-    return (_jsxs("form", { className: classNames.form, onSubmit: save, children: [_jsx("div", { className: classNames.preview, children: _jsx(Avatar, { whoami: whoami, name: name.trim() || displayName(whoami), size: 64 }) }), _jsxs("div", { className: classNames.field, children: [_jsx("label", { className: classNames.label, htmlFor: "oa-profile-name", children: labels.name ?? 'Name' }), _jsx("input", { className: classNames.input, id: "oa-profile-name", type: "text", autoComplete: "name", value: name, onChange: e => setName(e.target.value) })] }), _jsxs("div", { className: classNames.field, children: [_jsx("label", { className: classNames.label, htmlFor: "oa-profile-avatar", children: labels.avatar ?? 'Avatar' }), _jsx("select", { className: classNames.select, id: "oa-profile-avatar", value: choice, onChange: e => setChoice(e.target.value), children: Object.keys(AVATAR_LABELS).map(k => (_jsx("option", { value: k, children: label(k) }, k))) })] }), choice === 'upload' && (_jsx("div", { className: classNames.field, children: _jsx("input", { className: classNames.input, type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", onChange: e => setFile(e.target.files?.[0] ?? null) }) })), choice === 'url' && (_jsx("div", { className: classNames.field, children: _jsx("input", { className: classNames.input, type: "url", placeholder: "https://\u2026", value: url, onChange: e => setUrl(e.target.value) }) })), choice === 'github' && (_jsx("div", { className: classNames.field, children: _jsx("input", { className: classNames.input, type: "text", placeholder: "github-handle", value: github, onChange: e => setGithub(e.target.value) }) })), _jsx("button", { className: classNames.button, type: "submit", disabled: state === 'saving', children: state === 'saving' ? (labels.saving ?? 'Saving…') : (labels.save ?? 'Save profile') }), state === 'saved' && _jsx("p", { className: classNames.message, children: labels.saved ?? 'Saved.' }), state === 'error' && error && _jsx("p", { className: classNames.message, children: error })] }));
-}
-function avatarField(choice, url, github) {
-    switch (choice) {
-        case 'url':
-            return { avatar: { url } };
-        case 'github':
-            return { avatar: { github } };
-        case 'gravatar':
-            return { avatar: { gravatar: true } };
-        case 'clear':
-            return { avatar: null };
-        default:
-            return {}; // 'keep' (and 'upload' handled via multipart) leave it unchanged
-    }
-}
-function uploadBody(name, file) {
-    const fd = new FormData();
-    fd.set('name', name);
-    fd.set('avatar', file);
-    return fd;
+    return (_jsxs("form", { className: classNames.form, onSubmit: save, children: [_jsx("div", { className: classNames.preview, children: _jsx(Avatar, { src: avatar === undefined ? (seed.avatar ?? null) : avatar, name: name.trim() || displayName(whoami), size: 64 }) }), _jsxs("div", { className: classNames.field, children: [_jsx("label", { className: classNames.label, htmlFor: "oa-profile-name", children: labels.name ?? 'Name' }), _jsx("input", { className: classNames.input, id: "oa-profile-name", type: "text", autoComplete: "name", value: name, onChange: e => setName(e.target.value) })] }), _jsxs("div", { className: classNames.field, children: [_jsx("label", { className: classNames.label, htmlFor: "oa-profile-avatar", children: labels.avatar ?? 'Avatar' }), _jsx(AvatarField, { id: "oa-profile-avatar", endpoint: avatarEndpoint, value: avatar ?? null, onChange: setAvatar, email: whoami?.email ?? null, autoGravatar: false, preview: false, ...(classNames.avatar ? { classNames: classNames.avatar } : {}), ...(labels.avatarField ? { labels: labels.avatarField } : {}) })] }), _jsx("button", { className: classNames.button, type: "submit", disabled: state === 'saving', children: state === 'saving' ? (labels.saving ?? 'Saving…') : (labels.save ?? 'Save profile') }), state === 'saved' && _jsx("p", { className: classNames.message, children: labels.saved ?? 'Saved.' }), state === 'error' && error && _jsx("p", { className: classNames.message, children: error })] }));
 }

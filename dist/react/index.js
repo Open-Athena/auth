@@ -1,6 +1,7 @@
 export { AllowlistPanel } from './AllowlistPanel.js';
 export { AuthGate } from './AuthGate.js';
 export { Avatar, initialsOf } from './Avatar.js';
+export { AvatarField, downscaleImage } from './AvatarField.js';
 export { AccessNotice, Watermark } from './disclosure.js';
 export { EmailCodeForm } from './EmailCodeForm.js';
 export { GoogleOneTap } from './GoogleOneTap.js';

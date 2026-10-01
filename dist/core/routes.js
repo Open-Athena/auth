@@ -7,7 +7,8 @@
  * copy around them are per-app and get vendored, per share-links §6.
  */
 import { renderDecisionPage } from './decision-page.js';
-import { isSafeAvatarUrl, resolveAvatar } from './avatar.js';
+import { assetId } from './assets.js';
+import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvatarRef } from './avatar.js';
 import { cleanSubject, isEmailish } from './requests.js';
 import { readCookie } from './session.js';
 import { hashToken } from './tokens.js';
@@ -47,7 +48,7 @@ async function formOrJson(req) {
 const defaultCreator = (auth) => (auth.kind === 'sso' ? auth.email : `g:${auth.grant.id}`);
 /**
  * Parse a `PUT /profile` body into a `ProfileInput`. JSON for name + a
- * url/github/gravatar/clear avatar; multipart when the avatar is an uploaded
+ * ref (see `parseAvatarRef`)/gravatar/clear avatar; multipart when the avatar is an uploaded
  * file (raw bytes don't ride JSON cleanly). A key that's *absent* leaves that
  * field unchanged; `avatar: null` clears it.
  */
@@ -66,10 +67,8 @@ async function readProfileInput(req) {
         if (file !== null && typeof file !== 'string') {
             input.avatar = { upload: new Uint8Array(await file.arrayBuffer()) };
         }
-        else if (form.has('avatarUrl'))
-            input.avatar = { url: String(form.get('avatarUrl')) };
-        else if (form.has('avatarGithub'))
-            input.avatar = { github: String(form.get('avatarGithub')) };
+        else if (form.has('avatarRef'))
+            input.avatar = { ref: String(form.get('avatarRef')) };
         else if (form.get('avatarGravatar') === 'true')
             input.avatar = { gravatar: true };
         else if (form.has('avatar'))
@@ -93,10 +92,8 @@ function normalizeAvatarJson(a) {
     if (!a || typeof a !== 'object')
         return undefined;
     const o = a;
-    if (typeof o.url === 'string')
-        return { url: o.url };
-    if (typeof o.github === 'string')
-        return { github: o.github };
+    if (typeof o.ref === 'string')
+        return { ref: o.ref };
     if (o.gravatar === true)
         return { gravatar: true };
     return undefined;
@@ -122,7 +119,7 @@ export async function allowForLink(store, email, scopes, { note, addedBy }) {
     return { email, status: existing ? 'widened' : 'added' };
 }
 export function authRoutes(gate, opts = {}) {
-    const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, sync, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', avatarLookup = false, decisionPage, decisionAppName, } = opts;
+    const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, sync, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', decisionPage, decisionAppName, } = opts;
     return async function handle(req) {
         const url = new URL(req.url);
         if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`))
@@ -143,10 +140,17 @@ export function authRoutes(gate, opts = {}) {
         };
         const admin = () => require(adminScope);
         const listFilter = (a) => (scopeToCreator ? { createdBy: scopeToCreator(a) } : {});
+        // A stored `asset://<id>` avatar means nothing to a browser; every response
+        // that carries one points it at `GET <basePath>/avatar/:id` instead.
+        const served = (v) => {
+            const id = assetId(v);
+            return (id ? `${basePath}/avatar/${id}` : v);
+        };
+        const present = (o) => o.subject?.avatar ? { ...o, subject: { ...o.subject, avatar: served(o.subject.avatar) } } : o;
         // ---- public -------------------------------------------------------------
         if (rest === '/whoami' && method === 'GET') {
             if (auth)
-                return json(gate.whoami(auth));
+                return json(present(gate.whoami(auth)));
             // A dead cookie (revoked or expired grant, delisted email) is cleared
             // here, where the browser asks "who am I" — but only when the cookie is
             // what failed: a bad `?key=`/`Bearer` beside a live cookie is not a
@@ -162,7 +166,7 @@ export function authRoutes(gate, opts = {}) {
             const res = await gate.redeem(token, req);
             if (!res.ok)
                 return json({ error: 'invalid link', reason: res.reason }, 401);
-            return json(gate.whoami(res.auth), 200, { 'set-cookie': res.cookie });
+            return json(present(gate.whoami(res.auth)), 200, { 'set-cookie': res.cookie });
         }
         if (rest === '/logout' && method === 'POST') {
             return json({ ok: true }, 200, { 'set-cookie': await gate.signOut(req, auth) });
@@ -193,7 +197,7 @@ export function authRoutes(gate, opts = {}) {
             if (!auth)
                 return json({ error: 'unauthenticated' }, 401);
             const p = await gate.getProfile(auth);
-            return json(p ? { name: p.name, avatar: p.avatar } : null);
+            return json(p ? { name: p.name, avatar: served(p.avatar) } : null);
         }
         if (rest === '/profile' && method === 'PUT') {
             if (!auth)
@@ -203,7 +207,7 @@ export function authRoutes(gate, opts = {}) {
                 const status = res.reason === 'forbidden' ? 403 : res.reason === 'rate-limited' ? 429 : res.reason === 'unconfigured' ? 501 : 400;
                 return json({ error: res.reason, ...('detail' in res ? { detail: res.detail } : {}) }, status);
             }
-            return json({ name: res.profile.name, avatar: res.profile.avatar });
+            return json({ name: res.profile.name, avatar: served(res.profile.avatar) });
         }
         if (rest === '/request' && method === 'POST') {
             const input = await body(req);
@@ -256,7 +260,7 @@ export function authRoutes(gate, opts = {}) {
                 // `?active=1` opts out. (The *store* still defaults to active-only,
                 // which is the right default for a gate check.)
                 const includeRevoked = url.searchParams.get('active') !== '1';
-                return json({ grants: await gate.list({ includeRevoked, ...listFilter(a) }) });
+                return json({ grants: (await gate.list({ includeRevoked, ...listFilter(a) })).map(present) });
             }
             if (seg.length === 1 && method === 'POST') {
                 const b = await body(req);
@@ -272,22 +276,36 @@ export function authRoutes(gate, opts = {}) {
                         return json({ error: 'allowlist needs a valid email' }, 400);
                 }
                 // Unlike the request form, the supplier here is an admin, so an avatar
-                // *is* accepted — still `https:`-only, since the value lands in an
-                // `<img src>` on every recipient's page.
+                // *is* accepted — and copied by `gate.mint`, so what lands in every
+                // recipient's `<img src>` is our own bytes, not a third party's URL.
                 const subject = cleanSubject({ name: b.subjectName });
-                const avatar = b.avatar && isSafeAvatarUrl(b.avatar) ? b.avatar : null;
-                const { grant, token } = await gate.mint({
-                    name: b.name ?? null,
-                    note: b.note ?? null,
-                    email: b.email ?? null,
-                    subject: avatar ? { ...subject, avatar } : subject,
-                    scopes: b.scopes,
-                    maxRedeems: b.maxRedeems ?? null,
-                    expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
-                    sessionTtlS: b.sessionTtlS ?? null,
-                    expiryEndsSessions: b.expiryEndsSessions ?? true,
-                    createdBy: creatorOf(a),
-                });
+                const recipient = b.email?.trim().toLowerCase();
+                const avatar = b.avatar !== undefined
+                    ? b.avatar
+                    : recipient && isEmailish(recipient)
+                        ? ((await gate.copyAvatar({ kind: 'gravatar', email: recipient }).catch(() => null))?.value ?? null)
+                        : null;
+                let minted;
+                try {
+                    minted = await gate.mint({
+                        name: b.name ?? null,
+                        note: b.note ?? null,
+                        email: b.email ?? null,
+                        subject: avatar ? { ...subject, avatar } : subject,
+                        scopes: b.scopes,
+                        maxRedeems: b.maxRedeems ?? null,
+                        expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
+                        sessionTtlS: b.sessionTtlS ?? null,
+                        expiryEndsSessions: b.expiryEndsSessions ?? true,
+                        createdBy: creatorOf(a),
+                    });
+                }
+                catch (e) {
+                    if (e instanceof InvalidImageError)
+                        return json({ error: 'invalid avatar', detail: e.message }, 400);
+                    throw e;
+                }
+                const { grant, token } = minted;
                 const allowed = allowEmail !== null && allowlist
                     ? await allowForLink(allowlist, allowEmail, b.scopes, {
                         note: b.name?.trim() ? `with link "${b.name.trim()}"` : 'with a share link',
@@ -295,7 +313,7 @@ export function authRoutes(gate, opts = {}) {
                     })
                     : null;
                 // The only time the raw token is ever visible.
-                return json({ grant, token, ...(allowed ? { allowed } : {}) });
+                return json({ grant: present(grant), token, ...(allowed ? { allowed } : {}) });
             }
             const id = seg[1];
             if (id && seg[2] === 'revoke' && method === 'POST') {
@@ -345,7 +363,7 @@ export function authRoutes(gate, opts = {}) {
                 if ('expiryEndsSessions' in b)
                     patch.expiryEndsSessions = !!b.expiryEndsSessions;
                 const grant = await gate.update(id, patch);
-                return grant ? json({ grant }) : json({ error: 'not found' }, 404);
+                return grant ? json({ grant: present(grant) }) : json({ error: 'not found' }, 404);
             }
             if (id && seg[2] === 'activity' && method === 'GET') {
                 if (!audit)
@@ -370,7 +388,7 @@ export function authRoutes(gate, opts = {}) {
                 const res = await gate.approveRequest(id, creatorOf(a), { scopes: b.scopes });
                 if (!res)
                     return json({ error: 'no pending request with that id' }, 404);
-                return json({ request: res.request, grant: res.grant, token: res.token });
+                return json({ request: res.request, grant: present(res.grant), token: res.token });
             }
             if (id && seg[2] === 'deny' && method === 'POST') {
                 const request = await gate.denyRequest(id, creatorOf(a));
@@ -439,15 +457,55 @@ export function authRoutes(gate, opts = {}) {
                 return json({ ok: await allowlist.remove(email.toLowerCase()) });
             }
         }
+        // Preview a face before committing to it: the mint form and
+        // `ProfilePanel` both show it. Answers a `data:` URI the browser downscales
+        // and hands back to the mint/profile write (re-validated there, not
+        // trusted) — so resizing needs no server-side image codec. An
+        // admin or SSO principal only — a share-link visitor has nothing to set, and
+        // shouldn't get a server that fetches images on request.
         if (rest === '/avatar' && method === 'POST') {
-            const a = await admin();
-            if (a instanceof Response)
-                return a;
-            if (!avatarLookup)
-                return json({ error: 'avatar lookup not configured' }, 501);
+            if (!auth)
+                return json({ error: 'unauthenticated' }, 401);
+            if (auth.kind !== 'sso' && !hasScope(auth, adminScope))
+                return json({ error: 'forbidden' }, 403);
             const b = await body(req);
-            const opts = typeof avatarLookup === 'object' ? avatarLookup : {};
-            return json({ avatar: await resolveAvatar({ email: b.email, github: b.github, url: b.url }, opts) });
+            try {
+                const ref = b.ref?.trim()
+                    ? parseAvatarRef(b.ref)
+                    : b.email && isEmailish(b.email.trim())
+                        ? { kind: 'gravatar', email: b.email.trim() }
+                        : null;
+                if (!ref)
+                    return json({ error: 'ref or email required' }, 400);
+                // Not the storage cap: the browser downscales this before handing it
+                // back, and the mint then holds it to the storage cap.
+                const img = await gate.fetchAvatar(ref, { maxBytes: MAX_PREVIEW_AVATAR_BYTES });
+                return json({ avatar: img ? bytesToDataUri(img.type, img.bytes) : null, source: ref.kind });
+            }
+            catch (e) {
+                if (e instanceof InvalidImageError)
+                    return json({ error: 'invalid avatar', detail: e.message }, 400);
+                throw e;
+            }
+        }
+        // The bytes behind a stored `asset://` avatar, from our own origin. Any
+        // session will do (the id is unguessable, and faces aren't secrets from
+        // someone already let in); an anonymous request gets nothing.
+        if (seg[0] === 'avatar' && seg.length === 2 && method === 'GET') {
+            if (!auth)
+                return json({ error: 'unauthenticated' }, 401);
+            const asset = await gate.getAsset(seg[1]);
+            if (!asset)
+                return json({ error: 'not found' }, 404);
+            return new Response(asset.bytes, {
+                headers: {
+                    'content-type': asset.type,
+                    // An id is never reused for different bytes: a new face is a new id.
+                    'cache-control': 'private, max-age=31536000, immutable',
+                    'x-content-type-options': 'nosniff',
+                    'content-security-policy': "default-src 'none'",
+                },
+            });
         }
         if (rest === '/log' && method === 'GET') {
             const a = await admin();

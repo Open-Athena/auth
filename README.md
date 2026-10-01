@@ -31,7 +31,7 @@ Pre-1.0 and moving: the backend kernel, Google and email-code sign-in, request-a
 src/core/       sessions, tokens, grants, policy, requests, email codes, audit, routes — no CF, no Node
 src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
                 r2 (avatar bytes), google-directory (group → allowlist sync)
-src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / disclosure — unstyled
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -133,7 +133,7 @@ scripts/provision-oauth-client.mjs \
   --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
-A first Google sign-in seeds the person's profile (their name, and their picture inlined as a `data:` URI) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves.
+A first Google sign-in seeds the person's profile (their name, and a copy of their picture; see **Faces** below) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves.
 
 Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins.
 
@@ -252,6 +252,21 @@ Three things the first real run taught (`specs/done/google-directory-sync.md`): 
 The default read is the Cloud Identity API, which is what honours a group-*owner* SA (verified against a real Workspace: the Admin SDK Directory API refuses one with "Not Authorized"). `api: 'directory'` switches to the Admin SDK — it flattens nested groups — for an SA holding the Groups Reader admin role, or with `subject: 'admin@…'` for orgs wired for domain-wide delegation. The "live, signed at each sign-in" tier — a **SAML** adapter consuming Google's group-attribute assertion — stays specced but unbuilt ([`specs/saml-groups.md`](specs/saml-groups.md)): it only refreshes at login, so it is *slower* to revoke than this sync unless it writes into the same table anyway.
 
 **Mounting it.** `authRoutes(gate, opts)` is a whole `/api/auth/*` surface — whoami, exchange, logout, request-access, and admin grant/request/log routes — returning `null` for paths it doesn't own so your router can fall through. `creatorOf`/`scopeToCreator` confine an admin to their own grants, which is how the demo lets strangers share one deployment.
+
+**Faces** are always copies, never links. A face on a share link (`POST <basePath>/grants` with `avatar`), a profile (`PUT <basePath>/profile`), or a Google sign-in's `picture` is fetched once, server-side, sniffed as a real PNG/JPEG/WebP/GIF, and stored as a `data:` URI (≤64 KB) or, with an `assets` store bound (`r2AssetStore`), as an `asset://` ref that `authRoutes` serves from `<basePath>/avatar/:id` to signed-in sessions only. A stored third-party URL would tell its host who opened your private page on every view, and some hosts (LinkedIn's `media.licdn.com`) sign their image URLs with an expiry, so a stored link quietly breaks weeks later. The `avatar` field takes anything `parseAvatarRef` does:
+
+- a GitHub profile or handle (`github.com/ada`, `@ada`);
+- a Bluesky profile or handle (`bsky.app/profile/ada.bsky.social`, `ada.bsky.social`);
+- a Mastodon profile or address (`https://hachyderm.io/@ada`, `@ada@hachyderm.io`);
+- a direct `https:` image address;
+- a `data:` URI (an upload).
+
+With no `avatar` and an `email`, the mint tries the recipient's Gravatar; `avatar: null` opts out. LinkedIn, X, Facebook and similar have no public way to fetch someone's photo, so their profile URLs are refused with a pointer to "copy image address" or an upload, rather than scraped. `<AvatarField>` is the UI for all of this:
+- It takes a pasted profile, an image address or an upload, or falls back to the recipient's Gravatar.
+- It previews through `POST <basePath>/avatar`, which returns up to 2 MB.
+- It center-crops and downscales every face to 256 px WebP in the browser before sending, which also strips EXIF. Resizing therefore needs no server-side codec or image service; Mastodon's 400 KB originals become about 8 KB.
+
+The mint form uses `<AvatarField>`, and so does `<ProfilePanel>`.
 
 **Request access** collects an address, and optionally a person: `<RequestAccessForm askName />` posts a single `name` (one field, not first/last: name structure varies too much across cultures to split), stored as the same `Subject` a grant carries — so approving mints a link that knows who it's for, and the page says "Ada Lovelace" rather than `ada@…`. An avatar is never *accepted* from the form (a stranger-supplied URL rendered on the admin's queue is a tracking pixel aimed at the reviewer); `<Avatar>` derives initials instead, or renders `subject.avatar` when the app sets one itself.
 

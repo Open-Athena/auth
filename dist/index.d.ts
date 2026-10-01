@@ -1,7 +1,7 @@
 export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js';
 export { nullAudit, requestMeta } from './core/audit.js';
-export { InvalidImageError, MAX_AVATAR_DIMENSION, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, resolveAvatar, validateUploadedImage, } from './core/avatar.js';
-export type { AvatarSource, ResolveAvatarOptions, ValidatedImage } from './core/avatar.js';
+export { DEFAULT_AVATAR_SIZE, InvalidImageError, MAX_AVATAR_DIMENSION, MAX_INLINE_AVATAR_BYTES, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, fetchAvatar, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, parseAvatarRef, validateUploadedImage, } from './core/avatar.js';
+export type { AvatarRef, AvatarRefKind, FetchAvatarOptions, ValidatedImage } from './core/avatar.js';
 export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js';
 export type { AssetStore, StoredAsset } from './core/assets.js';
 export { MAX_PROFILE_NAME, cleanName } from './core/profile.js';

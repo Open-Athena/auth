@@ -9,7 +9,7 @@
  */
 import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
-import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, isGithubHandle, isSafeAvatarUrl, resolveAvatar, validateUploadedImage, } from './avatar.js';
+import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
 import { looksAutomated } from './bots.js';
 import { cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
@@ -58,7 +58,7 @@ function grantAuth(grant) {
     return { kind: 'grant', grant, admin: false, scopes: grant.scopes };
 }
 export function createGate(opts) {
-    const { store, secret, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, profileUploadMaxBytes = 256 * 1024, seedAvatarTimeoutMs = 3000, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const { store, secret, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
     const policy = opts.policy
         ? firstMatch(adminPolicy(adminEmails), opts.policy)
         : adminPolicy(adminEmails);
@@ -244,14 +244,25 @@ export function createGate(opts) {
     function expireCookie(req) {
         return clearCookie({ name: cookieName, secure: isSecureRequest(req) });
     }
+    /**
+     * Mint a share link. A `subject.avatar` that isn't already a copy (a profile
+     * URL, handle, or image URL) is copied first — see `copyAvatar` — and throws
+     * `InvalidImageError` before anything is written if it can't be.
+     */
     async function mint(draft, nowMs = Date.now()) {
         const nowS = sec(nowMs);
+        let subject = draft.subject ?? null;
+        if (subject?.avatar) {
+            const { avatar, ...rest } = subject;
+            const copied = await copyAvatar(avatar);
+            subject = copied ? { ...rest, avatar: copied.value } : rest;
+        }
         const token = generateToken();
         const grant = {
             id: generateId(),
             name: draft.name ?? null,
             note: draft.note ?? null,
-            subject: draft.subject ?? null,
+            subject,
             email: draft.email ?? null,
             scopes: draft.scopes,
             maxRedeems: draft.maxRedeems ?? null,
@@ -557,35 +568,41 @@ export function createGate(opts) {
         const email = principalEmail(auth);
         return email ? profiles.get(email) : null;
     }
-    /** Copy a supplied avatar server-side to a `data:` URI or `asset://` ref, or throw `InvalidImageError`. */
+    /**
+     * Copy an avatar server-side and return what to store: a `data:` URI, or an
+     * `asset://` ref when an `AssetStore` is bound. `null` when the source simply
+     * has no face (a Gravatar 404, a profile with no picture). Throws
+     * `InvalidImageError` with an admin-readable reason otherwise.
+     *
+     * A value that is already a copy (`data:`/`asset://`) is re-validated, not
+     * trusted: a `data:` URI is how a preview round-trips from the browser.
+     */
+    async function copyAvatar(source) {
+        if (typeof source === 'string' && assetId(source)) {
+            if (!assets || !(await assets.get(assetId(source))))
+                throw new InvalidImageError('no such stored avatar');
+            return { value: source, src: 'upload' };
+        }
+        const ref = typeof source === 'string' ? parseAvatarRef(source) : source;
+        const img = await fetchAvatarBytes(ref);
+        if (!img)
+            return null;
+        const value = assets ? assetUri(await assets.put(img.bytes, img.type)) : bytesToDataUri(img.type, img.bytes);
+        return { value, src: ref.kind };
+    }
+    /** `fetchAvatar` with this gate's timeout, and its storage byte cap unless overridden: the bytes, not yet stored. */
+    function fetchAvatarBytes(ref, { maxBytes } = {}) {
+        return fetchAvatar(ref, {
+            maxBytes: maxBytes ?? (assets ? avatarMaxBytes : MAX_INLINE_AVATAR_BYTES),
+            fetch: avatarFetchTimeoutMs > 0 ? withTimeout(fetchImpl, avatarFetchTimeoutMs) : fetchImpl,
+        });
+    }
     async function resolveAvatarInput(input, email) {
-        if ('upload' in input) {
-            const cap = assets ? profileUploadMaxBytes : MAX_INLINE_AVATAR_BYTES;
-            const { type, bytes } = validateUploadedImage(input.upload, { maxBytes: cap });
-            if (assets)
-                return { value: assetUri(await assets.put(bytes, type)), src: 'upload' };
-            return { value: bytesToDataUri(type, bytes), src: 'upload' };
-        }
-        if ('url' in input) {
-            if (!isSafeAvatarUrl(input.url))
-                throw new InvalidImageError('avatar url must be https with no credentials');
-            const data = await resolveAvatar({ url: input.url }, { inline: true, fetch: fetchImpl });
-            if (!data)
-                throw new InvalidImageError('could not fetch a valid image from that url');
-            return { value: data, src: 'url' };
-        }
-        if ('github' in input) {
-            if (!isGithubHandle(input.github))
-                throw new InvalidImageError('not a valid github handle');
-            const data = await resolveAvatar({ github: input.github }, { inline: true, fetch: fetchImpl });
-            if (!data)
-                throw new InvalidImageError('no github avatar for that handle');
-            return { value: data, src: 'github' };
-        }
-        const data = await resolveAvatar({ email }, { inline: true, fetch: fetchImpl });
-        if (!data)
-            throw new InvalidImageError('no gravatar for your address');
-        return { value: data, src: 'gravatar' };
+        const ref = 'upload' in input ? { kind: 'upload', bytes: input.upload } : 'ref' in input ? input.ref : { kind: 'gravatar', email };
+        const copied = await copyAvatar(ref);
+        if (!copied)
+            throw new InvalidImageError('gravatar' in input ? 'no Gravatar for your address' : 'no avatar found there');
+        return copied;
     }
     /**
      * Set the caller's own display name and/or avatar. Only an authenticated self
@@ -610,11 +627,6 @@ export function createGate(opts) {
         let avatar = existing?.avatar ?? null;
         let avatarSrc = existing?.avatarSrc ?? null;
         if (input.avatar !== undefined) {
-            // Replacing or clearing: drop the prior asset so the store doesn't accrete
-            // orphans. Inlined (`data:`) rows need no cleanup.
-            const priorAsset = assetId(existing?.avatar);
-            if (priorAsset && assets)
-                await assets.del(priorAsset).catch(() => { });
             if (input.avatar === null) {
                 avatar = null;
                 avatarSrc = null;
@@ -633,6 +645,11 @@ export function createGate(opts) {
         }
         const profile = { email, name, avatar, avatarSrc, updatedAt: nowS };
         await profiles.put(profile);
+        // Replaced or cleared: drop the prior asset so the store doesn't accrete
+        // orphans — only now, so a failed copy leaves the old face intact.
+        const priorAsset = assetId(existing?.avatar);
+        if (priorAsset && assets && priorAsset !== assetId(avatar))
+            await assets.del(priorAsset).catch(() => { });
         return { ok: true, profile };
     }
     /**
@@ -661,16 +678,11 @@ export function createGate(opts) {
         const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '));
         let avatar = null;
         if (claims.picture && isSafeAvatarUrl(claims.picture)) {
-            try {
-                // Inline the Google `picture` as a `data:` URI — never persist the live
-                // `lh3.googleusercontent.com` URL, which would leak "this person opened
-                // this page" to Google on every render. Bounded by a timeout: the host
-                // is third-party and on the login path.
-                avatar = await resolveAvatar({ url: claims.picture }, { inline: true, fetch: withTimeout(fetchImpl, seedAvatarTimeoutMs) });
-            }
-            catch {
-                avatar = null;
-            }
+            // Copy the Google `picture` — never persist the live
+            // `lh3.googleusercontent.com` URL, which would leak "this person opened
+            // this page" to Google on every render. `copyAvatar` is bounded by
+            // `avatarFetchTimeoutMs`: the host is third-party and on the login path.
+            avatar = (await copyAvatar({ kind: 'url', url: claims.picture }).catch(() => null))?.value ?? null;
         }
         const profile = { email, name, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) };
         await profiles.put(profile);
@@ -712,6 +724,10 @@ export function createGate(opts) {
         getProfile,
         putProfile,
         seedProfileFromClaims,
+        copyAvatar,
+        fetchAvatar: fetchAvatarBytes,
+        /** The bytes behind an `asset://` avatar, for serving; null without an asset store. */
+        getAsset: (id) => (assets ? assets.get(id) : Promise.resolve(null)),
         isAdmin,
         cookieName,
         /**

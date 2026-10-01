@@ -11,7 +11,6 @@ import type { DecisionView } from './decisions.js';
 import type { Auth } from './types.js';
 import type { AllowlistStore, AuditQuery } from './store.js';
 import type { Gate } from './gate.js';
-import { type ResolveAvatarOptions } from './avatar.js';
 export interface RouteOptions {
     /** Default `/api/auth`. */
     basePath?: string;
@@ -60,15 +59,6 @@ export interface RouteOptions {
     decisionPage?: (view: DecisionView, opts: DecisionPageOptions) => Response;
     /** Shown in the approve/deny page's copy. */
     decisionAppName?: string;
-    /**
-     * Enables `POST <basePath>/avatar`, which resolves a Gravatar/GitHub/explicit
-     * avatar for the admin UI to preview *before* minting. Only ever fetches
-     * gravatar.com and github.com, so it is not a general fetch proxy.
-     *
-     * Off by default: it makes an outbound request per call, which a deployment
-     * should opt into rather than discover.
-     */
-    avatarLookup?: boolean | ResolveAvatarOptions;
 }
 /**
  * Make sure `email` holds at least `scopes` on the allowlist. An existing row
