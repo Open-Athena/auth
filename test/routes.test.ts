@@ -4,6 +4,8 @@ import { createGate } from '../src/core/gate.js'
 import { adminPolicy, anyEmailPolicy, firstMatch } from '../src/core/policy.js'
 import { authRoutes } from '../src/core/routes.js'
 import type { Auth } from '../src/core/types.js'
+import { bytesToDataUri, gravatarUrl } from '../src/core/avatar.js'
+import { type MemoryAssetStore, memoryAssetStore } from '../src/testing/index.js'
 import { testDb } from './d1-shim.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -182,43 +184,131 @@ describe('admin routes', () => {
 })
 
 describe('mint route: the person on the link', () => {
-  it("stores the recipient's name and an https avatar on the grant's subject", async () => {
+  /** A real 1×1 PNG: copies are sniffed, so a few magic bytes won't pass. */
+  const PNG = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='),
+    c => c.charCodeAt(0),
+  )
+  const PNG_URI = bytesToDataUri('image/png', PNG)
+  const BOB_GH = 'https://github.com/bob.png?size=128'
+
+  /** The gate's outbound fetch: a table of image URLs; everything else 404s. */
+  let calls: string[]
+  const net = (images: Record<string, Uint8Array | { type: string; body: string }>) =>
+    (async (input: RequestInfo | URL) => {
+      const u = String(input)
+      calls.push(u)
+      const hit = images[u]
+      if (!hit) return new Response(null, { status: 404 })
+      return hit instanceof Uint8Array
+        ? new Response(hit, { headers: { 'content-type': 'image/png' } })
+        : new Response(hit.body, { headers: { 'content-type': hit.type } })
+    }) as typeof globalThis.fetch
+
+  /** Rebuild the module gate with an outbound fetch, and optionally an asset store. */
+  const withNet = (images: Record<string, Uint8Array | { type: string; body: string }>, assets?: MemoryAssetStore) => {
+    calls = []
+    gate = createGate({
+      store: d1GrantStore(db),
+      audit: d1AuditSink(db),
+      secret: SECRET,
+      adminEmails: ['boss@openathena.ai'],
+      fetch: net(images),
+      ...(assets ? { assets } : {}),
+    })
+    handle = authRoutes(gate, { audit: d1AuditQuery(db) })
+  }
+
+  it("stores the recipient's name, and a copy of their face rather than a link to it", async () => {
+    withNet({ [BOB_GH]: PNG })
     const cookie = await asAdmin()
     const minted = await post(
       '/grants',
-      { name: 'Q3 packet', scopes: ['reports'], subjectName: 'Bob Smith', avatar: 'https://cdn.test/bob.png' },
+      { name: 'Q3 packet', scopes: ['reports'], subjectName: 'Bob Smith', avatar: 'https://github.com/bob' },
       cookie,
     )
     // `name` stays the link's admin-side label; the person is `subject.name`.
-    expect([minted.body.grant.name, minted.body.grant.subject]).toEqual([
-      'Q3 packet',
-      { name: 'Bob Smith', avatar: 'https://cdn.test/bob.png' },
-    ])
+    expect([minted.body.grant.name, minted.body.grant.subject]).toEqual(['Q3 packet', { name: 'Bob Smith', avatar: PNG_URI }])
+    expect(calls).toEqual([BOB_GH])
   })
 
-  it('drops an avatar that is not https, rather than minting a link that loads it', async () => {
+  it('keeps the bytes in the asset store when one is bound, and serves them from its own origin', async () => {
+    const assets = memoryAssetStore()
+    withNet({ [BOB_GH]: PNG }, assets)
     const cookie = await asAdmin()
-    const cases = ['http://cdn.test/bob.png', 'javascript:alert(1)', 'data:image/png;base64,AAAA']
-    const minted = []
-    for (const avatar of cases) {
-      const res = await post('/grants', { scopes: ['reports'], subjectName: 'Bob', avatar }, cookie)
-      minted.push(res.body.grant.subject)
+    const minted = await post('/grants', { scopes: ['reports'], subjectName: 'Bob', avatar: 'bob' }, cookie)
+    const [id] = [...assets.rows.keys()]
+    const served = `/api/auth/avatar/${id}`
+    expect(minted.body.grant.subject).toEqual({ name: 'Bob', avatar: served })
+
+    // The recipient sees the same first-party path…
+    const session = pair((await post('/exchange', { token: minted.body.token })).setCookie!)
+    expect((await call('/whoami', {}, session)).body.subject).toEqual({ name: 'Bob', avatar: served })
+
+    // …and only a session can load it.
+    const get = async (c?: string) => {
+      const res = (await handle(new Request(url(`/avatar/${id}`), c ? { headers: { Cookie: c } } : {})))!
+      return { status: res.status, type: res.headers.get('content-type'), bytes: new Uint8Array(await res.arrayBuffer()) }
     }
-    expect(minted).toEqual([{ name: 'Bob' }, { name: 'Bob' }, { name: 'Bob' }])
+    expect(await get(session)).toEqual({ status: 200, type: 'image/png', bytes: PNG })
+    expect((await get()).status).toBe(401)
   })
 
-  it('501s the avatar lookup until a deployment opts in', async () => {
+  it('refuses a face it cannot copy with a reason, and mints nothing', async () => {
+    withNet({ 'https://cdn.test/page': { type: 'text/html', body: '<html>' } })
     const cookie = await asAdmin()
-    expect(await post('/avatar', { email: 'bob@example.com' }, cookie)).toMatchObject({
-      status: 501,
-      body: { error: 'avatar lookup not configured' },
+    const results = []
+    for (const avatar of ['https://www.linkedin.com/in/bob/', 'https://cdn.test/page', 'http://cdn.test/bob.png', 'https://cdn.test/gone.png']) {
+      results.push(await post('/grants', { scopes: ['reports'], subjectName: 'Bob', avatar }, cookie))
+    }
+    expect(results.map(r => [r.status, r.body.detail])).toEqual([
+      [400, 'LinkedIn has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that'],
+      [400, 'that URL is a web page, not an image; copy the image address instead (or save it and upload)'],
+      [400, 'only https: URLs are fetched'],
+      [400, 'fetching the image failed (HTTP 404)'],
+    ])
+    expect((await call('/grants', {}, cookie)).body.grants).toEqual([])
+  })
+
+  it("falls back to the recipient's Gravatar, unless told `avatar: null`", async () => {
+    const grav = await gravatarUrl('bob@example.com')
+    withNet({ [grav]: PNG })
+    const cookie = await asAdmin()
+    const implicit = await post('/grants', { scopes: ['reports'], email: 'bob@example.com' }, cookie)
+    const none = await post('/grants', { scopes: ['reports'], email: 'bob@example.com', avatar: null }, cookie)
+    const noGravatar = await post('/grants', { scopes: ['reports'], email: 'ann@example.com' }, cookie)
+    expect([implicit.body.grant.subject, none.body.grant.subject, noGravatar.body.grant.subject]).toEqual([
+      { avatar: PNG_URI },
+      null,
+      null,
+    ])
+    expect(calls).toEqual([grav, await gravatarUrl('ann@example.com')])
+  })
+
+  it('previews a face as a data: URI the mint can take straight back', async () => {
+    withNet({ [BOB_GH]: PNG })
+    const cookie = await asAdmin()
+    const preview = await post('/avatar', { ref: '@bob' }, cookie)
+    expect(preview).toMatchObject({ status: 200, body: { avatar: PNG_URI, source: 'github' } })
+    const minted = await post('/grants', { scopes: ['reports'], avatar: preview.body.avatar }, cookie)
+    expect(minted.body.grant.subject).toEqual({ avatar: PNG_URI })
+    // The handed-back data: URI is re-validated, not re-fetched.
+    expect(calls).toEqual([BOB_GH])
+    expect(await post('/avatar', { ref: 'https://x.com/bob' }, cookie)).toMatchObject({
+      status: 400,
+      body: { error: 'invalid avatar' },
     })
   })
 
-  it('never lets a non-admin ask it to fetch anything', async () => {
-    // Checked *before* the 501, so an anonymous caller can't even discover
-    // whether lookup is enabled.
-    expect((await post('/avatar', { email: 'bob@example.com' })).status).toBe(401)
+  it('never lets an anonymous caller or a share-link visitor make it fetch anything', async () => {
+    withNet({ [BOB_GH]: PNG })
+    const cookie = await asAdmin()
+    const minted = await post('/grants', { scopes: ['reports'], avatar: null }, cookie)
+    const visitor = pair((await post('/exchange', { token: minted.body.token })).setCookie!)
+    expect([(await post('/avatar', { ref: 'bob' })).status, (await post('/avatar', { ref: 'bob' }, visitor)).status]).toEqual([
+      401, 403,
+    ])
+    expect(calls).toEqual([])
   })
 })
 

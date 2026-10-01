@@ -1,5 +1,5 @@
 import { type Grant, subjectName } from '@open-athena/auth'
-import { AllowlistPanel, type Whoami, Avatar, useWhoami } from '@open-athena/auth/react'
+import { AllowlistPanel, type Whoami, Avatar, AvatarField, useWhoami } from '@open-athena/auth/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useEffect, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
@@ -82,6 +82,9 @@ function Console({ whoami }: { whoami: Whoami }) {
   // The only moment a raw token exists outside the recipient's browser is the
   // response that minted (or rotated) it.
   const showToken = (id: string, token: string) => setTokens(t => ({ ...t, [id]: token }))
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [recipientName, setRecipientName] = useState('')
+  const [avatar, setAvatar] = useState<string | null>(null)
   const mint = useMutation({
     mutationFn: api.mint,
     onSuccess: ({ grant, token }) => {
@@ -95,11 +98,12 @@ function Console({ whoami }: { whoami: Whoami }) {
     const f = new FormData(e.currentTarget)
     const days = Number(f.get('days'))
     const max = Number(f.get('max'))
-    const email = String(f.get('email') || '').trim()
+    const email = recipientEmail.trim()
     mint.mutate({
       name: String(f.get('memo') || '').trim() || null,
-      subjectName: String(f.get('recipient') || '').trim(),
+      subjectName: recipientName.trim(),
       email: email || null,
+      avatar,
       allowlist: Boolean(email) && f.get('allowlist') === 'on',
       scopes: ['reports'],
       maxRedeems: max > 0 ? max : null,
@@ -145,16 +149,44 @@ function Console({ whoami }: { whoami: Whoami }) {
           </label>
           <label>
             Recipient <span className="muted">(optional — puts a name on the page)</span>
-            <input name="recipient" placeholder="Ada Lovelace" autoComplete="off" />
+            <input
+              name="recipient"
+              placeholder="Ada Lovelace"
+              autoComplete="off"
+              value={recipientName}
+              onChange={e => setRecipientName(e.target.value)}
+            />
           </label>
           <label>
             Email <span className="muted">(optional — who the link is for)</span>
-            <input name="email" type="email" placeholder="ada@example.org" autoComplete="off" />
+            <input
+              name="email"
+              type="email"
+              placeholder="ada@example.org"
+              autoComplete="off"
+              value={recipientEmail}
+              onChange={e => setRecipientEmail(e.target.value)}
+            />
           </label>
           <label className="check">
             <input name="allowlist" type="checkbox" defaultChecked /> Also let this email sign in with Google or an
             emailed code (adds it to the allowlist below)
           </label>
+          <div className="avatar-field">
+            <label htmlFor="mint-avatar">
+              Face <span className="muted">(optional — their Gravatar if they have one; or paste a profile, or upload)</span>
+            </label>
+            <AvatarField
+              id="mint-avatar"
+              endpoint="/api/admin/avatar"
+              value={avatar}
+              onChange={setAvatar}
+              email={recipientEmail}
+              name={recipientName.trim() || null}
+              size={36}
+              classNames={{ row: 'avatar-row', input: 'input', button: 'btn small', hint: 'muted small' }}
+            />
+          </div>
           <label>
             Expires in
             <select name="days" defaultValue="30">
@@ -317,7 +349,12 @@ function GrantCard({
           <span className="tag soft">disabled</span> No new redemptions; anyone already in stays in.
         </p>
       )}
-      {grant.subject && <p className="muted small">for {subjectName(grant.subject)}</p>}
+      {grant.subject && (
+        <p className="muted small for">
+          {grant.subject.avatar && <Avatar src={grant.subject.avatar} name={subjectName(grant.subject)} size={20} />}
+          for {subjectName(grant.subject) ?? grant.email ?? 'someone'}
+        </p>
+      )}
 
       <dl className="facts">
         <div>

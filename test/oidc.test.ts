@@ -356,7 +356,11 @@ describe('googleOneTap', () => {
  */
 describe('profile seed', () => {
   const PICTURE = 'https://pics.test/face.png'
-  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  /** A real 1×1 PNG: the copy sniffs the header, so the signature alone won't pass. */
+  const PNG = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='),
+    c => c.charCodeAt(0),
+  )
   const dataUri = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`
 
   /** The *gate's* fetch (avatar copy), distinct from the adapter's (JWKS/token). */
@@ -379,7 +383,7 @@ describe('profile seed', () => {
       policy: domainPolicy(['openathena.ai'], ['internal']),
       fetch: o.fetch ?? pictureFetch(),
       ...(profiles ? { profiles } : {}),
-      ...(o.timeoutMs !== undefined ? { seedAvatarTimeoutMs: o.timeoutMs } : {}),
+      ...(o.timeoutMs !== undefined ? { avatarFetchTimeoutMs: o.timeoutMs } : {}),
     })
     return { g, profiles }
   }

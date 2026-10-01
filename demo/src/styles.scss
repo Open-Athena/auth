@@ -377,6 +377,25 @@ table {
       margin-top: 0.15rem;
     }
   }
+  .avatar-field {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+  }
+  .avatar-row {
+    flex-wrap: wrap;
+    input[type='text'] {
+      flex: 1 1 14rem;
+      min-width: 0;
+    }
+  }
+}
+
+.for {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .grants {

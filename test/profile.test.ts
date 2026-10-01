@@ -87,7 +87,7 @@ describe('putProfile / getProfile', () => {
     })
     const { auth, cookie } = (await gate.signIn(EMAIL, req()))!
 
-    const res = await gate.putProfile(auth, { avatar: { url } })
+    const res = await gate.putProfile(auth, { avatar: { ref: url } })
     expect(res.ok).toBe(true)
     if (!res.ok) throw new Error('putProfile should have succeeded')
     // The whole safety property: what's stored is the inlined bytes, not the URL.
@@ -141,6 +141,23 @@ describe('putProfile / getProfile', () => {
     expect([...assets.rows.keys()]).toEqual([secondId])
   })
 
+  it('keeps the current face, asset and all, when a replacement fails to copy', async () => {
+    const assets = memoryAssetStore()
+    const profiles = memoryProfileStore()
+    const gate = createGate({ store: memoryStore(), profiles, assets, secret: SECRET, policy: anyEmailPolicy(['internal']) })
+    const { auth } = (await gate.signIn(EMAIL, req()))!
+
+    const first = await gate.putProfile(auth, { avatar: { upload: PNG_1x1 } })
+    const failed = await gate.putProfile(auth, { avatar: { ref: 'https://www.linkedin.com/in/staff/' } })
+    expect(failed).toEqual({
+      ok: false,
+      reason: 'invalid-avatar',
+      detail: 'LinkedIn has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that',
+    })
+    const kept = first.ok ? first.profile.avatar : null
+    expect([(await gate.getProfile(auth))?.avatar, [...assets.rows.keys()]]).toEqual([kept, [assetId(kept)]])
+  })
+
   it('clears the avatar back to nothing', async () => {
     const url = 'https://img.example/me.png'
     const stub = imageFetch(url)
@@ -154,7 +171,7 @@ describe('putProfile / getProfile', () => {
     })
     const { auth } = (await gate.signIn(EMAIL, req()))!
 
-    await gate.putProfile(auth, { avatar: { url } })
+    await gate.putProfile(auth, { avatar: { ref: url } })
     const cleared = await gate.putProfile(auth, { avatar: null })
     expect(cleared.ok && [cleared.profile.avatar, cleared.profile.avatarSrc]).toEqual([null, null])
   })
@@ -164,7 +181,7 @@ describe('putProfile / getProfile', () => {
     const gate = createGate({ store: memoryStore(), profiles, secret: SECRET, policy: anyEmailPolicy(['internal']) })
     const { auth } = (await gate.signIn(EMAIL, req()))!
 
-    const res = await gate.putProfile(auth, { avatar: { url: 'http://insecure.example/x.png' } })
+    const res = await gate.putProfile(auth, { avatar: { ref: 'http://insecure.example/x.png' } })
     expect(res.ok).toBe(false)
     expect(!res.ok && res.reason).toBe('invalid-avatar')
     expect(profiles.rows.size).toBe(0)

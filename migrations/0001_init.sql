@@ -118,7 +118,7 @@ CREATE TABLE profiles (
   email      TEXT PRIMARY KEY,
   name       TEXT,
   avatar     TEXT,
-  avatar_src TEXT,             -- provenance for re-resolve/debug: 'upload' | 'url' | 'github' | 'gravatar'
+  avatar_src TEXT,             -- provenance for re-resolve/debug: 'upload' | 'url' | 'github' | 'gravatar' | 'bluesky' | 'mastodon'
   updated_at INTEGER NOT NULL
 );
 

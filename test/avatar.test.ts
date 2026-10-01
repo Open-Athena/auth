@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  type AvatarRef,
   InvalidImageError,
-  MAX_INLINE_AVATAR_BYTES,
   bytesToDataUri,
+  fetchAvatar,
   githubAvatarUrl,
   gravatarUrl,
   isGithubHandle,
   isSafeAvatarUrl,
-  resolveAvatar,
+  parseAvatarRef,
   validateUploadedImage,
 } from '../src/core/avatar.js'
 
@@ -19,22 +20,6 @@ const PNG_1x1 = Uint8Array.from(
 /** A minimal GIF89a header declaring 1×1 — enough for the dimension sniff. */
 const GIF_1x1 = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00])
 const bytesOf = (s: string): Uint8Array => new TextEncoder().encode(s)
-
-/** A fetch that answers from a table, and records what it was asked for. */
-function stubFetch(table: Record<string, { status?: number; type?: string; body?: Uint8Array }>) {
-  const calls: string[] = []
-  const fn = (async (input: RequestInfo | URL) => {
-    const url = String(input)
-    calls.push(url)
-    const hit = table[url]
-    if (!hit) return new Response(null, { status: 404 })
-    return new Response(hit.body ?? new Uint8Array([1, 2, 3]), {
-      status: hit.status ?? 200,
-      headers: { 'content-type': hit.type ?? 'image/png' },
-    })
-  }) as typeof globalThis.fetch
-  return { fn, calls }
-}
 
 describe('gravatarUrl', () => {
   it('hashes the normalized address, and asks for a 404 rather than a generated face', async () => {
@@ -76,67 +61,181 @@ describe('isSafeAvatarUrl', () => {
   })
 })
 
-describe('resolveAvatar', () => {
-  it('prefers an explicit URL and does not probe it', async () => {
-    const { fn, calls } = stubFetch({})
-    expect(await resolveAvatar({ url: 'https://cdn.test/bob.png', email: 'bob@example.com' }, { fetch: fn })).toBe(
-      'https://cdn.test/bob.png',
-    )
-    // A hotlink-protected host would fail a probe; the admin's assertion stands.
-    expect(calls).toEqual([])
+/** `parseAvatarRef`, with refusals as their message so one table covers both. */
+const parse = (s: string) => {
+  try {
+    const r = parseAvatarRef(s)
+    return r.kind === 'upload' ? { kind: r.kind, bytes: [...r.bytes] } : r
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+describe('parseAvatarRef', () => {
+  it('recognizes each network by URL or handle', () => {
+    expect(
+      [
+        'torvalds',
+        '@torvalds',
+        'https://github.com/torvalds',
+        'https://github.com/torvalds/linux',
+        'https://github.com/torvalds.png',
+        'alice.bsky.social',
+        'https://bsky.app/profile/Alice.bsky.social',
+        'https://bsky.app/profile/did:plc:abcdefghijklmnopqrstuvwx',
+        '@Gargron@mastodon.social',
+        'https://mastodon.social/@Gargron',
+        'https://media.licdn.com/dms/image/v2/X/profile-displayphoto-shrink_200_200/0?e=1&t=sig',
+        'data:image/png;base64,iVBORw==',
+      ].map(parse),
+    ).toEqual([
+      { kind: 'github', handle: 'torvalds' },
+      { kind: 'github', handle: 'torvalds' },
+      { kind: 'github', handle: 'torvalds' },
+      { kind: 'github', handle: 'torvalds' },
+      { kind: 'github', handle: 'torvalds' },
+      { kind: 'bluesky', actor: 'alice.bsky.social' },
+      { kind: 'bluesky', actor: 'alice.bsky.social' },
+      { kind: 'bluesky', actor: 'did:plc:abcdefghijklmnopqrstuvwx' },
+      { kind: 'mastodon', user: 'Gargron', instance: 'mastodon.social' },
+      { kind: 'mastodon', user: 'Gargron', instance: 'mastodon.social' },
+      // A LinkedIn *image* address is fine — it's the profile page that isn't.
+      { kind: 'url', url: 'https://media.licdn.com/dms/image/v2/X/profile-displayphoto-shrink_200_200/0?e=1&t=sig' },
+      { kind: 'upload', bytes: [137, 80, 78, 71] },
+    ])
   })
 
-  it('probes GitHub before trusting the handle', async () => {
-    const { fn, calls } = stubFetch({ 'https://github.com/torvalds.png?size=128': {} })
-    const [found, missing] = [
-      await resolveAvatar({ github: 'torvalds' }, { fetch: fn }),
-      await resolveAvatar({ github: 'nobody-here' }, { fetch: fn }),
-    ]
-    expect([found, missing]).toEqual(['https://github.com/torvalds.png?size=128', null])
-    expect(calls).toEqual(['https://github.com/torvalds.png?size=128', 'https://github.com/nobody-here.png?size=128'])
+  it('refuses, by name, the networks with no public way to get a face', () => {
+    const fix = 'has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that'
+    expect(
+      ['https://www.linkedin.com/in/someone/', 'https://x.com/someone', 'https://twitter.com/someone', 'https://www.facebook.com/someone'].map(parse),
+    ).toEqual([
+      { error: `LinkedIn ${fix}` },
+      { error: `X ${fix}` },
+      { error: `X ${fix}` },
+      { error: `Facebook ${fix}` },
+    ])
   })
 
-  it('reports "no avatar" as null rather than as a failure', async () => {
-    const { fn } = stubFetch({})
-    // Gravatar's `d=404` answer for an address with no avatar.
-    expect(await resolveAvatar({ email: 'nobody@example.com' }, { fetch: fn })).toBe(null)
-    expect(await resolveAvatar({}, { fetch: fn })).toBe(null)
+  it('refuses anything that would fetch something surprising', () => {
+    expect(
+      [
+        '',
+        'http://cdn.test/a.png',
+        'javascript:alert(1)',
+        'https://u:p@cdn.test/a.png',
+        'data:text/html,<b>hi</b>',
+        '../etc',
+        'https://github.com/settings',
+        '@bad!user@mastodon.social',
+      ].map(parse),
+    ).toEqual([
+      { error: 'empty avatar reference' },
+      { error: 'only https: URLs are fetched' },
+      { error: 'only https: URLs are fetched' },
+      { error: 'URLs with credentials are refused' },
+      { error: 'only base64 data: URIs are accepted' },
+      { error: 'not a profile URL, handle, or image URL: ../etc' },
+      { error: 'a GitHub URL should be a profile: github.com/<handle>' },
+      { error: 'not a Mastodon address: @bad!user@mastodon.social' },
+    ])
+  })
+})
+
+/** A fetch that answers from a table of images and JSON, recording every URL. */
+function stubNet(table: Record<string, { status?: number; type?: string; body?: Uint8Array | string; json?: unknown }>) {
+  const calls: string[] = []
+  const fn = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    calls.push(url)
+    const hit = table[url]
+    if (!hit) return new Response(null, { status: 404 })
+    if (hit.json !== undefined) {
+      return new Response(JSON.stringify(hit.json), { status: hit.status ?? 200, headers: { 'content-type': 'application/json' } })
+    }
+    return new Response(hit.body ?? PNG_1x1, { status: hit.status ?? 200, headers: { 'content-type': hit.type ?? 'image/png' } })
+  }) as typeof globalThis.fetch
+  return { fn, calls }
+}
+
+const PNG = { type: 'image/png', bytes: PNG_1x1 }
+/** `fetchAvatar`, with failures as their message. */
+const fetched = async (ref: AvatarRef, net: ReturnType<typeof stubNet>, maxBytes?: number) => {
+  try {
+    return await fetchAvatar(ref, { fetch: net.fn, ...(maxBytes ? { maxBytes } : {}) })
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+describe('fetchAvatar', () => {
+  const BSKY_API = 'https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=alice.bsky.social'
+  const MASTO_API = 'https://mastodon.social/api/v1/accounts/lookup?acct=Gargron'
+
+  it('copies a GitHub face, and reports a missing handle as null', async () => {
+    const net = stubNet({ 'https://github.com/torvalds.png?size=128': {} })
+    expect([
+      await fetched({ kind: 'github', handle: 'torvalds' }, net),
+      await fetched({ kind: 'github', handle: 'nobody-here' }, net),
+    ]).toEqual([PNG, null])
+    expect(net.calls).toEqual(['https://github.com/torvalds.png?size=128', 'https://github.com/nobody-here.png?size=128'])
   })
 
-  it('refuses a malformed source instead of fetching something surprising', async () => {
-    const { fn, calls } = stubFetch({})
-    const results = [
-      await resolveAvatar({ url: 'javascript:alert(1)' }, { fetch: fn }),
-      await resolveAvatar({ github: '../../etc/passwd' }, { fetch: fn }),
-    ]
-    expect(results).toEqual([null, null])
-    expect(calls).toEqual([])
+  it('treats a Gravatar 404 as "no avatar", not a failure', async () => {
+    expect(await fetched({ kind: 'gravatar', email: 'nobody@example.com' }, stubNet({}))).toBe(null)
   })
 
-  describe('inline', () => {
-    const png = 'https://github.com/torvalds.png?size=128'
-
-    it('returns a data URI, so the recipient never calls the third party', async () => {
-      const { fn } = stubFetch({ [png]: { body: new Uint8Array([137, 80, 78, 71]) } })
-      expect(await resolveAvatar({ github: 'torvalds' }, { fetch: fn, inline: true })).toBe('data:image/png;base64,iVBORw==')
+  it('looks a Bluesky handle up, then fetches the thumbnail preset rather than the original', async () => {
+    const net = stubNet({
+      [BSKY_API]: { json: { handle: 'alice.bsky.social', avatar: 'https://cdn.bsky.app/img/avatar/plain/did:plc:x/bafk@jpeg' } },
+      'https://cdn.bsky.app/img/avatar_thumbnail/plain/did:plc:x/bafk@jpeg': {},
     })
+    expect(await fetched({ kind: 'bluesky', actor: 'alice.bsky.social' }, net)).toEqual(PNG)
+    expect(net.calls).toEqual([BSKY_API, 'https://cdn.bsky.app/img/avatar_thumbnail/plain/did:plc:x/bafk@jpeg'])
+  })
 
-    it('refuses a non-image, an SVG, and anything oversized', async () => {
-      const cases = [
-        { type: 'text/html' },
-        // SVG is a script container; inlining one into an admin's page is not
-        // the same kind of thing as inlining a PNG.
-        { type: 'image/svg+xml' },
-        { type: 'image/png', body: new Uint8Array(MAX_INLINE_AVATAR_BYTES + 1) },
-        { type: 'image/png', body: new Uint8Array(0) },
-      ]
-      const results = []
-      for (const hit of cases) {
-        const { fn } = stubFetch({ [png]: hit })
-        results.push(await resolveAvatar({ github: 'torvalds' }, { fetch: fn, inline: true }))
-      }
-      expect(results).toEqual([null, null, null, null])
+  it('distinguishes a Bluesky profile with no picture from no profile at all', async () => {
+    const actor = { kind: 'bluesky', actor: 'alice.bsky.social' } as const
+    expect([
+      await fetched(actor, stubNet({ [BSKY_API]: { json: { handle: 'alice.bsky.social' } } })),
+      await fetched(actor, stubNet({ [BSKY_API]: { status: 400, json: { error: 'InvalidRequest' } } })),
+    ]).toEqual([null, { error: 'no Bluesky profile alice.bsky.social' }])
+  })
+
+  it("looks a Mastodon account up on its own instance, and ignores the instance's stock image", async () => {
+    const ref = { kind: 'mastodon', user: 'Gargron', instance: 'mastodon.social' } as const
+    const real = stubNet({
+      [MASTO_API]: { json: { avatar_static: 'https://files.mastodon.social/accounts/avatars/000/000/001/original/a.png' } },
+      'https://files.mastodon.social/accounts/avatars/000/000/001/original/a.png': {},
     })
+    const stock = stubNet({ [MASTO_API]: { json: { avatar_static: 'https://mastodon.social/avatars/original/missing.png' } } })
+    expect([await fetched(ref, real), await fetched(ref, stock)]).toEqual([PNG, null])
+    expect(stock.calls).toEqual([MASTO_API])
+  })
+
+  it('refuses a page, an SVG, an oversized image, and a failed fetch, saying which', async () => {
+    const url = 'https://cdn.test/face'
+    const ref = { kind: 'url', url } as const
+    expect([
+      await fetched(ref, stubNet({ [url]: { type: 'text/html', body: '<html>' } })),
+      // SVG is a script container; sniffing (not the header) is what refuses it.
+      await fetched(ref, stubNet({ [url]: { type: 'image/png', body: '<svg xmlns="http://www.w3.org/2000/svg"/>' } })),
+      await fetched(ref, stubNet({ [url]: { body: new Uint8Array(70 * 1024) } })),
+      await fetched(ref, stubNet({ [url]: { status: 403 } })),
+      await fetched(ref, stubNet({})),
+    ]).toEqual([
+      { error: 'that URL is a web page, not an image; copy the image address instead (or save it and upload)' },
+      { error: 'not a supported image (png, jpeg, webp, or gif)' },
+      { error: 'image is 70 KB, over the 64 KB cap; save it and upload instead (uploads are downscaled)' },
+      { error: 'fetching the image failed (HTTP 403)' },
+      { error: 'fetching the image failed (HTTP 404)' },
+    ])
+  })
+
+  it('validates upload bytes without touching the network', async () => {
+    const net = stubNet({})
+    expect(await fetched({ kind: 'upload', bytes: PNG_1x1 }, net)).toEqual(PNG)
+    expect(net.calls).toEqual([])
   })
 })
 

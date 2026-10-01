@@ -11,7 +11,6 @@
  * minted for visitors who only read. Short-lived and unlimited-redeem: this is
  * a front door, not a secret.
  */
-import { resolveAvatar } from '@open-athena/auth'
 import { type Env, VIEW_SCOPE, gates } from '../_lib/gates.js'
 
 interface Ctx {
@@ -25,12 +24,12 @@ export const onRequestGet = async ({ request, env }: Ctx): Promise<Response> => 
   const { viewGate } = gates(env, request)
   const named = new URL(request.url).searchParams.get('named') === '1'
 
-  // A real face, resolved here once rather than in the recipient's browser on
-  // every render. GitHub rather than Gravatar for the demo persona only because
-  // `octocat` is guaranteed to resolve — an address without a Gravatar returns
-  // null, and `<Avatar>` falls back to initials, which is correct but makes for
-  // a worse demo of the feature.
-  const avatar = named ? await resolveAvatar({ github: 'octocat' }).catch(() => null) : null
+  // A real face, copied here once rather than fetched in the recipient's
+  // browser on every render. GitHub rather than Gravatar for the demo persona
+  // only because `octocat` is guaranteed to resolve — an address without a
+  // Gravatar has no face, and `<Avatar>` falls back to initials, which is
+  // correct but makes for a worse demo of the feature.
+  const avatar = named ? ((await viewGate.copyAvatar('octocat').catch(() => null))?.value ?? null) : null
 
   const { token } = await viewGate.mint({
     // The memo is for whoever reads the admin table later; the *person* is

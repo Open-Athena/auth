@@ -42,6 +42,8 @@ export interface MintInput {
   /** Who the link is for; with `allowlist`, also lets that address sign in by Google or an emailed code. */
   email?: string | null
   allowlist?: boolean
+  /** A `data:` URI from `<AvatarField>`'s preview, or null for none. The server re-validates and copies it. */
+  avatar?: string | null
   scopes: string[]
   maxRedeems: number | null
   expiresInS: number | null

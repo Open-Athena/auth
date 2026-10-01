@@ -29,7 +29,6 @@ export function Profile() {
                   form: 'stack',
                   field: 'field',
                   input: 'input',
-                  select: 'input',
                   button: 'btn primary',
                   message: 'ok small',
                   preview: 'row',
