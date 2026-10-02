@@ -17,7 +17,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText)
+  // `detail` is the human-readable why (e.g. which avatar source was refused), when the route gives one.
+  if (!res.ok) throw new ApiError(res.status, data?.detail ?? data?.error ?? res.statusText)
   return data as T
 }
 
@@ -69,6 +70,9 @@ export const api = {
   revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
   disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
   enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),
+  /** The holder's name and face: `avatar` is a ref copied server-side; omit it to keep the face, `null` to clear it. */
+  editHolder: (id: string, edit: { subjectName: string; avatar?: string | null }) =>
+    call<{ grant: Grant }>(`/api/admin/grants/${id}`, { method: 'PATCH', body: JSON.stringify(edit) }),
   rotate: (id: string) => post<{ id: string; token: string }>(`/api/admin/grants/${id}/rotate`, { endSessions: false }),
   activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),
   log: (limit = 60) => call<{ events: StoredEvent[] }>(`/api/admin/log?limit=${limit}`).then(r => r.events),

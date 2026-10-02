@@ -10,13 +10,13 @@ import { type DecisionPageOptions, renderDecisionPage } from './decision-page.js
 import type { DecisionView } from './decisions.js'
 import type { Auth, Subject } from './types.js'
 import type { AllowEntry, AllowlistStore, AuditQuery } from './store.js'
-import type { Gate, ProfileInput } from './gate.js'
+import type { Gate, GrantEdit, ProfileInput } from './gate.js'
 import { assetId } from './assets.js'
 import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvatarRef } from './avatar.js'
 import { cleanSubject, isEmailish } from './requests.js'
 import { readCookie } from './session.js'
 import { hashToken } from './tokens.js'
-import { type GrantPatch, hasScope } from './types.js'
+import { hasScope } from './types.js'
 
 export interface RouteOptions {
   /** Default `/api/auth`. */
@@ -433,18 +433,26 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (id && seg.length === 2 && method === 'PATCH') {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        const b = await body<GrantPatch>(req)
+        const b = await body<GrantEdit>(req)
         // Whitelisted, not spread: a PATCH body is admin-supplied but still
         // untrusted structure, and `scopes`/`createdBy` are not negotiable
-        // after minting.
-        const patch: GrantPatch = {}
+        // after minting. The holder's face goes in as a ref, as at mint.
+        const patch: GrantEdit = {}
         if ('name' in b) patch.name = b.name ?? null
         if ('note' in b) patch.note = b.note ?? null
         if ('expiresAt' in b) patch.expiresAt = b.expiresAt ?? null
         if ('maxRedeems' in b) patch.maxRedeems = b.maxRedeems ?? null
         if ('sessionTtlS' in b) patch.sessionTtlS = b.sessionTtlS ?? null
         if ('expiryEndsSessions' in b) patch.expiryEndsSessions = !!b.expiryEndsSessions
-        const grant = await gate.update(id, patch)
+        if ('subjectName' in b) patch.subjectName = b.subjectName ?? null
+        if ('avatar' in b) patch.avatar = b.avatar ?? null
+        let grant: Awaited<ReturnType<typeof gate.update>>
+        try {
+          grant = await gate.update(id, patch)
+        } catch (e) {
+          if (e instanceof InvalidImageError) return json({ error: 'invalid avatar', detail: e.message }, 400)
+          throw e
+        }
         return grant ? json({ grant: present(grant) }) : json({ error: 'not found' }, 404)
       }
 

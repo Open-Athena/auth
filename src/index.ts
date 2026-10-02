@@ -44,6 +44,7 @@ export type {
   AvatarInput,
   Gate,
   GateOptions,
+  GrantEdit,
   MintResult,
   ProfileInput,
   PutProfileResult,

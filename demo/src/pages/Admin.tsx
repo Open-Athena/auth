@@ -290,6 +290,7 @@ function GrantCard({
   onToken: (id: string, token: string) => void
 }) {
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
   const activity = useQuery({
     queryKey: ['activity', grant.id],
     queryFn: () => api.activity(grant.id),
@@ -349,11 +350,20 @@ function GrantCard({
           <span className="tag soft">disabled</span> No new redemptions; anyone already in stays in.
         </p>
       )}
-      {grant.subject && (
-        <p className="muted small for">
-          {grant.subject.avatar && <Avatar src={grant.subject.avatar} name={subjectName(grant.subject)} size={20} />}
-          for {subjectName(grant.subject) ?? grant.email ?? 'someone'}
-        </p>
+      {editing ? (
+        <HolderEditor grant={grant} onDone={() => setEditing(false)} onChanged={onChanged} />
+      ) : (
+        (grant.subject || !revoked) && (
+          <p className="muted small for">
+            {grant.subject?.avatar && <Avatar src={grant.subject.avatar} name={subjectName(grant.subject)} size={20} />}
+            for {subjectName(grant.subject) ?? grant.email ?? 'someone'}
+            {!revoked && (
+              <button className="linkish" type="button" onClick={() => setEditing(true)}>
+                edit
+              </button>
+            )}
+          </p>
+        )
       )}
 
       <dl className="facts">
@@ -519,5 +529,60 @@ function RequestQueue({ onChange }: { onChange: () => void }) {
         </p>
       ))}
     </section>
+  )
+}
+
+/**
+ * Rename the link's holder or change their face after minting. The face is
+ * copied server-side, as at mint; leaving the field untouched keeps the
+ * current one.
+ */
+function HolderEditor({ grant, onDone, onChanged }: { grant: Grant; onDone: () => void; onChanged: () => void }) {
+  const [name, setName] = useState(subjectName(grant.subject) ?? '')
+  // `undefined` = keep the current face; `null` = clear it; a `data:` URI = replace.
+  const [avatar, setAvatar] = useState<string | null | undefined>(undefined)
+  const save = useMutation({
+    mutationFn: () => api.editHolder(grant.id, { subjectName: name, ...(avatar === undefined ? {} : { avatar }) }),
+    onSuccess: () => {
+      onChanged()
+      onDone()
+    },
+  })
+  return (
+    <form
+      className="holder-edit"
+      onSubmit={e => {
+        e.preventDefault()
+        save.mutate()
+      }}
+    >
+      <label>
+        <span>Holder's name</span>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} autoFocus />
+      </label>
+      <div className="avatar-field">
+        <span>Face</span>
+        <AvatarField
+          id={`holder-avatar-${grant.id}`}
+          endpoint="/api/admin/avatar"
+          value={avatar === undefined ? (grant.subject?.avatar ?? null) : avatar}
+          onChange={setAvatar}
+          email={grant.email}
+          autoGravatar={false}
+          name={name.trim() || null}
+          size={36}
+          classNames={{ row: 'avatar-row', input: 'input', button: 'btn small', hint: 'muted small' }}
+        />
+      </div>
+      {save.error && <p className="err">{save.error.message}</p>}
+      <div className="row">
+        <button className="btn small" type="submit" disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <button className="btn small" type="button" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }

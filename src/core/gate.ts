@@ -27,6 +27,7 @@ import {
   DEFAULT_RATE_LIMIT,
   type Notify,
   type RateLimit,
+  cleanSubject,
   isEmailish,
   noopNotify,
   subjectName,
@@ -171,6 +172,18 @@ export interface MintResult {
  * How a caller supplies an avatar to `putProfile`. Every source is copied
  * server-side (`copyAvatar`) — a live remote URL is never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
  */
+/**
+ * What an admin may change on a minted link: `GrantPatch`'s terms, plus the
+ * holder's name and face. The holder's `subject` is never taken as given, so
+ * an avatar can't skip the copy.
+ */
+export interface GrantEdit extends Omit<GrantPatch, 'subject'> {
+  /** The holder's display name (`subject.name`); null or blank clears it. */
+  subjectName?: string | null
+  /** The holder's face: anything `copyAvatar` takes, copied before it's stored; null clears it. */
+  avatar?: string | null
+}
+
 export type AvatarInput =
   | { upload: Uint8Array }
   /** Anything `parseAvatarRef` takes: a profile URL, handle, image URL, or `data:` URI. */
@@ -780,13 +793,41 @@ export function createGate(opts: GateOptions) {
    *
    * `sessionTtlS` is the exception worth knowing about: it is baked into the
    * cookie at redeem time, so changing it only affects future redemptions.
+   *
+   * The holder's name and face apply on their next request: a grant session
+   * re-reads its grant every time. A new `avatar` is copied first (throwing
+   * `InvalidImageError` as `mint` does), and a replaced stored asset is
+   * dropped only once the new subject is written.
    */
-  async function update(id: string, patch: GrantPatch, nowMs = Date.now()): Promise<Grant | null> {
+  async function update(id: string, edit: GrantEdit, nowMs = Date.now()): Promise<Grant | null> {
     const nowS = sec(nowMs)
+    const { subjectName: name, avatar, ...patch }: GrantPatch & GrantEdit = edit
+    let prior: Subject | null = null
+    if ('subjectName' in edit || 'avatar' in edit) {
+      const existing = await store.byId(id)
+      if (!existing) return null
+      prior = existing.subject
+      const subject: Subject = { ...existing.subject }
+      if ('subjectName' in edit) {
+        const clean = cleanSubject({ name })?.name
+        if (clean) subject.name = clean
+        else delete subject.name
+      }
+      if ('avatar' in edit) {
+        const copied = avatar ? await copyAvatar(avatar) : null
+        if (copied) subject.avatar = copied.value
+        else delete subject.avatar
+      }
+      patch.subject = Object.keys(subject).length ? subject : null
+    }
     const grant = await store.update(id, patch)
     // Logged because changing a link's terms is exactly the sort of thing the
     // ledger exists to show: "who extended this, and when".
-    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(patch).sort().join(',') || null })
+    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(edit).sort().join(',') || null })
+    const priorAsset = assetId(prior?.avatar)
+    if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
+      await assets.del(priorAsset).catch(() => {})
+    }
     return grant
   }
 

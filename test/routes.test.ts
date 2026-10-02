@@ -300,6 +300,60 @@ describe('mint route: the person on the link', () => {
     })
   })
 
+  const patch = (id: string, data: unknown, cookie: string) =>
+    call(`/grants/${id}`, { method: 'PATCH', body: JSON.stringify(data) }, cookie)
+
+  it("edits the holder's name and face after minting, and the holder sees it on their next request", async () => {
+    withNet({ [BOB_GH]: PNG })
+    const cookie = await asAdmin()
+    const minted = await post('/grants', { name: 'Loom Bot', scopes: ['reports'], avatar: null }, cookie)
+    const { id } = minted.body.grant
+    const holder = pair((await post('/exchange', { token: minted.body.token })).setCookie!)
+    expect((await call('/whoami', {}, holder)).body.subject).toBeNull()
+
+    const edited = await patch(id, { subjectName: '  Loom Bot ', avatar: 'bob' }, cookie)
+    expect([edited.status, edited.body.grant.name, edited.body.grant.subject]).toEqual([
+      200,
+      'Loom Bot',
+      { name: 'Loom Bot', avatar: PNG_URI },
+    ])
+    // No re-exchange: a grant session re-reads its grant.
+    expect((await call('/whoami', {}, holder)).body.subject).toEqual({ name: 'Loom Bot', avatar: PNG_URI })
+
+    // Each field is independent: renaming keeps the face; clearing the face keeps the name.
+    expect((await patch(id, { subjectName: 'Loom' }, cookie)).body.grant.subject).toEqual({ name: 'Loom', avatar: PNG_URI })
+    expect((await patch(id, { avatar: null }, cookie)).body.grant.subject).toEqual({ name: 'Loom' })
+    expect((await patch(id, { subjectName: '' }, cookie)).body.grant.subject).toBeNull()
+    expect(calls).toEqual([BOB_GH])
+  })
+
+  it('refuses a replacement face it cannot copy, leaving the old one (and its stored bytes) in place', async () => {
+    const GIF = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
+    const assets = memoryAssetStore()
+    withNet({ [BOB_GH]: PNG, 'https://cdn.test/ann.gif': GIF }, assets)
+    const cookie = await asAdmin()
+    const minted = await post('/grants', { scopes: ['reports'], subjectName: 'Bob', avatar: 'bob' }, cookie)
+    const { id } = minted.body.grant
+    const [bob] = [...assets.rows.keys()]
+
+    const refused = await patch(id, { subjectName: 'Ann', avatar: 'https://www.linkedin.com/in/ann/' }, cookie)
+    expect([refused.status, refused.body.detail]).toEqual([
+      400,
+      'LinkedIn has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that',
+    ])
+    const [unchanged] = (await call('/grants', {}, cookie)).body.grants
+    expect([unchanged.subject, [...assets.rows.keys()]]).toEqual([{ name: 'Bob', avatar: `/api/auth/avatar/${bob}` }, [bob]])
+
+    // A replacement that does copy drops the old bytes.
+    const replaced = await patch(id, { avatar: 'https://cdn.test/ann.gif' }, cookie)
+    const [ann] = [...assets.rows.keys()]
+    expect([replaced.body.grant.subject, [...assets.rows.keys()], ann === bob]).toEqual([
+      { name: 'Bob', avatar: `/api/auth/avatar/${ann}` },
+      [ann],
+      false,
+    ])
+  })
+
   it('never lets an anonymous caller or a share-link visitor make it fetch anything', async () => {
     withNet({ [BOB_GH]: PNG })
     const cookie = await asAdmin()
