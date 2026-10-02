@@ -135,6 +135,17 @@ export interface MintResult {
  * How a caller supplies an avatar to `putProfile`. Every source is copied
  * server-side (`copyAvatar`) — a live remote URL is never persisted. `null` clears the avatar; `undefined` leaves it unchanged.
  */
+/**
+ * What an admin may change on a minted link: `GrantPatch`'s terms, plus the
+ * holder's name and face. The holder's `subject` is never taken as given, so
+ * an avatar can't skip the copy.
+ */
+export interface GrantEdit extends Omit<GrantPatch, 'subject'> {
+    /** The holder's display name (`subject.name`); null or blank clears it. */
+    subjectName?: string | null;
+    /** The holder's face: anything `copyAvatar` takes, copied before it's stored; null clears it. */
+    avatar?: string | null;
+}
 export type AvatarInput = {
     upload: Uint8Array;
 }
@@ -211,7 +222,7 @@ export declare function createGate(opts: GateOptions): {
     }, nowMs?: number) => Promise<MintResult | null>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
-    update: (id: string, patch: GrantPatch, nowMs?: number) => Promise<Grant | null>;
+    update: (id: string, edit: GrantEdit, nowMs?: number) => Promise<Grant | null>;
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
     whoami: (auth: Auth) => {
         kind: "sso";

@@ -348,7 +348,7 @@ export function authRoutes(gate, opts = {}) {
                 const b = await body(req);
                 // Whitelisted, not spread: a PATCH body is admin-supplied but still
                 // untrusted structure, and `scopes`/`createdBy` are not negotiable
-                // after minting.
+                // after minting. The holder's face goes in as a ref, as at mint.
                 const patch = {};
                 if ('name' in b)
                     patch.name = b.name ?? null;
@@ -362,7 +362,19 @@ export function authRoutes(gate, opts = {}) {
                     patch.sessionTtlS = b.sessionTtlS ?? null;
                 if ('expiryEndsSessions' in b)
                     patch.expiryEndsSessions = !!b.expiryEndsSessions;
-                const grant = await gate.update(id, patch);
+                if ('subjectName' in b)
+                    patch.subjectName = b.subjectName ?? null;
+                if ('avatar' in b)
+                    patch.avatar = b.avatar ?? null;
+                let grant;
+                try {
+                    grant = await gate.update(id, patch);
+                }
+                catch (e) {
+                    if (e instanceof InvalidImageError)
+                        return json({ error: 'invalid avatar', detail: e.message }, 400);
+                    throw e;
+                }
                 return grant ? json({ grant: present(grant) }) : json({ error: 'not found' }, 404);
             }
             if (id && seg[2] === 'activity' && method === 'GET') {

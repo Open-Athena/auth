@@ -13,7 +13,7 @@ import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar
 import { looksAutomated } from './bots.js';
 import { cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
-import { DEFAULT_RATE_LIMIT, isEmailish, noopNotify, subjectName, } from './requests.js';
+import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
 import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
 import { ALL_SCOPES } from './types.js';
@@ -536,14 +536,47 @@ export function createGate(opts) {
      *
      * `sessionTtlS` is the exception worth knowing about: it is baked into the
      * cookie at redeem time, so changing it only affects future redemptions.
+     *
+     * The holder's name and face apply on their next request: a grant session
+     * re-reads its grant every time. A new `avatar` is copied first (throwing
+     * `InvalidImageError` as `mint` does), and a replaced stored asset is
+     * dropped only once the new subject is written.
      */
-    async function update(id, patch, nowMs = Date.now()) {
+    async function update(id, edit, nowMs = Date.now()) {
         const nowS = sec(nowMs);
+        const { subjectName: name, avatar, ...patch } = edit;
+        let prior = null;
+        if ('subjectName' in edit || 'avatar' in edit) {
+            const existing = await store.byId(id);
+            if (!existing)
+                return null;
+            prior = existing.subject;
+            const subject = { ...existing.subject };
+            if ('subjectName' in edit) {
+                const clean = cleanSubject({ name })?.name;
+                if (clean)
+                    subject.name = clean;
+                else
+                    delete subject.name;
+            }
+            if ('avatar' in edit) {
+                const copied = avatar ? await copyAvatar(avatar) : null;
+                if (copied)
+                    subject.avatar = copied.value;
+                else
+                    delete subject.avatar;
+            }
+            patch.subject = Object.keys(subject).length ? subject : null;
+        }
         const grant = await store.update(id, patch);
         // Logged because changing a link's terms is exactly the sort of thing the
         // ledger exists to show: "who extended this, and when".
         if (grant)
-            await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(patch).sort().join(',') || null });
+            await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(edit).sort().join(',') || null });
+        const priorAsset = assetId(prior?.avatar);
+        if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
+            await assets.del(priorAsset).catch(() => { });
+        }
         return grant;
     }
     /** The email a profile is keyed by: an SSO principal, or an email-bound grant. */

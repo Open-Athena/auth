@@ -69,6 +69,8 @@ export interface GrantPatch {
     maxRedeems?: number | null;
     sessionTtlS?: number | null;
     expiryEndsSessions?: boolean;
+    /** Replaces the holder's subject wholesale. Stores take it as given; `gate.update` builds it (copying any avatar) from a `GrantEdit`. */
+    subject?: Subject | null;
 }
 export type Auth = {
     kind: 'sso';
