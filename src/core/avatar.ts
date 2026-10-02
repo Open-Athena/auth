@@ -132,6 +132,10 @@ export function parseAvatarRef(input: string): AvatarRef {
   if (s.startsWith('data:')) return { kind: 'upload', bytes: dataUriBytes(s) }
 
   if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+    // A host and path with no scheme (`github.com/loomhq`), as an address bar
+    // copies it: read it as https. Checked first, so `host/@user` isn't taken
+    // for a `user@instance` address.
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i.test(s)) return parseAvatarRef(`https://${s}`)
     const mastodon = /^@?([^@\s]+)@([^@\s]+)$/.exec(s)
     if (mastodon) {
       const [, user, instance] = mastodon as unknown as [string, string, string]

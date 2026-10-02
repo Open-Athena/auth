@@ -105,6 +105,29 @@ describe('parseAvatarRef', () => {
     ])
   })
 
+  it('reads a URL pasted without its https://, as copied from an address bar', () => {
+    expect(
+      [
+        'github.com/loomhq',
+        'www.github.com/loomhq',
+        'bsky.app/profile/alice.bsky.social',
+        'mastodon.social/@Gargron',
+        'cdn.test/faces/bob.png',
+        'www.linkedin.com/in/someone',
+        'http://github.com/loomhq',
+      ].map(parse),
+    ).toEqual([
+      { kind: 'github', handle: 'loomhq' },
+      { kind: 'github', handle: 'loomhq' },
+      { kind: 'bluesky', actor: 'alice.bsky.social' },
+      { kind: 'mastodon', user: 'Gargron', instance: 'mastodon.social' },
+      { kind: 'url', url: 'https://cdn.test/faces/bob.png' },
+      { error: 'LinkedIn has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that' },
+      // An explicit http: is still refused, not upgraded.
+      { error: 'only https: URLs are fetched' },
+    ])
+  })
+
   it('refuses, by name, the networks with no public way to get a face', () => {
     const fix = 'has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that'
     expect(
