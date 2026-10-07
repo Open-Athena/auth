@@ -10,6 +10,11 @@ export interface AccessEvent {
     ipHash?: string | null;
     ua?: string | null;
     country?: string | null;
+    /** Where and on what network the client is, from Cloudflare's `request.cf`: enough to tell "the person I sent it to" from "someone else", without keeping an address. */
+    city?: string | null;
+    region?: string | null;
+    /** The client's network operator (`cf.asOrganization`), e.g. "Comcast" or "Amazon.com". */
+    asOrg?: string | null;
     referer?: string | null;
     /**
      * Event detail. On `deny`: `expired`, `revoked`, `disabled`, `exhausted`,
@@ -29,10 +34,15 @@ export interface RequestMeta {
     ipHash: string | null;
     ua: string | null;
     country: string | null;
+    city: string | null;
+    region: string | null;
+    asOrg: string | null;
     referer: string | null;
 }
 /**
- * Pull the loggable request metadata. Header-based (not `request.cf`) so this
- * stays runtime-agnostic; CF populates `CF-Connecting-IP`/`CF-IPCountry` for free.
+ * Pull the loggable request metadata. The address and country come from
+ * headers, which CF populates (`CF-Connecting-IP`/`CF-IPCountry`) and other
+ * runtimes can set. City, region and network come from `request.cf` and are
+ * null off Cloudflare.
  */
 export declare function requestMeta(req: Request, ipSecret: string): Promise<RequestMeta>;

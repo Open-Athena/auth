@@ -11,17 +11,23 @@ import { hashIp } from './tokens.js';
 /** Drops everything. The default when an app hasn't wired a store. */
 export const nullAudit = { log: async () => { } };
 /**
- * Pull the loggable request metadata. Header-based (not `request.cf`) so this
- * stays runtime-agnostic; CF populates `CF-Connecting-IP`/`CF-IPCountry` for free.
+ * Pull the loggable request metadata. The address and country come from
+ * headers, which CF populates (`CF-Connecting-IP`/`CF-IPCountry`) and other
+ * runtimes can set. City, region and network come from `request.cf` and are
+ * null off Cloudflare.
  */
 export async function requestMeta(req, ipSecret) {
     const h = req.headers;
+    const cf = req.cf;
     const ip = h.get('CF-Connecting-IP') ?? h.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? null;
     return {
         path: new URL(req.url).pathname,
         ipHash: ip ? await hashIp(ip, ipSecret) : null,
         ua: h.get('User-Agent'),
         country: h.get('CF-IPCountry'),
+        city: cf?.city || null,
+        region: cf?.region || null,
+        asOrg: cf?.asOrganization || null,
         referer: h.get('Referer'),
     };
 }

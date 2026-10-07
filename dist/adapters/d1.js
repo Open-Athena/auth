@@ -313,7 +313,8 @@ export function d1AuditQuery(db) {
                 binds.push(opts.createdBy);
             }
             const { results } = await db
-                .prepare(`SELECT l.id, l.ts, l.event, l.grant_id, l.session_sub, l.path, l.reason, l.country
+                .prepare(`SELECT l.id, l.ts, l.event, l.grant_id, l.session_sub, l.path, l.reason, l.country,
+                  l.city, l.region, l.as_org, l.ua, l.ip_hash, l.referer
              FROM access_log l ${join}
              ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
             ORDER BY l.id DESC LIMIT ?`)
@@ -328,6 +329,12 @@ export function d1AuditQuery(db) {
                 path: r.path,
                 reason: r.reason,
                 country: r.country,
+                city: r.city,
+                region: r.region,
+                asOrg: r.as_org,
+                ua: r.ua,
+                ipHash: r.ip_hash,
+                referer: r.referer,
             }));
         },
     };
@@ -351,10 +358,10 @@ export function d1AuditSink(db) {
             const dedupe = e.event === 'view' || (e.event === 'deny' && !!e.sessionSub);
             const bucket = dedupe ? Math.floor(e.ts / 3600) : null;
             await db
-                .prepare(`INSERT INTO access_log (ts, event, grant_id, session_sub, path, status, ip_hash, ua, country, referer, reason, bucket)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                .prepare(`INSERT INTO access_log (ts, event, grant_id, session_sub, path, status, ip_hash, ua, country, city, region, as_org, referer, reason, bucket)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT DO NOTHING`)
-                .bind(e.ts, e.event, e.grantId ?? null, e.sessionSub ?? null, e.path ?? null, e.status ?? null, e.ipHash ?? null, e.ua ?? null, e.country ?? null, e.referer ?? null, e.reason ?? null, bucket)
+                .bind(e.ts, e.event, e.grantId ?? null, e.sessionSub ?? null, e.path ?? null, e.status ?? null, e.ipHash ?? null, e.ua ?? null, e.country ?? null, e.city ?? null, e.region ?? null, e.asOrg ?? null, e.referer ?? null, e.reason ?? null, bucket)
                 .run();
         },
     };
