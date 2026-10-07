@@ -21,8 +21,9 @@ const tables = () => {
 }
 
 describe('migrations/', () => {
-  it('is one baseline file', () => {
-    expect(migrationFiles(dir)).toEqual(['0001_init.sql'])
+  // Pre-1.0: one baseline, plus any additions not yet squashed into it.
+  it('is the baseline plus unsquashed additions', () => {
+    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql'])
   })
 
   it('builds exactly these tables and columns', () => {
@@ -62,6 +63,9 @@ describe('migrations/', () => {
         'referer TEXT',
         'reason TEXT',
         'bucket INTEGER',
+        'city TEXT',
+        'region TEXT',
+        'as_org TEXT',
       ],
       access_log_daily: [
         'day INTEGER NOT NULL PK#1',

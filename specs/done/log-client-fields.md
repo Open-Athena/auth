@@ -27,3 +27,11 @@ Ryan's call: keep IPs hashed, never stored raw, and log the location and network
 ## Consumer
 
 disk-tree's `GrantLog` already renders `ua` / `ip_hash` when present (hidden columns otherwise); it will add `city`/`region`/`as_org` beside `country`. Once this ships as a dist build, disk-tree bumps `@open-athena/auth` in `site/package.json` and applies the new migration to its D1.
+
+## As built (auth, 2026-10-07)
+
+- `StoredEvent` (from `d1AuditQuery().recent()`, so `GET /log`) gains `ua`, `ipHash`, `referer`, `city`, `region`, `asOrg`, all nullable.
+- `migrations/0002_access_log_location.sql`: three `ALTER TABLE access_log ADD COLUMN`s (`city`, `region`, `as_org`). Additive, so a prod D1 takes it in place. It stays a separate file until the next pre-1.0 squash.
+- `requestMeta` reads `request.cf.{city, region, asOrganization}` (null off Cloudflare). It already feeds every logged event, so redeem, deny, view, request and sign-in rows all carry them. `access_log_daily` rollups are unchanged and still keyed by country.
+- Tests: `routes.test.ts` "returns each row's client…" (a request with a `cf` object lands all three fields; one without leaves them null), and `schema.test.mjs` pins the new columns and file.
+- disk-tree: bump `@open-athena/auth` to the dist build of this commit, then `wrangler d1 migrations apply` (or apply `0002` by hand if its D1 copies the package's SQL into its own sequence).

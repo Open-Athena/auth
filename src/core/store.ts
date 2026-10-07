@@ -202,6 +202,13 @@ export interface StoredEvent {
   path: string | null
   reason: string | null
   country: string | null
+  city: string | null
+  region: string | null
+  asOrg: string | null
+  ua: string | null
+  /** The keyed hash of the client's address: equal across one client's rows, unreadable as an address. */
+  ipHash: string | null
+  referer: string | null
 }
 
 /** Convenience: what a store needs from `mintGrant` before it has an id/timestamps. */

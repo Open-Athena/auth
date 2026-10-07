@@ -4,6 +4,7 @@ import { createGate } from '../src/core/gate.js'
 import { adminPolicy, anyEmailPolicy, firstMatch } from '../src/core/policy.js'
 import { authRoutes } from '../src/core/routes.js'
 import type { Auth } from '../src/core/types.js'
+import { hashIp } from '../src/core/tokens.js'
 import { bytesToDataUri, gravatarUrl } from '../src/core/avatar.js'
 import { type MemoryAssetStore, memoryAssetStore } from '../src/testing/index.js'
 import { testDb } from './d1-shim.js'
@@ -513,6 +514,58 @@ describe('access log routes', () => {
     const cookie = await asAdmin()
     const res = await bare(new Request(url('/log'), { headers: { Cookie: cookie } }))
     expect(res!.status).toBe(501)
+  })
+
+  it("returns each row's client: browser, hashed address, and where Cloudflare places it", async () => {
+    const cookie = await asAdmin()
+    const minted = await post('/grants', { name: 'Bob', scopes: ['reports'] }, cookie)
+    const id: string = minted.body.grant.id
+    const exchange = (headers: Record<string, string>, cf?: object) => {
+      const req = new Request(url('/exchange'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ token: minted.body.token }),
+      })
+      return handle(cf ? Object.assign(req, { cf }) : req)
+    }
+    await exchange(
+      {
+        'CF-Connecting-IP': '203.0.113.7',
+        'CF-IPCountry': 'US',
+        'User-Agent': 'Mozilla/5.0 (Macintosh) Chrome/141',
+        Referer: 'https://mail.example.com/',
+      },
+      { city: 'Brooklyn', region: 'New York', asOrganization: 'Comcast', colo: 'EWR' },
+    )
+    // Off Cloudflare (or a client it can't place): no `cf`, so no location.
+    await exchange({ 'User-Agent': 'curl/8.7' })
+
+    const log = await call(`/log?grant=${id}`, {}, cookie)
+    const client = ({ event, country, city, region, asOrg, ua, ipHash, referer }: Record<string, unknown>) => ({
+      event,
+      country,
+      city,
+      region,
+      asOrg,
+      ua,
+      ipHash,
+      referer,
+    })
+    expect(log.body.events.map(client)).toEqual([
+      { event: 'redeem', country: null, city: null, region: null, asOrg: null, ua: 'curl/8.7', ipHash: null, referer: null },
+      {
+        event: 'redeem',
+        country: 'US',
+        city: 'Brooklyn',
+        region: 'New York',
+        asOrg: 'Comcast',
+        ua: 'Mozilla/5.0 (Macintosh) Chrome/141',
+        ipHash: await hashIp('203.0.113.7', SECRET),
+        referer: 'https://mail.example.com/',
+      },
+      // The admin's mint went through `call`, which sends none of these.
+      { event: 'mint', country: null, city: null, region: null, asOrg: null, ua: null, ipHash: null, referer: null },
+    ])
   })
 
   it('returns a link’s trail and its activity summary', async () => {

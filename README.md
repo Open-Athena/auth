@@ -61,7 +61,7 @@ Peer deps are all optional and only needed for what you use: `@cloudflare/worker
 
 ## Migrations
 
-`migrations/0001_init.sql` is the whole schema. A fresh database applies it (`wrangler d1 migrations apply` with `migrations_dir` pointed at the package's `migrations/`, as the demo does, or its content copied into your own sequence alongside your app's tables).
+`migrations/0001_init.sql` is the baseline schema, and `0002_access_log_location.sql` adds the log's location columns. A fresh database applies it (`wrangler d1 migrations apply` with `migrations_dir` pointed at the package's `migrations/`, as the demo does, or its content copied into your own sequence alongside your app's tables).
 
 **Pre-1.0, migrations are squashed**: a schema change lands as a new numbered file, and once every known database has applied it, the directory is collapsed back into one baseline rather than kept as history. To move an existing database across a squash, bring it to the previous head (apply the pre-squash files from the SHA you're on), then mark the new files applied without running them:
 
@@ -157,7 +157,7 @@ A verified address that policy rejects redirects with `?denied=<email>` rather t
 
 `gate.update(id, patch)` changes a link's terms after the fact — expiry, cap, TTL, memo — so extending a deadline doesn't mean minting and re-sending a second link. (`sessionTtlS` is baked into the cookie at redeem, so it only affects future redemptions.)
 
-**The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`.
+**The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`. In their place each row keeps where Cloudflare places the client (`request.cf` city, region, and network operator, e.g. "Comcast"), alongside the country, user agent and referer; `GET <basePath>/log` returns all of them, so an admin can tell whether a redeem came from the person the link was sent to.
 
 **Magic links / passwordless sign-up.** `anyEmailPolicy` auto-approves any address, mints a grant bound to it, and hands it to `notify` — which becomes a real sign-in flow once `notify` can send mail:
 
