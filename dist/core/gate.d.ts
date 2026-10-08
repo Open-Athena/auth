@@ -255,8 +255,9 @@ export declare function createGate(opts: GateOptions): {
         value: string;
         src: AvatarRefKind;
     } | null>;
-    fetchAvatar: (ref: AvatarRef, { maxBytes }?: {
+    fetchAvatar: (ref: AvatarRef, { maxBytes, allowSvg }?: {
         maxBytes?: number;
+        allowSvg?: boolean;
     }) => Promise<import("./avatar.js").ValidatedImage | null>;
     /** The bytes behind an `asset://` avatar, for serving; null without an asset store. */
     getAsset: (id: string) => Promise<import("./assets.js").StoredAsset | null>;

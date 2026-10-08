@@ -491,7 +491,9 @@ export function authRoutes(gate, opts = {}) {
                     return json({ error: 'ref or email required' }, 400);
                 // Not the storage cap: the browser downscales this before handing it
                 // back, and the mint then holds it to the storage cap.
-                const img = await gate.fetchAvatar(ref, { maxBytes: MAX_PREVIEW_AVATAR_BYTES });
+                // `allowSvg`: an SVG comes back for the browser to draw to pixels; the
+                // write that stores a face never accepts one (see `FetchAvatarOptions`).
+                const img = await gate.fetchAvatar(ref, { maxBytes: MAX_PREVIEW_AVATAR_BYTES, allowSvg: true });
                 return json({ avatar: img ? bytesToDataUri(img.type, img.bytes) : null, source: img?.source ?? ref.kind });
             }
             catch (e) {

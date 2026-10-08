@@ -105,6 +105,14 @@ export interface FetchAvatarOptions {
     maxBytes?: number;
     /** Injectable for tests, and for a timeout wrapper. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * Also answer with an SVG (`image/svg+xml`) where a URL or a site's icon is
+     * one. **Preview only**: an SVG can carry script, so it must never be stored
+     * or served as a face. The preview route sets this so `<AvatarField>` can
+     * draw the SVG to a canvas (where it runs nothing) and hand back pixels,
+     * which the storing write then validates as usual.
+     */
+    allowSvg?: boolean;
 }
 /**
  * Fetch the image a ref points at and validate it as a raster image.
@@ -116,6 +124,8 @@ export interface FetchAvatarOptions {
  * file, an unknown profile) throws `InvalidImageError`.
  */
 export declare function fetchAvatar(ref: AvatarRef, opts?: FetchAvatarOptions): Promise<ValidatedImage | null>;
+/** An SVG document: optional BOM, XML declaration, comments and doctype, then `<svg`. */
+export declare function isSvg(bytes: Uint8Array): boolean;
 /**
  * The largest PNG an `.ico` embeds, or `null` (not an ICO, or only BMP
  * entries, which aren't a format we take). Modern favicons are mostly PNGs in

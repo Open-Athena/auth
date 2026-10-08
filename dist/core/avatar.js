@@ -208,7 +208,7 @@ export function githubAvatarUrl(handle, size = DEFAULT_AVATAR_SIZE) {
  * file, an unknown profile) throws `InvalidImageError`.
  */
 export async function fetchAvatar(ref, opts = {}) {
-    const { size = DEFAULT_AVATAR_SIZE, maxBytes = MAX_INLINE_AVATAR_BYTES, fetch = globalThis.fetch } = opts;
+    const { size = DEFAULT_AVATAR_SIZE, maxBytes = MAX_INLINE_AVATAR_BYTES, fetch = globalThis.fetch, allowSvg = false } = opts;
     switch (ref.kind) {
         case 'upload':
             return validateUploadedImage(ref.bytes, { maxBytes });
@@ -224,7 +224,7 @@ export async function fetchAvatar(ref, opts = {}) {
             if (!profile) {
                 // A bare domain is a Bluesky handle *or* a website (`loom.com`): with
                 // no such handle, try the site's icon before giving up.
-                const site = DOMAIN.test(ref.actor) ? await fetchSiteIcon(`https://${ref.actor}/`, { maxBytes, fetch }).catch(() => null) : null;
+                const site = DOMAIN.test(ref.actor) ? await fetchSiteIcon(`https://${ref.actor}/`, { maxBytes, fetch, allowSvg }).catch(() => null) : null;
                 if (site)
                     return site;
                 throw new InvalidImageError(`no Bluesky profile ${ref.actor}`);
@@ -248,9 +248,9 @@ export async function fetchAvatar(ref, opts = {}) {
             return await fetchImage(account.avatar_static, { maxBytes, fetch, missing: 'throw' });
         }
         case 'url':
-            return await fetchImage(ref.url, { maxBytes, fetch, missing: 'throw', page: 'site-icon' });
+            return await fetchImage(ref.url, { maxBytes, fetch, missing: 'throw', page: 'site-icon', allowSvg });
         case 'site':
-            return await fetchSiteIcon(ref.url, { maxBytes, fetch });
+            return await fetchSiteIcon(ref.url, { maxBytes, fetch, allowSvg });
     }
 }
 async function fetchJson(url, fetch) {
@@ -261,7 +261,7 @@ async function fetchJson(url, fetch) {
         return null;
     return (await res.json().catch(() => null));
 }
-async function fetchImage(url, { maxBytes, fetch, missing, page = 'throw', }) {
+async function fetchImage(url, { maxBytes, fetch, missing, page = 'throw', allowSvg = false, }) {
     if (!url.startsWith('https://'))
         throw new InvalidImageError('only https: images are fetched');
     const res = await fetch(url, {
@@ -277,21 +277,31 @@ async function fetchImage(url, { maxBytes, fetch, missing, page = 'throw', }) {
     const type = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
     if (type === 'text/html') {
         if (page === 'site-icon')
-            return await siteIconFromPage(res, url, { maxBytes, fetch });
+            return await siteIconFromPage(res, url, { maxBytes, fetch, allowSvg });
         throw new InvalidImageError('that URL is a web page, not an image; copy the image address instead (or save it and upload)');
     }
     const declared = Number(res.headers.get('content-length'));
     if (declared > maxBytes)
         throw tooBig(declared, maxBytes);
     const bytes = new Uint8Array(await res.arrayBuffer());
+    if (allowSvg && isSvg(bytes)) {
+        if (bytes.length > maxBytes)
+            throw tooBig(bytes.length, maxBytes);
+        return { type: 'image/svg+xml', bytes };
+    }
     return validateUploadedImage(icoPng(bytes) ?? bytes, { maxBytes });
+}
+/** An SVG document: optional BOM, XML declaration, comments and doctype, then `<svg`. */
+export function isSvg(bytes) {
+    const head = new TextDecoder().decode(bytes.subarray(0, 4096)).replace(/^\uFEFF/, '');
+    return /^\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)\s*)*<svg[\s>]/i.test(head);
 }
 /** How much of a page is read looking for its icon links; they live in `<head>`. */
 const MAX_PAGE_BYTES = 512 * 1024;
 /** Icon candidates tried per page, so one page can't fan out into many fetches. */
 const MAX_ICON_TRIES = 4;
 /** A page's icon: fetch the page, then `siteIconFromPage`. */
-async function fetchSiteIcon(url, { maxBytes, fetch }) {
+async function fetchSiteIcon(url, { maxBytes, fetch, allowSvg = false }) {
     if (!url.startsWith('https://'))
         throw new InvalidImageError('only https: pages are fetched');
     const res = await fetch(url, { redirect: 'follow', headers: { accept: 'text/html', 'user-agent': USER_AGENT } }).catch(() => null);
@@ -299,35 +309,43 @@ async function fetchSiteIcon(url, { maxBytes, fetch }) {
         throw new InvalidImageError(`could not reach ${new URL(url).host}`);
     if (!res.ok)
         throw new InvalidImageError(`fetching the page failed (HTTP ${res.status})`);
-    return siteIconFromPage(res, url, { maxBytes, fetch });
+    return siteIconFromPage(res, url, { maxBytes, fetch, allowSvg });
 }
 /**
  * The icon a page declares, largest first: `apple-touch-icon` (usually a 180px
  * PNG, the best face a site has), then `rel=icon` links by their `sizes`, then
- * the conventional `/apple-touch-icon.png` and `/favicon.ico`. SVG icons are
- * skipped (refused as avatars anyway); an `.ico` is used when it embeds a PNG.
+ * the conventional `/apple-touch-icon.png` and `/favicon.ico`. An `.ico` is
+ * used when it embeds a PNG. SVG icons are skipped unless `allowSvg` (preview),
+ * where one ranks above a small favicon and below a touch icon: it scales, but
+ * a touch icon is drawn for exactly this use.
  */
-async function siteIconFromPage(res, requested, { maxBytes, fetch }) {
+async function siteIconFromPage(res, requested, { maxBytes, fetch, allowSvg = false }) {
     // Relative icon links resolve against where any redirects landed.
     const base = res.url || requested;
     const html = new TextDecoder().decode((await readCapped(res, MAX_PAGE_BYTES)) ?? new Uint8Array());
     const origin = new URL(base).origin;
     const seen = new Set();
-    const candidates = [...iconLinks(html, base), `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`].filter(u => {
+    const { urls, skippedSvg } = iconLinks(html, base, allowSvg);
+    const candidates = [...urls, `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`].filter(u => {
         if (seen.has(u) || !u.startsWith('https://'))
             return false;
         seen.add(u);
         return true;
     });
     for (const url of candidates.slice(0, MAX_ICON_TRIES)) {
-        const img = await fetchImage(url, { maxBytes, fetch, missing: 'null' }).catch(() => null);
+        const img = await fetchImage(url, { maxBytes, fetch, missing: 'null', allowSvg }).catch(() => null);
         if (img)
             return { ...img, source: 'site' };
     }
-    throw new InvalidImageError(`${new URL(base).host} is a web page with no usable icon; copy an image address instead (or save one and upload)`);
+    const host = new URL(base).host;
+    if (skippedSvg) {
+        throw new InvalidImageError(`${host}'s icon is an SVG, which only the face picker in a browser can convert; pick it there, or upload an image`);
+    }
+    throw new InvalidImageError(`${host} is a web page with no usable icon; copy an image address instead (or save one and upload)`);
 }
-/** The page's icon links, best first. */
-function iconLinks(html, base) {
+/** The page's icon links, best first, and whether any SVG icon was passed over. */
+function iconLinks(html, base, allowSvg) {
+    let skippedSvg = false;
     const head = html.slice(0, html.search(/<\/head>/i) >>> 0);
     const found = [];
     for (const [tag] of head.matchAll(/<link\b[^>]*>/gi)) {
@@ -339,8 +357,11 @@ function iconLinks(html, base) {
         const touch = rel.includes('apple-touch-icon') || rel.includes('apple-touch-icon-precomposed');
         if (!touch && !rel.includes('icon'))
             continue;
-        if ((attr('type') ?? '').includes('svg') || /\.svg(?:[?#]|$)/i.test(href))
+        const svg = (attr('type') ?? '').includes('svg') || /\.svg(?:[?#]|$)/i.test(href);
+        if (svg && !allowSvg) {
+            skippedSvg = true;
             continue;
+        }
         let url;
         try {
             url = new URL(href.replace(/&amp;/g, '&'), base).href;
@@ -350,9 +371,9 @@ function iconLinks(html, base) {
         }
         const size = Math.max(0, ...(attr('sizes') ?? '').split(/\s+/).map(sz => Number(/^(\d+)x\d+$/i.exec(sz)?.[1] ?? 0)));
         // Unsized touch icons are 180px by convention; unsized `icon`s are usually a 16/32px favicon.
-        found.push({ url, rank: size || (touch ? 180 : 32) });
+        found.push({ url, rank: svg ? 64 : size || (touch ? 180 : 32) });
     }
-    return found.sort((a, b) => b.rank - a.rank).map(f => f.url);
+    return { urls: found.sort((a, b) => b.rank - a.rank).map(f => f.url), skippedSvg };
 }
 /** Read at most `cap` bytes of a body, then stop. */
 async function readCapped(res, cap) {

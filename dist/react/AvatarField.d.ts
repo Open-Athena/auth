@@ -45,6 +45,11 @@ export declare function AvatarField({ endpoint, value, onChange, email, autoGrav
  * (or Cloudflare Images) needed: re-encoding here keeps uploads small enough to
  * inline, and drops EXIF (GPS included) on the way.
  *
+ * An SVG (a site's icon, usually a logo) is drawn whole, fitted into a `size`
+ * square, rather than cropped: it has no pixels of its own to keep. Drawn
+ * through an `<img>`, it runs no script and loads nothing, so what comes out is
+ * plain pixels — an SVG itself is never stored.
+ *
  * WebP where the browser can encode it (keeps transparency); Safari can't, so
  * there it falls back to JPEG over white.
  */
