@@ -51,7 +51,7 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
           labels: { email: 'Or use any email address', send: 'Email me a code', code: 'The 6-digit code' },
           sentHint: email => <Outbox email={email} />,
         }}
-        classNames={{ root: 'signin-panel', title: 'signin-title', button: 'btn', googleButton: 'btn google', divider: 'divider' }}
+        classNames={{ root: 'signin-panel', title: 'signin-title', button: 'btn', googleButton: 'btn google', switchAccount: 'switch-account', divider: 'divider' }}
       />
     </div>
   )

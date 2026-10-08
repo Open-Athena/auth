@@ -60,6 +60,38 @@ describe('SignInPanel — oneTap', () => {
     expect(screen.queryAllByRole('link')).toEqual([])
   })
 
+  it('turns the Google slot into "Continue as <remembered>", with "not you?" back through the chooser', async () => {
+    stubFetch({ '/n': { status: 200, body: { nonce: 'n1', loginHint: 'a@x.test' } } })
+    ;(window as { google?: unknown }).google = { accounts: { id: { initialize: () => {}, renderButton: () => {} } } }
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.dataset.loaded = 'true'
+    document.head.appendChild(script)
+
+    renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} />)
+    await waitFor(() =>
+      expect(screen.getAllByRole('link').map(a => [a.textContent, a.getAttribute('href')])).toEqual([
+        ['Continue as a@x.test', '/auth/google?next=%2Fdash'],
+        ['Not a@x.test? Use another Google account', '/auth/google?next=%2Fdash&account=choose'],
+      ]),
+    )
+  })
+
+  it('keeps Google\'s button, and still offers "not you?", with `continueAs={false}`', async () => {
+    stubFetch({ '/n': { status: 200, body: { nonce: 'n1', loginHint: 'a@x.test' } } })
+    ;(window as { google?: unknown }).google = { accounts: { id: { initialize: () => {}, renderButton: () => {} } } }
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.dataset.loaded = 'true'
+    document.head.appendChild(script)
+
+    const { container } = renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} continueAs={false} title={null} />)
+    await waitFor(() =>
+      expect(screen.getAllByRole('link').map(a => a.textContent)).toEqual(['Not a@x.test? Use another Google account']),
+    )
+    expect((container.firstElementChild!.firstElementChild as HTMLElement).style.display).toBe('contents')
+  })
+
   it('falls back to the redirect button when GSI cannot load', async () => {
     stubFetch({ '/n': { status: 200, body: {} } })
     renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} />)
@@ -155,6 +187,14 @@ describe('GoogleOneTap', () => {
     expect(calls.initialize.map(c => c.auto_select)).toEqual([true])
     unmount()
     expect(calls.cancel).toBe(1)
+  })
+
+  it('passes `hd` and `loginHint` through to GSI', async () => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
+    const calls = stubGsi()
+    renderWithQuery(<GoogleOneTap clientId="client-123" hd="openathena.ai" loginHint="a@openathena.ai" />)
+    await waitFor(() => expect(calls.initialize).toHaveLength(1))
+    expect(calls.initialize.map(c => [c.hd, c.login_hint])).toEqual([['openathena.ai', 'a@openathena.ai']])
   })
 
   it('prompt: true surfaces the toast without auto-select', async () => {

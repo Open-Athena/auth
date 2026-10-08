@@ -51,7 +51,7 @@ export const onRequest = async ({ request, env }: Ctx): Promise<Response> => {
     case 'callback':
       return oidcCallback(cfg)({ request })
     case 'onetap/nonce':
-      return googleOneTapNonce({ gate: viewGate })()
+      return googleOneTapNonce({ gate: viewGate })({ request })
     case 'onetap':
       return googleOneTapVerify({ gate: viewGate, clientId })({ request })
     default:

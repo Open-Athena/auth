@@ -608,6 +608,11 @@ table {
     background: var(--panel);
     font-weight: 600;
   }
+  .switch-account {
+    justify-self: center;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
   .divider {
     height: 1px;
     margin: 0.5rem 0;

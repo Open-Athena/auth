@@ -20,7 +20,7 @@
 import { b64uEncode } from '../core/base64.js'
 import type { Gate } from '../core/gate.js'
 import { verifyRs256Jwt } from '../core/jwt.js'
-import { clearCookie, isSecureRequest, sessionCookie, signSession, verifySession } from '../core/session.js'
+import { clearCookie, isSecureRequest, readCookie, sessionCookie, signSession, verifySession } from '../core/session.js'
 import { generateToken } from '../core/tokens.js'
 
 export interface OidcProvider {
@@ -42,7 +42,7 @@ export const GOOGLE: OidcProvider = {
   scope: 'openid email profile',
 }
 
-export interface OidcOptions {
+export interface OidcOptions extends AccountHintOptions {
   gate: Gate
   clientId: string
   clientSecret: string
@@ -67,6 +67,51 @@ export interface OidcOptions {
 }
 
 const DEFAULT_NONCE_COOKIE = 'oa_oidc'
+
+/**
+ * Remember which Google account last signed in here, so the next sign-in can
+ * skip Google's account chooser. With several Google accounts in one browser,
+ * Google asks "which one?" on every redirect unless the request names one
+ * (`login_hint`); a returning visitor almost always means the same account as
+ * last time.
+ *
+ * The callback (and One Tap's verify) sets a long-lived cookie holding the
+ * address on success, and outlives sign-out on purpose: it answers "who was
+ * here last", not "who is here". `oidcStart` sends it as `login_hint`, and
+ * `googleOneTapNonce` returns it as `loginHint`. It is a hint, never a
+ * credential: Google still authenticates, and a forged value only pre-selects
+ * a different account at Google. A denied sign-in clears it, so a refused
+ * account isn't hinted straight back into the same refusal. `?account=choose`
+ * on the start URL skips it and asks Google for its chooser
+ * (`prompt=select_account`), the "use another account" escape.
+ *
+ * Default cookie `oa_google_hint`; pass the same name to every handler, or
+ * `false` to turn the hint off (a kiosk, say).
+ */
+export interface AccountHintOptions {
+  accountHintCookie?: string | false
+}
+
+export const DEFAULT_ACCOUNT_HINT_COOKIE = 'oa_google_hint'
+/** Chrome caps cookie lifetimes at 400 days. */
+const ACCOUNT_HINT_TTL_S = 400 * 24 * 60 * 60
+
+const hintCookieName = (opt: string | false | undefined): string | null => (opt === false ? null : (opt ?? DEFAULT_ACCOUNT_HINT_COOKIE))
+
+function readAccountHint(req: Request, name: string | null): string | null {
+  if (!name) return null
+  const raw = readCookie(req, name)
+  if (!raw) return null
+  try {
+    const email = decodeURIComponent(raw)
+    return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null
+  } catch {
+    return null
+  }
+}
+
+const setAccountHint = (req: Request, name: string, email: string): string =>
+  sessionCookie(encodeURIComponent(email), { name, ttlS: ACCOUNT_HINT_TTL_S, secure: isSecureRequest(req) })
 const STATE_PREFIX = 'oidc:'
 
 interface IdTokenClaims extends Record<string, unknown> {
@@ -98,9 +143,14 @@ export function oidcStart(opts: OidcOptions) {
   const { gate, clientId, redirectUri, provider = GOOGLE, authParams = {}, stateTtlS = 600 } = opts
   const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE
 
+  const hintCookie = hintCookieName(opts.accountHintCookie)
+
   return async ({ request }: { request: Request }): Promise<Response> => {
     const nonce = generateToken()
-    const next = safeNext(new URL(request.url).searchParams.get('next'))
+    const params = new URL(request.url).searchParams
+    const next = safeNext(params.get('next'))
+    const choose = params.get('account') === 'choose'
+    const hint = choose ? null : readAccountHint(request, hintCookie)
     const state = await signSession(`${STATE_PREFIX}${nonce}:${next}`, gate.secret, Date.now(), stateTtlS)
 
     const url = new URL(provider.authUrl)
@@ -111,7 +161,9 @@ export function oidcStart(opts: OidcOptions) {
       scope: provider.scope,
       state,
       nonce,
+      ...(hint ? { login_hint: hint } : {}),
       ...authParams,
+      ...(choose ? { prompt: 'select_account' } : {}),
     }).toString()
 
     return new Response(null, {
@@ -142,6 +194,7 @@ export function oidcStart(opts: OidcOptions) {
 export function oidcCallback(opts: OidcOptions) {
   const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true } = opts
   const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE
+  const hintCookie = hintCookieName(opts.accountHintCookie)
   const doFetch = opts.fetch ?? globalThis.fetch
 
   return async ({ request }: { request: Request }): Promise<Response> => {
@@ -195,14 +248,10 @@ export function oidcCallback(opts: OidcOptions) {
     // they say they are and still isn't allowed in. That distinction is what
     // lets an app pre-fill a request-access form with a *verified* address.
     if (!signedIn) {
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: `/?denied=${encodeURIComponent(claims.email)}`,
-          'set-cookie': clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }),
-          'cache-control': 'no-store',
-        },
-      })
+      const headers = new Headers({ location: `/?denied=${encodeURIComponent(claims.email)}`, 'cache-control': 'no-store' })
+      headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }))
+      if (hintCookie) headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }))
+      return new Response(null, { status: 302, headers })
     }
 
     // Seed name + face before we redirect, so the seeded subject is already
@@ -214,6 +263,7 @@ export function oidcCallback(opts: OidcOptions) {
     const headers = new Headers({ location: next, 'cache-control': 'no-store' })
     headers.append('set-cookie', signedIn.cookie)
     headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }))
+    if (hintCookie) headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email))
     return new Response(null, { status: 302, headers })
   }
 }
@@ -244,7 +294,7 @@ function readCookieValue(req: Request, name: string): string | null {
  * secret, only a nonce *we* issued (and not yet expired) can satisfy a verify —
  * no server-side pending-nonce table required.
  */
-export interface OneTapNonceOptions {
+export interface OneTapNonceOptions extends AccountHintOptions {
   gate: Gate
   /** How long the minted nonce is valid. Default 300s. */
   ttlS?: number
@@ -253,24 +303,27 @@ export interface OneTapNonceOptions {
 const ONETAP_PREFIX = 'onetap:'
 
 /**
- * `GET` handler → `{ nonce }`. The page passes `nonce` to
+ * `GET` handler → `{ nonce, loginHint? }`. The page passes `nonce` to
  * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
  * `googleOneTapVerify`. The value is opaque and single-window; it is not a
  * bearer credential (it authorizes nothing without a Google-signed id_token
- * that embeds it).
+ * that embeds it). `loginHint` is the remembered account (`AccountHintOptions`),
+ * for the page to offer "not you?".
  */
 export function googleOneTapNonce(opts: OneTapNonceOptions) {
   const { gate, ttlS = 300 } = opts
-  return async (_ctx?: { request?: Request }): Promise<Response> => {
+  const hintCookie = hintCookieName(opts.accountHintCookie)
+  return async (ctx?: { request?: Request }): Promise<Response> => {
     const nonce = await signSession(`${ONETAP_PREFIX}${generateToken()}`, gate.secret, Date.now(), ttlS)
-    return new Response(JSON.stringify({ nonce }) + '\n', {
+    const loginHint = ctx?.request ? readAccountHint(ctx.request, hintCookie) : null
+    return new Response(JSON.stringify(loginHint ? { nonce, loginHint } : { nonce }) + '\n', {
       status: 200,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     })
   }
 }
 
-export interface OneTapVerifyOptions {
+export interface OneTapVerifyOptions extends AccountHintOptions {
   gate: Gate
   /** The OAuth client id; must equal the id_token `aud`. */
   clientId: string
@@ -309,6 +362,7 @@ async function nonceForms(nonce: string): Promise<Set<string>> {
  */
 export function googleOneTapVerify(opts: OneTapVerifyOptions) {
   const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true } = opts
+  const hintCookie = hintCookieName(opts.accountHintCookie)
   const doFetch = opts.fetch ?? globalThis.fetch
   const deny = (why: string): Response => oneTapDeny(why, debug)
 
@@ -336,22 +390,17 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
 
     const signedIn = await gate.signIn(claims.email, request)
     if (!signedIn) {
-      return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', {
-        status: 401,
-        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
-      })
+      const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      if (hintCookie) headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }))
+      return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', { status: 401, headers })
     }
     // Seed before the 200: the FE re-fetches `/whoami` right after this resolves,
     // so awaiting the seed puts the name/face on that first poll. Best-effort.
     if (seedProfile) await gate.seedProfileFromClaims(claims.email, claims).catch(() => null)
-    return new Response(JSON.stringify({ ok: true }) + '\n', {
-      status: 200,
-      headers: {
-        'content-type': 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-        'set-cookie': signedIn.cookie,
-      },
-    })
+    const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    headers.append('set-cookie', signedIn.cookie)
+    if (hintCookie) headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email))
+    return new Response(JSON.stringify({ ok: true }) + '\n', { status: 200, headers })
   }
 }
 

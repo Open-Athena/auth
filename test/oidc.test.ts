@@ -354,6 +354,89 @@ describe('googleOneTap', () => {
  * `profiles` table, once, without ever overriding a self-set profile. Both the
  * gate method and its wiring into the two sign-in handlers.
  */
+describe('remembered account', () => {
+  const HINT = 'oa_google_hint=staff%40openathena.ai'
+  /** The cookie pairs (`name=value`, attributes dropped) a response sets. */
+  const pairs = (res: Response) => setCookies(res).map(c => c.split(';')[0]!)
+  /** The provider params `oidcStart` sends, for a request carrying `cookie` at `path`. */
+  async function startParams(path: string, cookie: string | null, extra: object = {}) {
+    const res = await oidcStart({ ...opts(providerFetch(null)), ...extra })({
+      request: new Request(`https://app.test${path}`, { headers: cookie ? { Cookie: cookie } : {} }),
+    })
+    const p = new URL(res.headers.get('location')!).searchParams
+    return [p.get('login_hint'), p.get('prompt')]
+  }
+  async function signInVia(email: string, extra: object = {}) {
+    const { state, cookie } = await start()
+    const nonce = cookie.split('=')[1]!
+    return oidcCallback({ ...opts(providerFetch(await idToken({ email, email_verified: true, nonce }))), ...extra })({
+      request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`, {
+        headers: { Cookie: cookie },
+      }),
+    })
+  }
+
+  it('remembers the account a redirect sign-in used, past the session, and hints it on the next start', async () => {
+    const res = await signInVia('staff@openathena.ai')
+    expect(setCookies(res).filter(c => c.startsWith('oa_google_hint='))).toEqual([
+      'oa_google_hint=staff%40openathena.ai; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=34560000',
+    ])
+    expect(await startParams('/auth/google', HINT)).toEqual(['staff@openathena.ai', null])
+  })
+
+  it('asks for the chooser instead with `?account=choose`, the "use another account" escape', async () => {
+    expect(await startParams('/auth/google?account=choose', HINT)).toEqual([null, 'select_account'])
+  })
+
+  it('hints nothing with no cookie, or a cookie that is not an address', async () => {
+    expect([await startParams('/auth/google', null), await startParams('/auth/google', 'oa_google_hint=nope')]).toEqual([
+      [null, null],
+      [null, null],
+    ])
+  })
+
+  it('forgets the account when a sign-in is denied, so the next start shows the chooser', async () => {
+    const res = await signInVia('stranger@example.com')
+    expect(pairs(res)).toEqual(['oa_oidc=', 'oa_google_hint='])
+  })
+
+  it('does none of it with `accountHintCookie: false`', async () => {
+    const res = await signInVia('staff@openathena.ai', { accountHintCookie: false })
+    expect(pairs(res).map(c => c.split('=')[0])).toEqual(['oa_auth', 'oa_oidc'])
+    expect(await startParams('/auth/google', HINT, { accountHintCookie: false })).toEqual([null, null])
+  })
+
+  it('One Tap remembers its account too, and the nonce endpoint reports it for "not you?"', async () => {
+    const nonceRes = await googleOneTapNonce({ gate })({ request: new Request('https://app.test/n') })
+    const { nonce } = (await nonceRes.json()) as { nonce: string }
+    const res = await googleOneTapVerify({ gate, clientId: CLIENT_ID, fetch: providerFetch(null) })({
+      request: new Request('https://app.test/auth/google/onetap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credential: await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }), nonce }),
+      }),
+    })
+    expect(pairs(res).map(c => c.split('=')[0])).toEqual(['oa_auth', 'oa_google_hint'])
+
+    const next = await googleOneTapNonce({ gate })({ request: new Request('https://app.test/n', { headers: { Cookie: HINT } }) })
+    const body = (await next.json()) as { nonce: string; loginHint?: string }
+    expect([Object.keys(body), body.loginHint]).toEqual([['nonce', 'loginHint'], 'staff@openathena.ai'])
+  })
+
+  it('One Tap forgets a denied account', async () => {
+    const nonceRes = await googleOneTapNonce({ gate })()
+    const { nonce } = (await nonceRes.json()) as { nonce: string }
+    const res = await googleOneTapVerify({ gate, clientId: CLIENT_ID, fetch: providerFetch(null) })({
+      request: new Request('https://app.test/auth/google/onetap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credential: await idToken({ email: 'stranger@example.com', email_verified: true, nonce }), nonce }),
+      }),
+    })
+    expect([res.status, pairs(res)]).toEqual([401, ['oa_google_hint=']])
+  })
+})
+
 describe('profile seed', () => {
   const PICTURE = 'https://pics.test/face.png'
   /** A real 1×1 PNG: the copy sniffs the header, so the signature alone won't pass. */

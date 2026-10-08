@@ -22,8 +22,25 @@ export interface GoogleOneTapProps {
   verifyEndpoint?: string
   /** Called after a credential verifies — refetch `useWhoami`. */
   onSignedIn?: () => void
+  /**
+   * The account that last signed in here, as the nonce endpoint remembers it
+   * (`AccountHintOptions` in `@open-athena/auth/oidc`): for a "not you?" link.
+   */
+  onAccountHint?: (email: string) => void
   /** Verified but not on the allowlist: the Google-verified email, for request-access pre-fill. */
   onDenied?: (email: string) => void
+  /**
+   * GSI's `hd`: offer only accounts on this Google Workspace domain, so a
+   * personal account signed into the same browser never comes up. For a site
+   * only one domain can enter.
+   */
+  hd?: string
+  /**
+   * GSI's `login_hint`: the account to offer. Not filled from the remembered
+   * account automatically, since FedCM shows nothing at all when the hinted
+   * account isn't signed into the browser.
+   */
+  loginHint?: string
   /** Options forwarded to `renderButton` (theme, size, text, shape, width). */
   buttonOptions?: Record<string, unknown>
   className?: string
@@ -86,7 +103,10 @@ export function GoogleOneTap({
   nonceEndpoint = '/api/auth/google/onetap/nonce',
   verifyEndpoint = '/api/auth/google/onetap',
   onSignedIn,
+  onAccountHint,
   onDenied,
+  hd,
+  loginHint,
   buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' },
   className,
   prompt = false,
@@ -104,8 +124,9 @@ export function GoogleOneTap({
     async function init() {
       try {
         const res = await fetch(nonceEndpoint, { credentials: 'include', headers: { accept: 'application/json' } })
-        const { nonce } = (await res.json()) as { nonce?: string }
+        const { nonce, loginHint: remembered } = (await res.json()) as { nonce?: string; loginHint?: string }
         if (!nonce) throw new Error('no nonce')
+        if (remembered && !cancelled) onAccountHint?.(remembered)
         await loadScript(scriptSrc)
         const gsi = (window as unknown as { google?: { accounts?: { id?: GsiId } } }).google?.accounts?.id
         if (cancelled || !gsi || !ref.current) throw new Error('gsi unavailable')
@@ -115,6 +136,8 @@ export function GoogleOneTap({
           nonce,
           use_fedcm_for_prompt: true,
           use_fedcm_for_button: true,
+          ...(hd ? { hd } : {}),
+          ...(loginHint ? { login_hint: loginHint } : {}),
           auto_select: typeof prompt === 'object' && Boolean(prompt.autoSelect),
           callback: async (resp: GsiCredentialResponse) => {
             try {
