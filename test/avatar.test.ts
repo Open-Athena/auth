@@ -8,6 +8,7 @@ import {
   gravatarUrl,
   isGithubHandle,
   isSafeAvatarUrl,
+  isSvg,
   parseAvatarRef,
   validateUploadedImage,
 } from '../src/core/avatar.js'
@@ -291,6 +292,24 @@ describe('fetchAvatar', () => {
       expect(net.calls).toEqual(['https://loom.test/', 'https://loom.test/apple-touch-icon.png', 'https://loom.test/favicon.ico'])
     })
 
+    it('passes over an SVG icon for storage, saying so; a preview (`allowSvg`) takes it', async () => {
+      const svg = '<?xml version="1.0"?>\n<!-- logo --><svg xmlns="http://www.w3.org/2000/svg"/>'
+      const table = {
+        'https://loom.test/': page('<link rel="icon" sizes="16x16" href="/f16.png"><link rel="icon" href="/logo.svg">'),
+        'https://loom.test/logo.svg': { type: 'image/svg+xml', body: svg },
+      }
+      const ref = { kind: 'url', url: 'https://loom.test/' } as const
+      const stored = await fetched(ref, stubNet(table))
+      const net = stubNet(table)
+      const preview = await fetchAvatar(ref, { fetch: net.fn, allowSvg: true })
+      expect([stored, preview]).toEqual([
+        { error: "loom.test's icon is an SVG, which only the face picker in a browser can convert; pick it there, or upload an image" },
+        { type: 'image/svg+xml', bytes: bytesOf(svg), source: 'site' },
+      ])
+      // The SVG outranks the 16px favicon.
+      expect(net.calls).toEqual(['https://loom.test/', 'https://loom.test/logo.svg'])
+    })
+
     it('reads a bare domain that is no Bluesky handle as a website', async () => {
       const net = stubNet({
         'https://loom.test/': page('<link rel="apple-touch-icon" href="/t.png">'),
@@ -309,6 +328,20 @@ describe('fetchAvatar', () => {
     const net = stubNet({})
     expect(await fetched({ kind: 'upload', bytes: PNG_1x1 }, net)).toEqual(PNG)
     expect(net.calls).toEqual([])
+  })
+})
+
+describe('isSvg', () => {
+  it('sees an SVG past a BOM, XML declaration, comments and doctype, and nothing else', () => {
+    expect(
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg"/>',
+        '\uFEFF<?xml version="1.0"?>\n<!-- a -->\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x">\n<svg>',
+        '<html><svg>',
+        '<svgx>',
+        'svg',
+      ].map(s => isSvg(bytesOf(s))),
+    ).toEqual([true, true, false, false, false])
   })
 })
 

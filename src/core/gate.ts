@@ -878,9 +878,10 @@ export function createGate(opts: GateOptions) {
   }
 
   /** `fetchAvatar` with this gate's timeout, and its storage byte cap unless overridden: the bytes, not yet stored. */
-  function fetchAvatarBytes(ref: AvatarRef, { maxBytes }: { maxBytes?: number } = {}) {
+  function fetchAvatarBytes(ref: AvatarRef, { maxBytes, allowSvg }: { maxBytes?: number; allowSvg?: boolean } = {}) {
     return fetchAvatar(ref, {
       maxBytes: maxBytes ?? (assets ? avatarMaxBytes : MAX_INLINE_AVATAR_BYTES),
+      ...(allowSvg ? { allowSvg } : {}),
       fetch: avatarFetchTimeoutMs > 0 ? withTimeout(fetchImpl, avatarFetchTimeoutMs) : fetchImpl,
     })
   }

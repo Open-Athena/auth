@@ -301,6 +301,22 @@ describe('mint route: the person on the link', () => {
     })
   })
 
+  it('previews an SVG for the browser to draw, but never stores one', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"><rect width="2" height="1"/></svg>'
+    withNet({ 'https://site.test/logo.svg': { type: 'image/svg+xml', body: svg } })
+    const cookie = await asAdmin()
+    const preview = await post('/avatar', { ref: 'https://site.test/logo.svg' }, cookie)
+    expect([preview.status, preview.body]).toEqual([200, { avatar: `data:image/svg+xml;base64,${btoa(svg)}`, source: 'url' }])
+    const minted = [
+      await post('/grants', { scopes: ['reports'], avatar: 'https://site.test/logo.svg' }, cookie),
+      await post('/grants', { scopes: ['reports'], avatar: preview.body.avatar }, cookie),
+    ]
+    expect(minted.map(r => [r.status, r.body.detail])).toEqual([
+      [400, 'not a supported image (png, jpeg, webp, or gif)'],
+      [400, 'not a supported image (png, jpeg, webp, or gif)'],
+    ])
+  })
+
   const patch = (id: string, data: unknown, cookie: string) =>
     call(`/grants/${id}`, { method: 'PATCH', body: JSON.stringify(data) }, cookie)
 
