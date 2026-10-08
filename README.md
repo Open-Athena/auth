@@ -261,6 +261,7 @@ The default read is the Cloud Identity API, which is what honours a group-*owner
 - a Bluesky profile or handle (`bsky.app/profile/ada.bsky.social`, `ada.bsky.social`);
 - a Mastodon profile or address (`https://hachyderm.io/@ada`, `@ada@hachyderm.io`);
 - a direct `https:` image address;
+- any other web page or bare domain (`loom.com`, once it's no Bluesky handle), by its site icon: the page's `apple-touch-icon`, else its largest PNG/JPEG/WebP `rel=icon`, else `/apple-touch-icon.png` or the PNG inside `/favicon.ico` (SVG-only icons aren't usable). Good for a company or project as the face on a link;
 - a `data:` URI (an upload).
 
 With no `avatar` and an `email`, the mint tries the recipient's Gravatar; `avatar: null` opts out. LinkedIn, X, Facebook and similar have no public way to fetch someone's photo, so their profile URLs are refused with a pointer to "copy image address" or an upload, rather than scraped. `<AvatarField>` is the UI for all of this:

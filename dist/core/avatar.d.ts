@@ -53,6 +53,11 @@ export type AvatarRef = {
     kind: 'url';
     url: string;
 }
+/** A web page, by its icon: what a `url` that answers with HTML falls back to. */
+ | {
+    kind: 'site';
+    url: string;
+}
 /** Bytes already in hand: an upload, or a `data:` URI from a preview. */
  | {
     kind: 'upload';
@@ -78,7 +83,8 @@ export declare function isSafeAvatarUrl(url: string): boolean;
  * - a Mastodon profile URL (`https://<instance>/@<user>`) or address
  *   (`@user@instance`);
  * - a `data:image/…;base64,` URI (an upload, or a preview handed back);
- * - any other `https:` URL, taken as a direct image address.
+ * - any other `https:` URL, taken as a direct image address; when it turns out
+ *   to be a web page instead, its site icon (see `fetchAvatar`).
  *
  * Throws `InvalidImageError` for anything else, including profile pages of
  * networks with no public avatar (see `NO_PUBLIC_AVATAR`).
@@ -110,12 +116,20 @@ export interface FetchAvatarOptions {
  * file, an unknown profile) throws `InvalidImageError`.
  */
 export declare function fetchAvatar(ref: AvatarRef, opts?: FetchAvatarOptions): Promise<ValidatedImage | null>;
+/**
+ * The largest PNG an `.ico` embeds, or `null` (not an ICO, or only BMP
+ * entries, which aren't a format we take). Modern favicons are mostly PNGs in
+ * an ICO wrapper.
+ */
+export declare function icoPng(bytes: Uint8Array): Uint8Array | null;
 /** Base64-encode raw image bytes into a `data:` URI. Not URL-safe base64 — a data URI wants standard. */
 export declare function bytesToDataUri(type: string, bytes: Uint8Array): string;
 export interface ValidatedImage {
     /** The sniffed content type — `image/png`, `image/jpeg`, `image/webp`, `image/gif`. */
     type: string;
     bytes: Uint8Array;
+    /** Set when the image is a web page's icon rather than what the ref named directly. */
+    source?: 'site';
 }
 /** Largest edge a self-set avatar may claim, so a decoder isn't handed a bomb. */
 export declare const MAX_AVATAR_DIMENSION = 8192;

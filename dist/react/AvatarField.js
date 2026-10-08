@@ -7,6 +7,7 @@ const SOURCE_LABELS = {
     mastodon: 'From Mastodon',
     gravatar: 'From Gravatar',
     url: 'From image URL',
+    site: "From the site's icon",
     upload: 'Uploaded',
 };
 const EMAILISH = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -126,7 +127,7 @@ export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, em
                 : status.kind === 'error'
                     ? status.detail
                     : null;
-    return (_jsxs("div", { className: classNames.field, children: [_jsxs("div", { className: classNames.row, style: { display: 'flex', alignItems: 'center', gap: '0.5em' }, children: [preview && (_jsx("span", { className: classNames.preview, children: _jsx(Avatar, { src: value, name: name, size: size }) })), _jsx("input", { className: classNames.input, id: id, type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, placeholder: labels.placeholder ?? 'GitHub, Bluesky, or Mastodon profile, or image URL', value: text, onChange: e => {
+    return (_jsxs("div", { className: classNames.field, children: [_jsxs("div", { className: classNames.row, style: { display: 'flex', alignItems: 'center', gap: '0.5em' }, children: [preview && (_jsx("span", { className: classNames.preview, children: _jsx(Avatar, { src: value, name: name, size: size }) })), _jsx("input", { className: classNames.input, id: id, type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, placeholder: labels.placeholder ?? 'GitHub, Bluesky, or Mastodon profile, image URL, or website', value: text, onChange: e => {
                             setPinned(false);
                             setText(e.target.value);
                         } }), _jsx("button", { className: classNames.button, type: "button", onClick: () => fileRef.current?.click(), children: labels.upload ?? 'Upload…' }), !autoGravatar && EMAILISH.test(trimmedEmail) && !text.trim() && (_jsx("button", { className: classNames.button, type: "button", onClick: () => {

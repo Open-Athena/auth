@@ -97,7 +97,8 @@ const hostIs = (host, domain) => host === domain || host.endsWith(`.${domain}`);
  * - a Mastodon profile URL (`https://<instance>/@<user>`) or address
  *   (`@user@instance`);
  * - a `data:image/…;base64,` URI (an upload, or a preview handed back);
- * - any other `https:` URL, taken as a direct image address.
+ * - any other `https:` URL, taken as a direct image address; when it turns out
+ *   to be a web page instead, its site icon (see `fetchAvatar`).
  *
  * Throws `InvalidImageError` for anything else, including profile pages of
  * networks with no public avatar (see `NO_PUBLIC_AVATAR`).
@@ -220,8 +221,14 @@ export async function fetchAvatar(ref, opts = {}) {
         case 'bluesky': {
             const api = `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(ref.actor)}`;
             const profile = await fetchJson(api, fetch);
-            if (!profile)
+            if (!profile) {
+                // A bare domain is a Bluesky handle *or* a website (`loom.com`): with
+                // no such handle, try the site's icon before giving up.
+                const site = DOMAIN.test(ref.actor) ? await fetchSiteIcon(`https://${ref.actor}/`, { maxBytes, fetch }).catch(() => null) : null;
+                if (site)
+                    return site;
                 throw new InvalidImageError(`no Bluesky profile ${ref.actor}`);
+            }
             if (!profile.avatar)
                 return null;
             // The CDN serves presets; `avatar` is the ~1000px original, the
@@ -241,7 +248,9 @@ export async function fetchAvatar(ref, opts = {}) {
             return await fetchImage(account.avatar_static, { maxBytes, fetch, missing: 'throw' });
         }
         case 'url':
-            return await fetchImage(ref.url, { maxBytes, fetch, missing: 'throw' });
+            return await fetchImage(ref.url, { maxBytes, fetch, missing: 'throw', page: 'site-icon' });
+        case 'site':
+            return await fetchSiteIcon(ref.url, { maxBytes, fetch });
     }
 }
 async function fetchJson(url, fetch) {
@@ -252,25 +261,150 @@ async function fetchJson(url, fetch) {
         return null;
     return (await res.json().catch(() => null));
 }
-async function fetchImage(url, { maxBytes, fetch, missing }) {
+async function fetchImage(url, { maxBytes, fetch, missing, page = 'throw', }) {
     if (!url.startsWith('https://'))
         throw new InvalidImageError('only https: images are fetched');
-    const res = await fetch(url, { redirect: 'follow', headers: { accept: 'image/*', 'user-agent': USER_AGENT } }).catch(() => null);
+    const res = await fetch(url, {
+        redirect: 'follow',
+        headers: { accept: page === 'site-icon' ? 'image/*, text/html;q=0.1' : 'image/*', 'user-agent': USER_AGENT },
+    }).catch(() => null);
     if (!res)
         throw new InvalidImageError(`could not reach ${new URL(url).host}`);
     if (res.status === 404 && missing === 'null')
         return null;
     if (!res.ok)
         throw new InvalidImageError(`fetching the image failed (HTTP ${res.status})`);
+    const type = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+    if (type === 'text/html') {
+        if (page === 'site-icon')
+            return await siteIconFromPage(res, url, { maxBytes, fetch });
+        throw new InvalidImageError('that URL is a web page, not an image; copy the image address instead (or save it and upload)');
+    }
     const declared = Number(res.headers.get('content-length'));
     if (declared > maxBytes)
         throw tooBig(declared, maxBytes);
     const bytes = new Uint8Array(await res.arrayBuffer());
-    const type = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
-    if (type === 'text/html') {
-        throw new InvalidImageError('that URL is a web page, not an image; copy the image address instead (or save it and upload)');
+    return validateUploadedImage(icoPng(bytes) ?? bytes, { maxBytes });
+}
+/** How much of a page is read looking for its icon links; they live in `<head>`. */
+const MAX_PAGE_BYTES = 512 * 1024;
+/** Icon candidates tried per page, so one page can't fan out into many fetches. */
+const MAX_ICON_TRIES = 4;
+/** A page's icon: fetch the page, then `siteIconFromPage`. */
+async function fetchSiteIcon(url, { maxBytes, fetch }) {
+    if (!url.startsWith('https://'))
+        throw new InvalidImageError('only https: pages are fetched');
+    const res = await fetch(url, { redirect: 'follow', headers: { accept: 'text/html', 'user-agent': USER_AGENT } }).catch(() => null);
+    if (!res)
+        throw new InvalidImageError(`could not reach ${new URL(url).host}`);
+    if (!res.ok)
+        throw new InvalidImageError(`fetching the page failed (HTTP ${res.status})`);
+    return siteIconFromPage(res, url, { maxBytes, fetch });
+}
+/**
+ * The icon a page declares, largest first: `apple-touch-icon` (usually a 180px
+ * PNG, the best face a site has), then `rel=icon` links by their `sizes`, then
+ * the conventional `/apple-touch-icon.png` and `/favicon.ico`. SVG icons are
+ * skipped (refused as avatars anyway); an `.ico` is used when it embeds a PNG.
+ */
+async function siteIconFromPage(res, requested, { maxBytes, fetch }) {
+    // Relative icon links resolve against where any redirects landed.
+    const base = res.url || requested;
+    const html = new TextDecoder().decode((await readCapped(res, MAX_PAGE_BYTES)) ?? new Uint8Array());
+    const origin = new URL(base).origin;
+    const seen = new Set();
+    const candidates = [...iconLinks(html, base), `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`].filter(u => {
+        if (seen.has(u) || !u.startsWith('https://'))
+            return false;
+        seen.add(u);
+        return true;
+    });
+    for (const url of candidates.slice(0, MAX_ICON_TRIES)) {
+        const img = await fetchImage(url, { maxBytes, fetch, missing: 'null' }).catch(() => null);
+        if (img)
+            return { ...img, source: 'site' };
     }
-    return validateUploadedImage(bytes, { maxBytes });
+    throw new InvalidImageError(`${new URL(base).host} is a web page with no usable icon; copy an image address instead (or save one and upload)`);
+}
+/** The page's icon links, best first. */
+function iconLinks(html, base) {
+    const head = html.slice(0, html.search(/<\/head>/i) >>> 0);
+    const found = [];
+    for (const [tag] of head.matchAll(/<link\b[^>]*>/gi)) {
+        const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag)?.slice(1).find(v => v !== undefined);
+        const rel = (attr('rel') ?? '').toLowerCase().split(/\s+/);
+        const href = attr('href');
+        if (!href)
+            continue;
+        const touch = rel.includes('apple-touch-icon') || rel.includes('apple-touch-icon-precomposed');
+        if (!touch && !rel.includes('icon'))
+            continue;
+        if ((attr('type') ?? '').includes('svg') || /\.svg(?:[?#]|$)/i.test(href))
+            continue;
+        let url;
+        try {
+            url = new URL(href.replace(/&amp;/g, '&'), base).href;
+        }
+        catch {
+            continue;
+        }
+        const size = Math.max(0, ...(attr('sizes') ?? '').split(/\s+/).map(sz => Number(/^(\d+)x\d+$/i.exec(sz)?.[1] ?? 0)));
+        // Unsized touch icons are 180px by convention; unsized `icon`s are usually a 16/32px favicon.
+        found.push({ url, rank: size || (touch ? 180 : 32) });
+    }
+    return found.sort((a, b) => b.rank - a.rank).map(f => f.url);
+}
+/** Read at most `cap` bytes of a body, then stop. */
+async function readCapped(res, cap) {
+    if (!res.body)
+        return new Uint8Array(await res.arrayBuffer()).subarray(0, cap);
+    const reader = res.body.getReader();
+    const chunks = [];
+    let n = 0;
+    while (n < cap) {
+        const { done, value } = await reader.read();
+        if (done)
+            break;
+        chunks.push(value);
+        n += value.length;
+    }
+    await reader.cancel().catch(() => { });
+    const out = new Uint8Array(Math.min(n, cap));
+    let at = 0;
+    for (const c of chunks) {
+        const take = c.subarray(0, out.length - at);
+        out.set(take, at);
+        at += take.length;
+        if (at >= out.length)
+            break;
+    }
+    return out;
+}
+/**
+ * The largest PNG an `.ico` embeds, or `null` (not an ICO, or only BMP
+ * entries, which aren't a format we take). Modern favicons are mostly PNGs in
+ * an ICO wrapper.
+ */
+export function icoPng(bytes) {
+    if (bytes.length < 6 || !startsWith(bytes, [0, 0, 1, 0]))
+        return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const count = view.getUint16(4, true);
+    let best = null;
+    for (let i = 0; i < count; i++) {
+        const at = 6 + i * 16;
+        if (at + 16 > bytes.length)
+            break;
+        const size = bytes[at] || 256;
+        const len = view.getUint32(at + 8, true);
+        const off = view.getUint32(at + 12, true);
+        if (off + len > bytes.length)
+            continue;
+        const data = bytes.subarray(off, off + len);
+        if (startsWith(data, PNG_SIG) && (!best || size > best.size))
+            best = { size, data };
+    }
+    return best?.data ?? null;
 }
 const tooBig = (n, cap) => new InvalidImageError(`image is ${Math.ceil(n / 1024)} KB, over the ${Math.floor(cap / 1024)} KB cap; save it and upload instead (uploads are downscaled)`);
 /** Base64-encode raw image bytes into a `data:` URI. Not URL-safe base64 — a data URI wants standard. */

@@ -1,5 +1,5 @@
 /** Where the current preview came from — mirrors the server's `AvatarRefKind`. */
-export type AvatarFieldSource = 'github' | 'bluesky' | 'mastodon' | 'gravatar' | 'url' | 'upload';
+export type AvatarFieldSource = 'github' | 'bluesky' | 'mastodon' | 'gravatar' | 'url' | 'site' | 'upload';
 export interface AvatarFieldProps {
     /** `POST` preview endpoint (`authRoutes`' `<basePath>/avatar`). Default `/api/auth/avatar`. */
     endpoint?: string;
