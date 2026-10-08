@@ -42,7 +42,7 @@ function loadScript(src) {
  * The nonce is minted server-side (`googleOneTapNonce`) and echoed back with the
  * credential, so the POST is replay-bound without any client-trusted state.
  */
-export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/onetap/nonce', verifyEndpoint = '/api/auth/google/onetap', onSignedIn, onDenied, buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' }, className, prompt = false, fallback = null, scriptSrc = GSI_SRC, }) {
+export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/onetap/nonce', verifyEndpoint = '/api/auth/google/onetap', onSignedIn, onAccountHint, onDenied, hd, loginHint, buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' }, className, prompt = false, fallback = null, scriptSrc = GSI_SRC, }) {
     const ref = useRef(null);
     const [failed, setFailed] = useState(false);
     useEffect(() => {
@@ -53,9 +53,11 @@ export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/oneta
         async function init() {
             try {
                 const res = await fetch(nonceEndpoint, { credentials: 'include', headers: { accept: 'application/json' } });
-                const { nonce } = (await res.json());
+                const { nonce, loginHint: remembered } = (await res.json());
                 if (!nonce)
                     throw new Error('no nonce');
+                if (remembered && !cancelled)
+                    onAccountHint?.(remembered);
                 await loadScript(scriptSrc);
                 const gsi = window.google?.accounts?.id;
                 if (cancelled || !gsi || !ref.current)
@@ -65,6 +67,8 @@ export function GoogleOneTap({ clientId, nonceEndpoint = '/api/auth/google/oneta
                     nonce,
                     use_fedcm_for_prompt: true,
                     use_fedcm_for_button: true,
+                    ...(hd ? { hd } : {}),
+                    ...(loginHint ? { login_hint: loginHint } : {}),
                     auto_select: typeof prompt === 'object' && Boolean(prompt.autoSelect),
                     callback: async (resp) => {
                         try {

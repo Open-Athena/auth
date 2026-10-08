@@ -8,7 +8,7 @@ export interface OidcProvider {
     scope: string;
 }
 export declare const GOOGLE: OidcProvider;
-export interface OidcOptions {
+export interface OidcOptions extends AccountHintOptions {
     gate: Gate;
     clientId: string;
     clientSecret: string;
@@ -31,6 +31,30 @@ export interface OidcOptions {
     seedProfile?: boolean;
     fetch?: typeof globalThis.fetch;
 }
+/**
+ * Remember which Google account last signed in here, so the next sign-in can
+ * skip Google's account chooser. With several Google accounts in one browser,
+ * Google asks "which one?" on every redirect unless the request names one
+ * (`login_hint`); a returning visitor almost always means the same account as
+ * last time.
+ *
+ * The callback (and One Tap's verify) sets a long-lived cookie holding the
+ * address on success, and outlives sign-out on purpose: it answers "who was
+ * here last", not "who is here". `oidcStart` sends it as `login_hint`, and
+ * `googleOneTapNonce` returns it as `loginHint`. It is a hint, never a
+ * credential: Google still authenticates, and a forged value only pre-selects
+ * a different account at Google. A denied sign-in clears it, so a refused
+ * account isn't hinted straight back into the same refusal. `?account=choose`
+ * on the start URL skips it and asks Google for its chooser
+ * (`prompt=select_account`), the "use another account" escape.
+ *
+ * Default cookie `oa_google_hint`; pass the same name to every handler, or
+ * `false` to turn the hint off (a kiosk, say).
+ */
+export interface AccountHintOptions {
+    accountHintCookie?: string | false;
+}
+export declare const DEFAULT_ACCOUNT_HINT_COOKIE = "oa_google_hint";
 /**
  * Start the flow: mint a nonce, sign it into the state, and bounce to the
  * provider.
@@ -67,22 +91,23 @@ export declare function oidcCallback(opts: OidcOptions): ({ request }: {
  * secret, only a nonce *we* issued (and not yet expired) can satisfy a verify —
  * no server-side pending-nonce table required.
  */
-export interface OneTapNonceOptions {
+export interface OneTapNonceOptions extends AccountHintOptions {
     gate: Gate;
     /** How long the minted nonce is valid. Default 300s. */
     ttlS?: number;
 }
 /**
- * `GET` handler → `{ nonce }`. The page passes `nonce` to
+ * `GET` handler → `{ nonce, loginHint? }`. The page passes `nonce` to
  * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
  * `googleOneTapVerify`. The value is opaque and single-window; it is not a
  * bearer credential (it authorizes nothing without a Google-signed id_token
- * that embeds it).
+ * that embeds it). `loginHint` is the remembered account (`AccountHintOptions`),
+ * for the page to offer "not you?".
  */
-export declare function googleOneTapNonce(opts: OneTapNonceOptions): (_ctx?: {
+export declare function googleOneTapNonce(opts: OneTapNonceOptions): (ctx?: {
     request?: Request;
 }) => Promise<Response>;
-export interface OneTapVerifyOptions {
+export interface OneTapVerifyOptions extends AccountHintOptions {
     gate: Gate;
     /** The OAuth client id; must equal the id_token `aud`. */
     clientId: string;

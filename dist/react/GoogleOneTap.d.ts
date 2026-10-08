@@ -8,8 +8,25 @@ export interface GoogleOneTapProps {
     verifyEndpoint?: string;
     /** Called after a credential verifies — refetch `useWhoami`. */
     onSignedIn?: () => void;
+    /**
+     * The account that last signed in here, as the nonce endpoint remembers it
+     * (`AccountHintOptions` in `@open-athena/auth/oidc`): for a "not you?" link.
+     */
+    onAccountHint?: (email: string) => void;
     /** Verified but not on the allowlist: the Google-verified email, for request-access pre-fill. */
     onDenied?: (email: string) => void;
+    /**
+     * GSI's `hd`: offer only accounts on this Google Workspace domain, so a
+     * personal account signed into the same browser never comes up. For a site
+     * only one domain can enter.
+     */
+    hd?: string;
+    /**
+     * GSI's `login_hint`: the account to offer. Not filled from the remembered
+     * account automatically, since FedCM shows nothing at all when the hinted
+     * account isn't signed into the browser.
+     */
+    loginHint?: string;
     /** Options forwarded to `renderButton` (theme, size, text, shape, width). */
     buttonOptions?: Record<string, unknown>;
     className?: string;
@@ -44,4 +61,4 @@ export interface GoogleOneTapProps {
  * The nonce is minted server-side (`googleOneTapNonce`) and echoed back with the
  * credential, so the POST is replay-bound without any client-trusted state.
  */
-export declare function GoogleOneTap({ clientId, nonceEndpoint, verifyEndpoint, onSignedIn, onDenied, buttonOptions, className, prompt, fallback, scriptSrc, }: GoogleOneTapProps): import("react").JSX.Element;
+export declare function GoogleOneTap({ clientId, nonceEndpoint, verifyEndpoint, onSignedIn, onAccountHint, onDenied, hd, loginHint, buttonOptions, className, prompt, fallback, scriptSrc, }: GoogleOneTapProps): import("react").JSX.Element;

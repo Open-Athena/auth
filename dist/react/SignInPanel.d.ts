@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { type EmailCodeFormProps } from './EmailCodeForm.js';
 import { type GoogleOneTapProps } from './GoogleOneTap.js';
 import { type RequestAccessFormProps } from './RequestAccessForm.js';
@@ -16,6 +16,19 @@ export interface SignInPanelProps {
      * "Continue with Google" beside it. `onSignedIn` is the panel's.
      */
     oneTap?: Omit<GoogleOneTapProps, 'fallback' | 'onSignedIn'>;
+    /**
+     * Once the server reports a remembered account (`googleOneTapNonce`'s
+     * `loginHint`), the Google slot becomes the redirect, labelled with it: the
+     * start URL hints that account to Google, which then skips its chooser, so a
+     * returning visitor is one click from signed in. Google's own button stays
+     * mounted (hidden), for its prompt. `false` keeps Google's button.
+     */
+    continueAs?: false | ((email: string) => ReactNode);
+    /**
+     * Under that button: a link back through Google's chooser
+     * (`?account=choose`). Given the address; `false` hides it.
+     */
+    switchAccount?: false | ((email: string) => ReactNode);
     /** Append the current path so a redirect returns the visitor where they started. Default true. */
     withNext?: boolean;
     /**
@@ -30,7 +43,7 @@ export interface SignInPanelProps {
     /** Render the request-access form. `true` for defaults, or pass props. */
     requestAccess?: boolean | RequestAccessFormProps;
     children?: ReactNode;
-    classNames?: Partial<Record<'root' | 'title' | 'hint' | 'button' | 'googleButton' | 'divider', string>>;
+    classNames?: Partial<Record<'root' | 'title' | 'hint' | 'button' | 'googleButton' | 'switchAccount' | 'divider', string>>;
 }
 /**
  * The address a denied sign-in redirected back with (`/?denied=<email>`). Google
@@ -45,4 +58,4 @@ export declare function deniedEmail(): string | undefined;
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export declare function SignInPanel({ googleUrl, googleLabel, oneTap, withNext, emailAuth, onSignedIn, title, hint, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;
+export declare function SignInPanel({ googleUrl, googleLabel, oneTap, continueAs, switchAccount, withNext, emailAuth, onSignedIn, title, hint, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;

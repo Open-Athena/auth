@@ -1,14 +1,16 @@
 import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
+import { useState } from 'react';
 import { EmailCodeForm } from './EmailCodeForm.js';
 import { GoogleOneTap } from './GoogleOneTap.js';
 import { RequestAccessForm } from './RequestAccessForm.js';
+const withParam = (url, k, v) => `${url}${url.includes('?') ? '&' : '?'}${k}=${encodeURIComponent(v)}`;
 function withNextParam(url) {
     if (typeof window === 'undefined')
         return url;
-    const next = window.location.pathname + window.location.search;
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}next=${encodeURIComponent(next)}`;
+    return withParam(url, 'next', window.location.pathname + window.location.search);
 }
+const defaultContinueAs = (email) => `Continue as ${email}`;
+const defaultSwitchAccount = (email) => `Not ${email}? Use another Google account`;
 /**
  * The address a denied sign-in redirected back with (`/?denied=<email>`). Google
  * (or an email link) verified it, so pre-filling request-access with it means an
@@ -26,10 +28,12 @@ export function deniedEmail() {
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, requestAccess, children, classNames = {}, }) {
+export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, continueAs = defaultContinueAs, switchAccount = defaultSwitchAccount, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, requestAccess, children, classNames = {}, }) {
     const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl;
     const denied = deniedEmail();
+    const [remembered, setRemembered] = useState(null);
     const anyPrimary = Boolean(google || oneTap);
+    const hinted = Boolean(google && remembered && continueAs);
     const redirect = google && (_jsx("a", { className: classNames.googleButton ?? classNames.button, href: google, children: googleLabel }));
     const emailProps = {
         ...(denied ? { defaultEmail: denied } : {}),
@@ -40,5 +44,10 @@ export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', o
         ...(denied ? { defaultEmail: denied } : {}),
         ...(requestAccess === true ? {} : requestAccess),
     };
-    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), oneTap ? (_jsx(GoogleOneTap, { ...oneTap, ...(onSignedIn ? { onSignedIn } : {}), fallback: redirect || null })) : (redirect), emailAuth && (_jsxs(_Fragment, { children: [anyPrimary && _jsx("div", { className: classNames.divider }), _jsx(EmailCodeForm, { ...emailProps })] })), children, requestAccess && (_jsxs(_Fragment, { children: [(anyPrimary || emailAuth) && _jsx("div", { className: classNames.divider }), _jsx(RequestAccessForm, { ...requestProps })] }))] }));
+    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), hinted && (_jsx("a", { className: classNames.googleButton ?? classNames.button, href: google, children: continueAs && remembered && continueAs(remembered) })), oneTap ? (
+            // `contents` keeps the wrapper out of the panel's layout.
+            _jsx("div", { style: { display: hinted ? 'none' : 'contents' }, children: _jsx(GoogleOneTap, { ...oneTap, ...(onSignedIn ? { onSignedIn } : {}), onAccountHint: email => {
+                        setRemembered(email);
+                        oneTap.onAccountHint?.(email);
+                    }, fallback: redirect || null }) })) : (redirect), google && remembered && switchAccount && (_jsx("a", { className: classNames.switchAccount, href: withParam(google, 'account', 'choose'), children: switchAccount(remembered) })), emailAuth && (_jsxs(_Fragment, { children: [anyPrimary && _jsx("div", { className: classNames.divider }), _jsx(EmailCodeForm, { ...emailProps })] })), children, requestAccess && (_jsxs(_Fragment, { children: [(anyPrimary || emailAuth) && _jsx("div", { className: classNames.divider }), _jsx(RequestAccessForm, { ...requestProps })] }))] }));
 }
