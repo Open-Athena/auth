@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Avatar } from './Avatar.js'
 
 /** Where the current preview came from — mirrors the server's `AvatarRefKind`. */
-export type AvatarFieldSource = 'github' | 'bluesky' | 'mastodon' | 'gravatar' | 'url' | 'upload'
+export type AvatarFieldSource = 'github' | 'bluesky' | 'mastodon' | 'gravatar' | 'url' | 'site' | 'upload'
 
 type Status =
   | { kind: 'idle' }
@@ -46,6 +46,7 @@ const SOURCE_LABELS: Record<AvatarFieldSource, string> = {
   mastodon: 'From Mastodon',
   gravatar: 'From Gravatar',
   url: 'From image URL',
+  site: "From the site's icon",
   upload: 'Uploaded',
 }
 
@@ -199,7 +200,7 @@ export function AvatarField({
           inputMode="url"
           autoComplete="off"
           spellCheck={false}
-          placeholder={labels.placeholder ?? 'GitHub, Bluesky, or Mastodon profile, or image URL'}
+          placeholder={labels.placeholder ?? 'GitHub, Bluesky, or Mastodon profile, image URL, or website'}
           value={text}
           onChange={e => {
             setPinned(false)

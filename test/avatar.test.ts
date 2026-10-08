@@ -247,12 +247,62 @@ describe('fetchAvatar', () => {
       await fetched(ref, stubNet({ [url]: { status: 403 } })),
       await fetched(ref, stubNet({})),
     ]).toEqual([
-      { error: 'that URL is a web page, not an image; copy the image address instead (or save it and upload)' },
+      { error: 'cdn.test is a web page with no usable icon; copy an image address instead (or save one and upload)' },
       { error: 'not a supported image (png, jpeg, webp, or gif)' },
       { error: 'image is 70 KB, over the 64 KB cap; save it and upload instead (uploads are downscaled)' },
       { error: 'fetching the image failed (HTTP 403)' },
       { error: 'fetching the image failed (HTTP 404)' },
     ])
+  })
+
+  describe('a web page instead of an image: its icon', () => {
+    const page = (head: string) => ({ type: 'text/html; charset=utf-8', body: `<!doctype html><html><head>${head}</head><body>…</body></html>` })
+    const SITE = { ...PNG, source: 'site' }
+
+    it('takes the apple-touch-icon over a small favicon, resolving a relative href', async () => {
+      const net = stubNet({
+        'https://loom.test/': page('<link rel="icon" href="/favicon-32.png"><link rel=apple-touch-icon href="img/touch.png">'),
+        'https://loom.test/img/touch.png': {},
+      })
+      expect(await fetched({ kind: 'url', url: 'https://loom.test/' }, net)).toEqual(SITE)
+      expect(net.calls).toEqual(['https://loom.test/', 'https://loom.test/img/touch.png'])
+    })
+
+    it('ranks rel=icon by size, skipping SVG, and falls through a link that 404s', async () => {
+      const net = stubNet({
+        'https://loom.test/': page(
+          `<link rel="icon" type="image/svg+xml" href="/i.svg"><link rel="icon" sizes="32x32" href="/i32.png">` +
+            `<link rel='icon' sizes='192x192' href='https://cdn.loom.test/i192.png'><link rel="shortcut icon" sizes="512x512" href="/gone.png">`,
+        ),
+        'https://cdn.loom.test/i192.png': {},
+      })
+      expect(await fetched({ kind: 'url', url: 'https://loom.test/' }, net)).toEqual(SITE)
+      expect(net.calls).toEqual(['https://loom.test/', 'https://loom.test/gone.png', 'https://cdn.loom.test/i192.png'])
+    })
+
+    it('with no icon links, tries /apple-touch-icon.png, then the PNG inside /favicon.ico', async () => {
+      const ico = new Uint8Array(22 + PNG_1x1.length)
+      ico.set([0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 32, 0])
+      new DataView(ico.buffer).setUint32(14, PNG_1x1.length, true)
+      new DataView(ico.buffer).setUint32(18, 22, true)
+      ico.set(PNG_1x1, 22)
+      const net = stubNet({ 'https://loom.test/': page('<title>Loom</title>'), 'https://loom.test/favicon.ico': { type: 'image/x-icon', body: ico } })
+      expect(await fetched({ kind: 'url', url: 'https://loom.test/' }, net)).toEqual(SITE)
+      expect(net.calls).toEqual(['https://loom.test/', 'https://loom.test/apple-touch-icon.png', 'https://loom.test/favicon.ico'])
+    })
+
+    it('reads a bare domain that is no Bluesky handle as a website', async () => {
+      const net = stubNet({
+        'https://loom.test/': page('<link rel="apple-touch-icon" href="/t.png">'),
+        'https://loom.test/t.png': {},
+      })
+      expect(await fetched(parseAvatarRef('loom.test'), net)).toEqual(SITE)
+      expect(net.calls).toEqual([
+        'https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=loom.test',
+        'https://loom.test/',
+        'https://loom.test/t.png',
+      ])
+    })
   })
 
   it('validates upload bytes without touching the network', async () => {

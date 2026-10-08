@@ -29,7 +29,7 @@ function Harness({ email, seen }: { email?: string; seen: (string | null)[] }) {
   )
 }
 
-const input = () => screen.getByPlaceholderText('GitHub, Bluesky, or Mastodon profile, or image URL')
+const input = () => screen.getByPlaceholderText('GitHub, Bluesky, or Mastodon profile, image URL, or website')
 
 describe('AvatarField', () => {
   it('previews a pasted profile through the server, and reports the copy it returns', async () => {

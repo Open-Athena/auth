@@ -264,7 +264,7 @@ describe('mint route: the person on the link', () => {
     }
     expect(results.map(r => [r.status, r.body.detail])).toEqual([
       [400, 'LinkedIn has no public way to fetch a profile photo; open it, copy the image address (or save it and upload), and use that'],
-      [400, 'that URL is a web page, not an image; copy the image address instead (or save it and upload)'],
+      [400, 'cdn.test is a web page with no usable icon; copy an image address instead (or save one and upload)'],
       [400, 'only https: URLs are fetched'],
       [400, 'fetching the image failed (HTTP 404)'],
     ])

@@ -874,7 +874,7 @@ export function createGate(opts: GateOptions) {
     const img = await fetchAvatarBytes(ref)
     if (!img) return null
     const value = assets ? assetUri(await assets.put(img.bytes, img.type)) : bytesToDataUri(img.type, img.bytes)
-    return { value, src: ref.kind }
+    return { value, src: img.source ?? ref.kind }
   }
 
   /** `fetchAvatar` with this gate's timeout, and its storage byte cap unless overridden: the bytes, not yet stored. */
