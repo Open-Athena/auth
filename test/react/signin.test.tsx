@@ -168,15 +168,23 @@ describe('GoogleOneTap', () => {
     delete (window as { google?: unknown }).google
   })
 
-  it('is button-only by default, with FedCM for both flows and no auto-select', async () => {
+  it('auto-selects a returning account after a button click, without automatically prompting', async () => {
     stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
     const calls = stubGsi()
     renderWithQuery(<GoogleOneTap clientId="client-123" />)
     await waitFor(() => expect(screen.getAllByRole('button')).toHaveLength(1))
     expect([calls.initialize.map(withoutCallback), calls.prompt]).toEqual([
-      [{ client_id: 'client-123', nonce: 'n1', use_fedcm_for_prompt: true, use_fedcm_for_button: true, auto_select: false }],
+      [{ client_id: 'client-123', nonce: 'n1', use_fedcm_for_prompt: true, use_fedcm_for_button: true, button_auto_select: true, auto_select: false }],
       0,
     ])
+  })
+
+  it('can require the button account chooser independently of prompt auto-selection', async () => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1' } } })
+    const calls = stubGsi()
+    renderWithQuery(<GoogleOneTap clientId="client-123" buttonAutoSelect={false} prompt={{ autoSelect: true }} />)
+    await waitFor(() => expect(calls.initialize).toHaveLength(1))
+    expect(calls.initialize.map(c => [c.button_auto_select, c.auto_select])).toEqual([[false, true]])
   })
 
   it('surfaces the prompt when asked, auto-selecting only with autoSelect, and cancels it on unmount', async () => {

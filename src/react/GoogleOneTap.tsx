@@ -41,6 +41,12 @@ export interface GoogleOneTapProps {
    * account isn't signed into the browser.
    */
   loginHint?: string
+  /**
+   * Skip the FedCM button's account chooser for eligible returning users after
+   * they click. Defaults true; independent of the prompt's `autoSelect` (which
+   * can sign in without a click). Google/browser consent rules still apply.
+   */
+  buttonAutoSelect?: boolean
   /** Options forwarded to `renderButton` (theme, size, text, shape, width). */
   buttonOptions?: Record<string, unknown>
   className?: string
@@ -107,6 +113,7 @@ export function GoogleOneTap({
   onDenied,
   hd,
   loginHint,
+  buttonAutoSelect = true,
   buttonOptions = { theme: 'outline', size: 'large', text: 'continue_with' },
   className,
   prompt = false,
@@ -136,6 +143,7 @@ export function GoogleOneTap({
           nonce,
           use_fedcm_for_prompt: true,
           use_fedcm_for_button: true,
+          button_auto_select: buttonAutoSelect,
           ...(hd ? { hd } : {}),
           ...(loginHint ? { login_hint: loginHint } : {}),
           auto_select: typeof prompt === 'object' && Boolean(prompt.autoSelect),
