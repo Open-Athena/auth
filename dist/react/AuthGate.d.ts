@@ -1,0 +1,25 @@
+import type { ReactNode } from 'react';
+import { type ExchangeOptions } from './exchange.js';
+import type { Whoami, WhoamiSource } from './types.js';
+export interface AuthGateProps<T extends Whoami = Whoami> {
+    /** Where the gate's `/whoami` is mounted. Default `/api/auth/whoami`. */
+    source?: WhoamiSource;
+    /** Rendered once an identity resolves. */
+    children: ReactNode | ((whoami: T, refresh: () => void) => ReactNode);
+    /** Rendered when nobody is signed in. */
+    signIn: ReactNode | ((refresh: () => void) => ReactNode);
+    /**
+     * Rendered while probing. Default: nothing — the probe is one cached request,
+     * and a spinner that flashes for 80ms reads worse than a blank moment.
+     */
+    loading?: ReactNode;
+    /** Redeem a `?key=` share link before probing. Pass false to disable. */
+    exchange?: ExchangeOptions | false;
+    /**
+     * Stub the identity instead of probing — see `useWhoami`'s `devIdentity`.
+     * `null` forces the wall; `undefined` (the default) probes normally.
+     */
+    devIdentity?: T | null;
+}
+/** Probe identity, then render the app or the wall. */
+export declare function AuthGate<T extends Whoami = Whoami>({ source, children, signIn, loading, exchange, devIdentity, }: AuthGateProps<T>): import("react").JSX.Element;

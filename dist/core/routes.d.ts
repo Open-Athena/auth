@@ -1,0 +1,76 @@
+/**
+ * A mountable `/api/auth/*` surface, so a consumer wires the gate up instead of
+ * re-deriving watchy's `auth.ts` by hand. Returns `null` for paths it doesn't
+ * own, so an app can fall through to its own router.
+ *
+ * Everything here is presentation-free JSON: the wall, the admin table and the
+ * copy around them are per-app and get vendored, per share-links §6.
+ */
+import { type DecisionPageOptions } from './decision-page.js';
+import type { DecisionView } from './decisions.js';
+import type { Auth } from './types.js';
+import type { AllowlistStore, AuditQuery } from './store.js';
+import type { Gate } from './gate.js';
+export interface RouteOptions {
+    /** Default `/api/auth`. */
+    basePath?: string;
+    /** Scope required for the admin routes. Default `admin` (the wildcard `*` satisfies it). */
+    adminScope?: string;
+    /**
+     * Scope required to see and decide access requests. Defaults to `adminScope`.
+     * Worth separating: minting a share link affects only your own links, while
+     * the request queue holds other people's email addresses.
+     */
+    requestScope?: string;
+    /** Read side of the access log; without it the activity/log routes 501. */
+    audit?: AuditQuery;
+    /**
+     * Backs the `<basePath>/allowed` admin CRUD (list/add/remove allowed emails);
+     * without it those routes 501. This is only the *management* surface — an app
+     * still opts the table into authorization separately, by putting
+     * `allowlistPolicy(store)` in its `policy`. Kept apart on purpose: mounting an
+     * editor should not silently change who gets in.
+     */
+    allowlist?: AllowlistStore;
+    /**
+     * Backs `POST <basePath>/allowed/sync`: run the app's directory sync on
+     * demand (`run` is typically `() => syncGroupsToAllowlist(store, …)` from
+     * `@open-athena/auth/google-directory`). Gated by `adminScope` — the panel's
+     * "Sync now" — or by `token` presented as `Authorization: Bearer …`, so a
+     * scheduled GitHub Action can drive it with no session and a Pages app needs
+     * no cron Worker. Without it the route 501s.
+     */
+    sync?: {
+        run: () => Promise<unknown>;
+        token?: string;
+    };
+    /**
+     * The identity recorded as a grant's `created_by`. Default: the SSO email.
+     * Returning a per-visitor value plus `scopeToCreator` gives each admin their
+     * own sandbox of links — which is how the demo lets strangers try the admin
+     * side without seeing (or revoking) anyone else's.
+     */
+    creatorOf?: (auth: Auth) => string;
+    /** When set, admin reads and writes are confined to grants this identity created. */
+    scopeToCreator?: (auth: Auth) => string | undefined;
+    /** Hidden form field that only a bot fills in. Default `website`. */
+    honeypotField?: string;
+    /** Replaces the built-in approve/deny page wholesale. */
+    decisionPage?: (view: DecisionView, opts: DecisionPageOptions) => Response;
+    /** Shown in the approve/deny page's copy. */
+    decisionAppName?: string;
+}
+/**
+ * Make sure `email` holds at least `scopes` on the allowlist. An existing row
+ * that already covers them is left alone (its source and note included); one
+ * that doesn't is widened to the union and becomes `manual`, since a directory
+ * sync would otherwise drop the scopes it never granted.
+ */
+export declare function allowForLink(store: AllowlistStore, email: string, scopes: string[], { note, addedBy }: {
+    note: string;
+    addedBy: string | null;
+}): Promise<{
+    email: string;
+    status: 'added' | 'widened' | 'already';
+}>;
+export declare function authRoutes(gate: Gate, opts?: RouteOptions): (req: Request) => Promise<Response | null>;
