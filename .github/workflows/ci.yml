@@ -39,7 +39,7 @@ jobs:
       - uses: runsascoded/npm-dist@v1
         with:
           source_ref: ${{ github.sha }}
-          dist_branch: ${{ github.ref == 'refs/heads/main' && 'dist' || 'dist/one-tap-auto-select' }}
+          dist_branch: ${{ github.ref == 'refs/heads/main' && 'dist' || 'dist-one-tap-auto-select' }}
           node_version: '24'
           build_command: pnpm build
           # `exports` points at ./dist/*, so keep the directory rather than
@@ -67,4 +67,4 @@ jobs:
           node-version: 24
       - run: node scripts/verify-dist.mjs "$GITHUB_REPOSITORY" "$DIST_REF"
         env:
-          DIST_REF: ${{ github.ref == 'refs/heads/main' && 'dist' || 'dist/one-tap-auto-select' }}
+          DIST_REF: ${{ github.ref == 'refs/heads/main' && 'dist' || 'dist-one-tap-auto-select' }}
