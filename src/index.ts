@@ -73,6 +73,15 @@ export {
   verifySessionClaims,
 } from './core/session.js'
 export type { CookieOpts, SessionClaims } from './core/session.js'
+export {
+  SELECTION_CONTEXT_HEADER,
+  MAX_SELECTION_CONTEXT_LENGTH,
+  serializeSelectionContext,
+  parseSelectionContext,
+  nextSelectionVersion,
+  checkSelectionContext,
+} from './core/selection-context.js'
+export type { SelectionContext } from './core/selection-context.js'
 export type {
   AllowEntry,
   AllowlistStore,
