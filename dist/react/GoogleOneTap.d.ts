@@ -13,6 +13,8 @@ export interface GoogleOneTapProps {
      * (`AccountHintOptions` in `@open-athena/auth/oidc`): for a "not you?" link.
      */
     onAccountHint?: (email: string) => void;
+    /** Remembered accounts in most-recently-used order; legacy responses fall back to `loginHint`. */
+    onAccountHints?: (emails: string[]) => void;
     /** Verified but not on the allowlist: the Google-verified email, for request-access pre-fill. */
     onDenied?: (email: string) => void;
     /**
@@ -67,4 +69,4 @@ export interface GoogleOneTapProps {
  * The nonce is minted server-side (`googleOneTapNonce`) and echoed back with the
  * credential, so the POST is replay-bound without any client-trusted state.
  */
-export declare function GoogleOneTap({ clientId, nonceEndpoint, verifyEndpoint, onSignedIn, onAccountHint, onDenied, hd, loginHint, buttonAutoSelect, buttonOptions, className, prompt, fallback, scriptSrc, }: GoogleOneTapProps): import("react").JSX.Element;
+export declare function GoogleOneTap({ clientId, nonceEndpoint, verifyEndpoint, onSignedIn, onAccountHint, onAccountHints, onDenied, hd, loginHint, buttonAutoSelect, buttonOptions, className, prompt, fallback, scriptSrc, }: GoogleOneTapProps): import("react").JSX.Element;

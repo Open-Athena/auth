@@ -43,13 +43,15 @@ export interface OidcOptions extends AccountHintOptions {
  * here last", not "who is here". `oidcStart` sends it as `login_hint`, and
  * `googleOneTapNonce` returns it as `loginHint`. It is a hint, never a
  * credential: Google still authenticates, and a forged value only pre-selects
- * a different account at Google. A denied sign-in clears it, so a refused
- * account isn't hinted straight back into the same refusal. `?account=choose`
+ * a different account at Google. A sibling `${name}_accounts` cookie holds
+ * up to five validated addresses in most-recently-used order, not sessions.
+ * A denied sign-in removes only that address and keeps another current hint
+ * if available. `?account=<email>` selects a remembered address; `?account=choose`
  * on the start URL skips it and asks Google for its chooser
  * (`prompt=select_account`), the "use another account" escape.
  *
  * Default cookie `oa_google_hint`; pass the same name to every handler, or
- * `false` to turn the hint off (a kiosk, say).
+ * `false` to turn both hint cookies off (a kiosk, say).
  */
 export interface AccountHintOptions {
     accountHintCookie?: string | false;
@@ -97,12 +99,13 @@ export interface OneTapNonceOptions extends AccountHintOptions {
     ttlS?: number;
 }
 /**
- * `GET` handler → `{ nonce, loginHint? }`. The page passes `nonce` to
+ * `GET` handler → `{ nonce, loginHint?, loginHints? }`. The page passes `nonce` to
  * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
  * `googleOneTapVerify`. The value is opaque and single-window; it is not a
  * bearer credential (it authorizes nothing without a Google-signed id_token
  * that embeds it). `loginHint` is the remembered account (`AccountHintOptions`),
- * for the page to offer "not you?".
+ * for the page to offer "not you?". Nonempty `loginHints` lists remembered
+ * addresses for account rows; none of these hints authenticate a visitor.
  */
 export declare function googleOneTapNonce(opts: OneTapNonceOptions): (ctx?: {
     request?: Request;
