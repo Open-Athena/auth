@@ -28,6 +28,14 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
       )}
       <SignInPanel
         title={title}
+        continueAs={email => (
+          <span className="remembered-account">
+            <img src="/google-g.png" width="18" height="18" alt="Google" />
+            <span className="account-email">{email}</span>
+            <span className="account-last-used">Last used</span>
+            <span className="account-arrow" aria-hidden="true">&#8594;</span>
+          </span>
+        )}
         googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
         oneTap={
           clientId

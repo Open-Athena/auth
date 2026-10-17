@@ -606,13 +606,43 @@ table {
   }
   .btn.google {
     background: var(--panel);
-    font-weight: 600;
+    font-weight: 400;
+    padding: 12px 14px;
+    border-radius: 8px;
+    transition: border-color 120ms ease, background 120ms ease;
+    &:hover { border-color: var(--muted); }
+    &:focus-visible { outline: 2px solid var(--accent, #65bba9); outline-offset: 3px; }
+  }
+  .remembered-account {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+    align-items: center;
+    gap: 10px;
+    min-height: 20px;
+    text-align: left;
+    font-size: 0.875rem;
+    .account-email { overflow-wrap: anywhere; }
+    .account-last-used {
+      padding: 3px 7px;
+      border-radius: 4px;
+      background: light-dark(#e9effb, #192639);
+      color: light-dark(#285da8, #8bb9f5);
+      font-size: 0.7rem;
+      white-space: nowrap;
+    }
+    .account-arrow { color: var(--muted); grid-column: 4; }
+    @media (max-width: 440px) {
+      grid-template-columns: 18px minmax(0, 1fr) 16px;
+      .account-last-used { display: none; }
+      .account-arrow { grid-column: 3; }
+    }
   }
   .switch-account {
     justify-self: center;
     font-size: 0.85rem;
     color: var(--muted);
   }
+  > .google ~ .google .account-last-used { display: none; }
   .divider {
     height: 1px;
     margin: 0.5rem 0;

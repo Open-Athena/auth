@@ -7,6 +7,6 @@ export default defineConfig({
     // parallel build inflates the count and slows every run. Keep the built-in
     // excludes (node_modules, dist, …) and add both worktree roots (`wt/` is
     // where hand-made worktrees live).
-    exclude: [...configDefaults.exclude, '.claude/**', 'wt/**'],
+    exclude: [...configDefaults.exclude, '.claude/**', 'wt/**', 'test-browser/**'],
   },
 })

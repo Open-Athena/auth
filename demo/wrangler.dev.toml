@@ -1,0 +1,11 @@
+name = "oa-auth-demo-dev"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oa-auth-demo-dev"
+database_id = "548cf45a-74bc-4ebf-85b2-cc95f4e79266"
+migrations_dir = "../migrations"
+
+[vars]
+STAFF_DOMAIN = "openathena.ai"

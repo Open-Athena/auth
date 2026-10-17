@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "db:local": "wrangler d1 migrations apply oa-auth-demo --local",
     "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo --remote",
-    "deploy": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo --branch main"
+    "deploy": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo --branch main",
+    "db:dev": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo-dev --remote --config wrangler.dev.toml",
+    "deploy:dev": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo-dev --branch main"
   },
   "dependencies": {
     "@open-athena/auth": "workspace:*",
