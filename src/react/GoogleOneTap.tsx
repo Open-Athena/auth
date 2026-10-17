@@ -27,6 +27,8 @@ export interface GoogleOneTapProps {
    * (`AccountHintOptions` in `@open-athena/auth/oidc`): for a "not you?" link.
    */
   onAccountHint?: (email: string) => void
+  /** Remembered accounts in most-recently-used order; legacy responses fall back to `loginHint`. */
+  onAccountHints?: (emails: string[]) => void
   /** Verified but not on the allowlist: the Google-verified email, for request-access pre-fill. */
   onDenied?: (email: string) => void
   /**
@@ -110,6 +112,7 @@ export function GoogleOneTap({
   verifyEndpoint = '/api/auth/google/onetap',
   onSignedIn,
   onAccountHint,
+  onAccountHints,
   onDenied,
   hd,
   loginHint,
@@ -131,9 +134,10 @@ export function GoogleOneTap({
     async function init() {
       try {
         const res = await fetch(nonceEndpoint, { credentials: 'include', headers: { accept: 'application/json' } })
-        const { nonce, loginHint: remembered } = (await res.json()) as { nonce?: string; loginHint?: string }
+        const { nonce, loginHint: remembered, loginHints } = (await res.json()) as { nonce?: string; loginHint?: string; loginHints?: string[] }
         if (!nonce) throw new Error('no nonce')
         if (remembered && !cancelled) onAccountHint?.(remembered)
+        if (!cancelled) onAccountHints?.(loginHints ?? (remembered ? [remembered] : []))
         await loadScript(scriptSrc)
         const gsi = (window as unknown as { google?: { accounts?: { id?: GsiId } } }).google?.accounts?.id
         if (cancelled || !gsi || !ref.current) throw new Error('gsi unavailable')

@@ -80,13 +80,15 @@ const DEFAULT_NONCE_COOKIE = 'oa_oidc'
  * here last", not "who is here". `oidcStart` sends it as `login_hint`, and
  * `googleOneTapNonce` returns it as `loginHint`. It is a hint, never a
  * credential: Google still authenticates, and a forged value only pre-selects
- * a different account at Google. A denied sign-in clears it, so a refused
- * account isn't hinted straight back into the same refusal. `?account=choose`
+ * a different account at Google. A sibling `${name}_accounts` cookie holds
+ * up to five validated addresses in most-recently-used order, not sessions.
+ * A denied sign-in removes only that address and keeps another current hint
+ * if available. `?account=<email>` selects a remembered address; `?account=choose`
  * on the start URL skips it and asks Google for its chooser
  * (`prompt=select_account`), the "use another account" escape.
  *
  * Default cookie `oa_google_hint`; pass the same name to every handler, or
- * `false` to turn the hint off (a kiosk, say).
+ * `false` to turn both hint cookies off (a kiosk, say).
  */
 export interface AccountHintOptions {
   accountHintCookie?: string | false
@@ -101,13 +103,61 @@ const hintCookieName = (opt: string | false | undefined): string | null => (opt 
 function readAccountHint(req: Request, name: string | null): string | null {
   if (!name) return null
   const raw = readCookie(req, name)
-  if (!raw) return null
+  if (!raw || raw.length > 3000) return null
   try {
-    const email = decodeURIComponent(raw)
-    return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null
+    return normalizeAccountHint(decodeURIComponent(raw))
   } catch {
     return null
   }
+}
+
+function normalizeAccountHint(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const email = value.trim().toLowerCase()
+  return email.length <= 254 && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(email) ? email : null
+}
+
+function boundedAccountHints(values: unknown[]): string[] {
+  const emails: string[] = []
+  for (const value of values) {
+    const email = normalizeAccountHint(value)
+    if (!email || emails.includes(email)) continue
+    if (encodeURIComponent(JSON.stringify([...emails, email])).length > 3000) break
+    emails.push(email)
+    if (emails.length === 5) break
+  }
+  return emails
+}
+
+function readAccountHints(req: Request, name: string | null): string[] {
+  if (!name) return []
+  const hint = readAccountHint(req, name)
+  const raw = readCookie(req, `${name}_accounts`)
+  let values: unknown[] = []
+  if (raw && raw.length <= 3000) {
+    try {
+      const parsed: unknown = JSON.parse(decodeURIComponent(raw))
+      if (Array.isArray(parsed)) values = parsed
+    } catch {
+      // Malformed client-controlled history is an absent hint, not an error.
+    }
+  }
+  return boundedAccountHints([hint, ...values])
+}
+
+/** Remembered addresses are presentation hints, never retained sessions. */
+function writeAccountHints(headers: Headers, req: Request, name: string | null, email: string, denied = false): void {
+  if (!name) return
+  const normalized = normalizeAccountHint(email)
+  const previous = readAccountHints(req, name)
+  const accounts = denied
+    ? previous.filter(value => value !== normalized)
+    : boundedAccountHints([normalized, ...previous])
+  const current = denied ? accounts[0] : normalized
+  headers.append('set-cookie', current ? setAccountHint(req, name, current) : clearCookie({ name, secure: isSecureRequest(req) }))
+  headers.append('set-cookie', accounts.length
+    ? sessionCookie(encodeURIComponent(JSON.stringify(accounts)), { name: `${name}_accounts`, ttlS: ACCOUNT_HINT_TTL_S, secure: isSecureRequest(req) })
+    : clearCookie({ name: `${name}_accounts`, secure: isSecureRequest(req) }))
 }
 
 const setAccountHint = (req: Request, name: string, email: string): string =>
@@ -149,8 +199,12 @@ export function oidcStart(opts: OidcOptions) {
     const nonce = generateToken()
     const params = new URL(request.url).searchParams
     const next = safeNext(params.get('next'))
-    const choose = params.get('account') === 'choose'
-    const hint = choose ? null : readAccountHint(request, hintCookie)
+    const account = params.get('account')
+    const choose = account === 'choose'
+    const selected = normalizeAccountHint(account)
+    const hint = choose ? null : account !== null
+      ? selected && readAccountHints(request, hintCookie).includes(selected) ? selected : null
+      : readAccountHint(request, hintCookie)
     const state = await signSession(`${STATE_PREFIX}${nonce}:${next}`, gate.secret, Date.now(), stateTtlS)
 
     const url = new URL(provider.authUrl)
@@ -250,7 +304,7 @@ export function oidcCallback(opts: OidcOptions) {
     if (!signedIn) {
       const headers = new Headers({ location: `/?denied=${encodeURIComponent(claims.email)}`, 'cache-control': 'no-store' })
       headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }))
-      if (hintCookie) headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }))
+      writeAccountHints(headers, request, hintCookie, claims.email, true)
       return new Response(null, { status: 302, headers })
     }
 
@@ -263,7 +317,7 @@ export function oidcCallback(opts: OidcOptions) {
     const headers = new Headers({ location: next, 'cache-control': 'no-store' })
     headers.append('set-cookie', signedIn.cookie)
     headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }))
-    if (hintCookie) headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email))
+    writeAccountHints(headers, request, hintCookie, claims.email)
     return new Response(null, { status: 302, headers })
   }
 }
@@ -303,12 +357,13 @@ export interface OneTapNonceOptions extends AccountHintOptions {
 const ONETAP_PREFIX = 'onetap:'
 
 /**
- * `GET` handler → `{ nonce, loginHint? }`. The page passes `nonce` to
+ * `GET` handler → `{ nonce, loginHint?, loginHints? }`. The page passes `nonce` to
  * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
  * `googleOneTapVerify`. The value is opaque and single-window; it is not a
  * bearer credential (it authorizes nothing without a Google-signed id_token
  * that embeds it). `loginHint` is the remembered account (`AccountHintOptions`),
- * for the page to offer "not you?".
+ * for the page to offer "not you?". Nonempty `loginHints` lists remembered
+ * addresses for account rows; none of these hints authenticate a visitor.
  */
 export function googleOneTapNonce(opts: OneTapNonceOptions) {
   const { gate, ttlS = 300 } = opts
@@ -316,7 +371,8 @@ export function googleOneTapNonce(opts: OneTapNonceOptions) {
   return async (ctx?: { request?: Request }): Promise<Response> => {
     const nonce = await signSession(`${ONETAP_PREFIX}${generateToken()}`, gate.secret, Date.now(), ttlS)
     const loginHint = ctx?.request ? readAccountHint(ctx.request, hintCookie) : null
-    return new Response(JSON.stringify(loginHint ? { nonce, loginHint } : { nonce }) + '\n', {
+    const loginHints = ctx?.request ? readAccountHints(ctx.request, hintCookie) : []
+    return new Response(JSON.stringify({ nonce, ...(loginHint ? { loginHint } : {}), ...(loginHints.length ? { loginHints } : {}) }) + '\n', {
       status: 200,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     })
@@ -391,7 +447,7 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
     const signedIn = await gate.signIn(claims.email, request)
     if (!signedIn) {
       const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      if (hintCookie) headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }))
+      writeAccountHints(headers, request, hintCookie, claims.email, true)
       return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', { status: 401, headers })
     }
     // Seed before the 200: the FE re-fetches `/whoami` right after this resolves,
@@ -399,7 +455,7 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
     if (seedProfile) await gate.seedProfileFromClaims(claims.email, claims).catch(() => null)
     const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     headers.append('set-cookie', signedIn.cookie)
-    if (hintCookie) headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email))
+    writeAccountHints(headers, request, hintCookie, claims.email)
     return new Response(JSON.stringify({ ok: true }) + '\n', { status: 200, headers })
   }
 }

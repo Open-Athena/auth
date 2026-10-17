@@ -49,6 +49,14 @@ export interface SignInPanelProps {
 
 const withParam = (url: string, k: string, v: string): string => `${url}${url.includes('?') ? '&' : '?'}${k}=${encodeURIComponent(v)}`
 
+function withAccount(url: string, email: string): string {
+  const [path = '', hash] = url.split('#', 2)
+  const query = path.indexOf('?')
+  const params = new URLSearchParams(query < 0 ? '' : path.slice(query + 1))
+  params.set('account', email)
+  return `${query < 0 ? path : path.slice(0, query)}?${params}${hash === undefined ? '' : `#${hash}`}`
+}
+
 function withNextParam(url: string): string {
   if (typeof window === 'undefined') return url
   return withParam(url, 'next', window.location.pathname + window.location.search)
@@ -91,7 +99,8 @@ export function SignInPanel({
 }: SignInPanelProps) {
   const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl
   const denied = deniedEmail()
-  const [remembered, setRemembered] = useState<string | null>(null)
+  const [accounts, setAccounts] = useState<string[]>([])
+  const remembered = accounts[0]
   const anyPrimary = Boolean(google || oneTap)
   const hinted = Boolean(google && remembered && continueAs)
   const redirect = google && (
@@ -114,11 +123,11 @@ export function SignInPanel({
     <div className={classNames.root}>
       {title && <h1 className={classNames.title}>{title}</h1>}
       {hint && <p className={classNames.hint}>{hint}</p>}
-      {hinted && (
-        <a className={classNames.googleButton ?? classNames.button} href={google}>
-          {continueAs && remembered && continueAs(remembered)}
+      {hinted && accounts.map(email => (
+        <a key={email} className={classNames.googleButton ?? classNames.button} href={accounts.length > 1 ? withAccount(google!, email) : google}>
+          {continueAs && continueAs(email)}
         </a>
-      )}
+      ))}
       {oneTap ? (
         // `contents` keeps the wrapper out of the panel's layout.
         <div style={{ display: hinted ? 'none' : 'contents' }}>
@@ -126,8 +135,11 @@ export function SignInPanel({
             {...oneTap}
             {...(onSignedIn ? { onSignedIn } : {})}
             onAccountHint={email => {
-              setRemembered(email)
               oneTap.onAccountHint?.(email)
+            }}
+            onAccountHints={emails => {
+              setAccounts(emails)
+              oneTap.onAccountHints?.(emails)
             }}
             fallback={redirect || null}
           />
@@ -136,8 +148,8 @@ export function SignInPanel({
         redirect
       )}
       {google && remembered && switchAccount && (
-        <a className={classNames.switchAccount} href={withParam(google, 'account', 'choose')}>
-          {switchAccount(remembered)}
+        <a className={classNames.switchAccount} href={withAccount(google, 'choose')}>
+          {accounts.length > 1 && switchAccount === defaultSwitchAccount ? 'Use another Google account' : switchAccount(remembered)}
         </a>
       )}
       {emailAuth && (

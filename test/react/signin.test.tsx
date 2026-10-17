@@ -92,6 +92,32 @@ describe('SignInPanel — oneTap', () => {
     expect((container.firstElementChild!.firstElementChild as HTMLElement).style.display).toBe('contents')
   })
 
+  it('renders ordered account redirects, replaces an existing account, and forwards both hint callbacks', async () => {
+    const emails = ['b+tag@x.test', 'a@x.test']
+    stubFetch({ '/n': { status: 200, body: { nonce: 'n1', loginHint: emails[0], loginHints: emails } } })
+    const onAccountHint = vi.fn()
+    const onAccountHints = vi.fn()
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.dataset.loaded = 'true'
+    document.head.appendChild(script)
+    ;(window as { google?: unknown }).google = { accounts: { id: {
+      initialize: () => {},
+      renderButton: (parent: HTMLElement) => parent.appendChild(document.createElement('button')),
+    } } }
+
+    renderWithQuery(<SignInPanel googleUrl="/auth/google?account=old#start" withNext={false}
+      oneTap={{ ...ONE_TAP, onAccountHint, onAccountHints }} continueAs={email => `Welcome back ${email}`} />)
+    await waitFor(() => expect(screen.getAllByRole('link').map(a => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['Welcome back b+tag@x.test', '/auth/google?account=b%2Btag%40x.test#start'],
+      ['Welcome back a@x.test', '/auth/google?account=a%40x.test#start'],
+      ['Use another Google account', '/auth/google?account=choose#start'],
+    ]))
+    expect(onAccountHint.mock.calls).toEqual([[emails[0]]])
+    expect(onAccountHints.mock.calls).toEqual([[emails]])
+    expect(screen.queryAllByRole('button')).toEqual([])
+  })
+
   it('falls back to the redirect button when GSI cannot load', async () => {
     stubFetch({ '/n': { status: 200, body: {} } })
     renderWithQuery(<SignInPanel googleUrl="/auth/google" oneTap={ONE_TAP} />)
@@ -162,6 +188,24 @@ describe('GoogleOneTap', () => {
     return calls
   }
   const withoutCallback = ({ callback: _, ...rest }: Record<string, unknown>) => rest
+
+  it.each([
+    [{ loginHint: 'a@x.test', loginHints: ['a@x.test', 'b@x.test'] }, ['a@x.test', 'b@x.test']],
+    [{ loginHint: 'a@x.test' }, ['a@x.test']],
+    [{}, []],
+  ])('propagates remembered hints without supplying a GSI login hint: %j', async (hints, expected) => {
+    stubFetch({ '/api/auth/google/onetap/nonce': { status: 200, body: { nonce: 'n1', ...hints } } })
+    const calls = stubGsi()
+    const onAccountHint = vi.fn()
+    const onAccountHints = vi.fn()
+    renderWithQuery(<GoogleOneTap clientId="client-123" onAccountHint={onAccountHint} onAccountHints={onAccountHints} />)
+    await waitFor(() => expect(calls.initialize).toHaveLength(1))
+    expect(onAccountHints.mock.calls).toEqual([[expected]])
+    expect(onAccountHint.mock.calls).toEqual(expected.length ? [['a@x.test']] : [])
+    expect(calls.initialize.map(withoutCallback)).toEqual([
+      { client_id: 'client-123', nonce: 'n1', use_fedcm_for_prompt: true, use_fedcm_for_button: true, button_auto_select: true, auto_select: false },
+    ])
+  })
 
   afterEach(() => {
     document.head.querySelector('script[src="https://accounts.google.com/gsi/client"]')?.remove()

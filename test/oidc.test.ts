@@ -366,12 +366,19 @@ describe('remembered account', () => {
     const p = new URL(res.headers.get('location')!).searchParams
     return [p.get('login_hint'), p.get('prompt')]
   }
-  async function signInVia(email: string, extra: object = {}) {
+  const history = (emails: unknown[], name = 'oa_google_hint') => `${name}_accounts=${encodeURIComponent(JSON.stringify(emails))}`
+  async function hints(cookie = '', extra: object = {}) {
+    const res = await googleOneTapNonce({ gate, ...extra })({ request: new Request('https://app.test/n', { headers: { Cookie: cookie } }) })
+    const { nonce, ...body } = await res.json() as { nonce: string; loginHint?: string; loginHints?: string[] }
+    expect(typeof nonce).toBe('string')
+    return body
+  }
+  async function signInVia(email: string, extra: object = {}, remembered = '') {
     const { state, cookie } = await start()
     const nonce = cookie.split('=')[1]!
     return oidcCallback({ ...opts(providerFetch(await idToken({ email, email_verified: true, nonce }))), ...extra })({
       request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`, {
-        headers: { Cookie: cookie },
+        headers: { Cookie: `${cookie}; ${remembered}` },
       }),
     })
   }
@@ -397,7 +404,7 @@ describe('remembered account', () => {
 
   it('forgets the account when a sign-in is denied, so the next start shows the chooser', async () => {
     const res = await signInVia('stranger@example.com')
-    expect(pairs(res)).toEqual(['oa_oidc=', 'oa_google_hint='])
+    expect(pairs(res)).toEqual(['oa_oidc=', 'oa_google_hint=', 'oa_google_hint_accounts='])
   })
 
   it('does none of it with `accountHintCookie: false`', async () => {
@@ -416,11 +423,12 @@ describe('remembered account', () => {
         body: JSON.stringify({ credential: await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }), nonce }),
       }),
     })
-    expect(pairs(res).map(c => c.split('=')[0])).toEqual(['oa_auth', 'oa_google_hint'])
+    expect(pairs(res).slice(1)).toEqual([HINT, history(['staff@openathena.ai'])])
 
     const next = await googleOneTapNonce({ gate })({ request: new Request('https://app.test/n', { headers: { Cookie: HINT } }) })
-    const body = (await next.json()) as { nonce: string; loginHint?: string }
-    expect([Object.keys(body), body.loginHint]).toEqual([['nonce', 'loginHint'], 'staff@openathena.ai'])
+    const { nonce: nextNonce, ...body } = (await next.json()) as { nonce: string; loginHint?: string; loginHints?: string[] }
+    expect(typeof nextNonce).toBe('string')
+    expect(body).toEqual({ loginHint: 'staff@openathena.ai', loginHints: ['staff@openathena.ai'] })
   })
 
   it('One Tap forgets a denied account', async () => {
@@ -433,7 +441,108 @@ describe('remembered account', () => {
         body: JSON.stringify({ credential: await idToken({ email: 'stranger@example.com', email_verified: true, nonce }), nonce }),
       }),
     })
-    expect([res.status, pairs(res)]).toEqual([401, ['oa_google_hint=']])
+    expect([res.status, pairs(res)]).toEqual([401, ['oa_google_hint=', 'oa_google_hint_accounts=']])
+  })
+
+  it('merges redirect successes in normalized MRU order, deduplicates and evicts the sixth account', async () => {
+    const res = await signInVia('staff@openathena.ai', {}, history([
+      'one@openathena.ai', 'STAFF@openathena.ai', 'two@openathena.ai', 'three@openathena.ai', 'four@openathena.ai', 'five@openathena.ai',
+    ]))
+    expect(res.status).toBe(302)
+    expect(pairs(res).slice(2)).toEqual([HINT, history([
+      'staff@openathena.ai', 'one@openathena.ai', 'two@openathena.ai', 'three@openathena.ai', 'four@openathena.ai',
+    ])])
+    expect(setCookies(res).slice(2).map(c => c.slice(c.indexOf(';')))).toEqual([
+      '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=34560000',
+      '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=34560000',
+    ])
+  })
+
+  it('selects only remembered accounts and preserves the chooser escape', async () => {
+    const cookie = `${HINT}; ${history(['other@openathena.ai', 'staff@openathena.ai'])}`
+    expect(await startParams('/auth/google?account=OTHER%40openathena.ai', cookie)).toEqual(['other@openathena.ai', null])
+    expect(await startParams('/auth/google?account=unknown%40example.com', cookie)).toEqual([null, null])
+    expect(await startParams('/auth/google?account=choose', cookie)).toEqual([null, 'select_account'])
+    expect(await startParams('/auth/google?account=staff%40openathena.ai', HINT)).toEqual(['staff@openathena.ai', null])
+    expect(await startParams('/auth/google?account=staff%40openathena.ai', cookie, { accountHintCookie: false })).toEqual([null, null])
+  })
+
+  it('reports history without inventing a current hint or an authenticated session', async () => {
+    const cookie = history(['one@example.com', 'two@example.com'])
+    expect(await hints(cookie)).toEqual({ loginHints: ['one@example.com', 'two@example.com'] })
+    expect(await gate.authenticate(new Request('https://app.test/', { headers: { Cookie: cookie } }))).toBeNull()
+    expect(await hints()).toEqual({})
+    expect(await hints(`${HINT}; ${cookie}`, { accountHintCookie: false })).toEqual({})
+    expect(await hints(history([' OTHER@example.com '], 'custom'), { accountHintCookie: 'custom' })).toEqual({ loginHints: ['other@example.com'] })
+    expect(await hints('oa_google_hint=STAFF%40openathena.ai')).toEqual({ loginHint: 'staff@openathena.ai', loginHints: ['staff@openathena.ai'] })
+  })
+
+  it('does not trust remembered hints in place of provider authentication', async () => {
+    const cookie = `${HINT}; ${history(['staff@openathena.ai'])}`
+    const res = await googleOneTapVerify({ gate, clientId: CLIENT_ID, fetch: providerFetch(null) })({
+      request: new Request('https://app.test/auth/google/onetap', {
+        method: 'POST', headers: { Cookie: cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ credential: 'forged', nonce: 'forged' }),
+      }),
+    })
+    expect([res.status, await res.json(), pairs(res)]).toEqual([401, { ok: false }, []])
+  })
+
+  it.each(['%', '%5B', encodeURIComponent('{}'), encodeURIComponent('null'), 'x'.repeat(3001)])('ignores malformed or oversized history %s', async raw => {
+    expect(await hints(`oa_google_hint_accounts=${raw}`)).toEqual({})
+    expect(await hints(`${HINT}; oa_google_hint_accounts=${raw}`)).toEqual({ loginHint: 'staff@openathena.ai', loginHints: ['staff@openathena.ai'] })
+  })
+
+  it('validates entries, normalizes duplicates and limits email length', async () => {
+    const maxEmail = `${'a'.repeat(242)}@example.com`
+    expect(maxEmail.length).toBe(254)
+    expect(await hints(history([null, 42, {}, 'bad', 'a@@example.com', 'a b@example.com', 'a\n@example.com', `${'a'.repeat(243)}@example.com`, ' ONE@example.com ', 'one@example.com', maxEmail]))).toEqual({
+      loginHints: ['one@example.com', maxEmail],
+    })
+    expect(await hints(`oa_google_hint=${encodeURIComponent('a'.repeat(255) + '@example.com')}`)).toEqual({})
+  })
+
+  it('bounds encoded history even for maximally escaped addresses', async () => {
+    const emails = Array.from({ length: 5 }, (_, i) => `${'%'.repeat(235)}${i}@openathena.ai`)
+    const res = await signInVia(emails[0]!, {}, history(emails.slice(1)))
+    const written = pairs(res).slice(2)
+    expect(written).toEqual([
+      `oa_google_hint=${encodeURIComponent(emails[0]!)}`,
+      history(emails.slice(0, 4)),
+    ])
+    expect(written[1]!.split('=')[1]!.length).toBeLessThanOrEqual(3000)
+    expect(await hints(history(emails))).toEqual({})
+  })
+
+  it.each(['redirect', 'onetap'])('%s merges successes and removes only the denied account', async flow => {
+    const run = async (email: string, cookie: string, extra: object = {}) => {
+      if (flow === 'redirect') return signInVia(email, extra, cookie)
+      const nonceRes = await googleOneTapNonce({ gate })()
+      const { nonce } = await nonceRes.json() as { nonce: string }
+      return googleOneTapVerify({ gate, clientId: CLIENT_ID, fetch: providerFetch(null), ...extra })({
+        request: new Request('https://app.test/auth/google/onetap', {
+          method: 'POST',
+          headers: { Cookie: cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ credential: await idToken({ email, email_verified: true, nonce }), nonce }),
+        }),
+      })
+    }
+    const cookie = `oa_google_hint=stranger%40example.com; ${history(['stranger@example.com', 'other@openathena.ai', 'staff@openathena.ai'])}`
+    const success = await run('staff@openathena.ai', cookie)
+    expect(pairs(success).slice(flow === 'redirect' ? 2 : 1)).toEqual([HINT, history(['staff@openathena.ai', 'stranger@example.com', 'other@openathena.ai'])])
+    const denied = await run('STRANGER@example.com', cookie)
+    expect(pairs(denied)).toEqual([
+      ...(flow === 'redirect' ? ['oa_oidc='] : []),
+      'oa_google_hint=other%40openathena.ai', history(['other@openathena.ai', 'staff@openathena.ai']),
+    ])
+    const unrelated = await run('unknown@example.com', `${HINT}; ${history(['staff@openathena.ai', 'other@openathena.ai'])}`)
+    expect(pairs(unrelated).slice(flow === 'redirect' ? 1 : 0)).toEqual([HINT, history(['staff@openathena.ai', 'other@openathena.ai'])])
+    const disabled = await run('stranger@example.com', cookie, { accountHintCookie: false })
+    expect(pairs(disabled)).toEqual(flow === 'redirect' ? ['oa_oidc='] : [])
+    const disabledSuccess = await run('staff@openathena.ai', cookie, { accountHintCookie: false })
+    expect(pairs(disabledSuccess).map(pair => pair.split('=')[0])).toEqual(flow === 'redirect' ? ['oa_auth', 'oa_oidc'] : ['oa_auth'])
+    const custom = await run('staff@openathena.ai', history(['other@openathena.ai'], 'custom'), { accountHintCookie: 'custom' })
+    expect(pairs(custom).slice(flow === 'redirect' ? 2 : 1)).toEqual(['custom=staff%40openathena.ai', history(['staff@openathena.ai', 'other@openathena.ai'], 'custom')])
   })
 })
 
