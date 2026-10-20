@@ -30,7 +30,7 @@ function render(whoami: Whoami | null): void {
       avatar.width = avatar.height = 40
       avatar.referrerPolicy = 'no-referrer'
       avatar.onerror = () => avatar.remove()
-      name.prepend(avatar)
+      name.insertBefore(avatar, name.firstChild)
     }
     const subject = document.createElement('code')
     subject.textContent = whoami.kind === 'grant' ? `g:${whoami.id}` : `e:${whoami.email}`
