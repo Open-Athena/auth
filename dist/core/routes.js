@@ -119,6 +119,7 @@ export async function allowForLink(store, email, scopes, { note, addedBy }) {
     return { email, status: existing ? 'widened' : 'added' };
 }
 export function authRoutes(gate, opts = {}) {
+    const reply = (_route, data, headers = {}) => json(data, 200, headers);
     const { basePath = '/api/auth', adminScope = 'admin', audit, allowlist, sync, creatorOf = defaultCreator, scopeToCreator, honeypotField = 'website', decisionPage, decisionAppName, } = opts;
     return async function handle(req) {
         const url = new URL(req.url);
@@ -150,7 +151,7 @@ export function authRoutes(gate, opts = {}) {
         // ---- public -------------------------------------------------------------
         if (rest === '/whoami' && method === 'GET') {
             if (auth)
-                return json(present(gate.whoami(auth)));
+                return reply('whoami', present(gate.whoami(auth)));
             // A dead cookie (revoked or expired grant, delisted email) is cleared
             // here, where the browser asks "who am I" — but only when the cookie is
             // what failed: a bad `?key=`/`Bearer` beside a live cookie is not a
@@ -169,7 +170,7 @@ export function authRoutes(gate, opts = {}) {
             return json(present(gate.whoami(res.auth)), 200, { 'set-cookie': res.cookie });
         }
         if (rest === '/logout' && method === 'POST') {
-            return json({ ok: true }, 200, { 'set-cookie': await gate.signOut(req, auth) });
+            return reply('logout', { ok: true }, { 'set-cookie': await gate.signOut(req, auth) });
         }
         /**
          * First-party beacon for client-only signals — SPA route changes above all,
@@ -260,7 +261,7 @@ export function authRoutes(gate, opts = {}) {
                 // `?active=1` opts out. (The *store* still defaults to active-only,
                 // which is the right default for a gate check.)
                 const includeRevoked = url.searchParams.get('active') !== '1';
-                return json({ grants: (await gate.list({ includeRevoked, ...listFilter(a) })).map(present) });
+                return reply('list', { grants: (await gate.list({ includeRevoked, ...listFilter(a) })).map(present) });
             }
             if (seg.length === 1 && method === 'POST') {
                 const b = await body(req);
@@ -313,14 +314,20 @@ export function authRoutes(gate, opts = {}) {
                     })
                     : null;
                 // The only time the raw token is ever visible.
-                return json({ grant: present(grant), token, ...(allowed ? { allowed } : {}) });
+                return reply('mint', { grant: present(grant), token, ...(allowed ? { allowed } : {}) });
             }
-            const id = seg[1];
+            let id;
+            try {
+                id = seg[1] ? decodeURIComponent(seg[1]) : undefined;
+            }
+            catch {
+                return json({ error: 'invalid grant id' }, 400);
+            }
             if (id && seg[2] === 'revoke' && method === 'POST') {
                 const owned = await ownedGrant(id, a);
                 if (owned instanceof Response)
                     return owned;
-                return json({ ok: await gate.revoke(id) });
+                return reply('revoke', { ok: await gate.revoke(id) });
             }
             // Re-key a leaked link without losing its subject/scopes/expiry. Body
             // `{ endSessions: true }` also boots sessions minted from the old link.
@@ -331,7 +338,7 @@ export function authRoutes(gate, opts = {}) {
                 const b = await body(req);
                 const res = await gate.rotate(id, { endSessions: !!b.endSessions });
                 // The only time the re-keyed raw token is ever visible.
-                return res ? json({ id, token: res.token }) : json({ error: 'not found' }, 404);
+                return res ? reply('rotate', { id, token: res.token }) : json({ error: 'not found' }, 404);
             }
             // Disable/enable are the reversible half: they stop new redemptions and
             // leave anyone already reading the page alone.
@@ -339,7 +346,7 @@ export function authRoutes(gate, opts = {}) {
                 const owned = await ownedGrant(id, a);
                 if (owned instanceof Response)
                     return owned;
-                return json({ ok: seg[2] === 'disable' ? await gate.disable(id) : await gate.enable(id) });
+                return reply(seg[2], { ok: seg[2] === 'disable' ? await gate.disable(id) : await gate.enable(id) });
             }
             if (id && seg.length === 2 && method === 'PATCH') {
                 const owned = await ownedGrant(id, a);
@@ -375,7 +382,7 @@ export function authRoutes(gate, opts = {}) {
                         return json({ error: 'invalid avatar', detail: e.message }, 400);
                     throw e;
                 }
-                return grant ? json({ grant: present(grant) }) : json({ error: 'not found' }, 404);
+                return grant ? reply('update', { grant: present(grant) }) : json({ error: 'not found' }, 404);
             }
             if (id && seg[2] === 'activity' && method === 'GET') {
                 if (!audit)
@@ -383,7 +390,7 @@ export function authRoutes(gate, opts = {}) {
                 const owned = await ownedGrant(id, a);
                 if (owned instanceof Response)
                     return owned;
-                return json(await audit.activity(id));
+                return reply('activity', await audit.activity(id));
             }
         }
         if (seg[0] === 'requests') {
@@ -511,7 +518,7 @@ export function authRoutes(gate, opts = {}) {
             const asset = await gate.getAsset(seg[1]);
             if (!asset)
                 return json({ error: 'not found' }, 404);
-            return new Response(asset.bytes, {
+            return new Response(new Uint8Array(asset.bytes), {
                 headers: {
                     'content-type': asset.type,
                     // An id is never reused for different bytes: a new face is a new id.
@@ -529,7 +536,7 @@ export function authRoutes(gate, opts = {}) {
                 return json({ error: 'audit query not configured' }, 501);
             const grantId = url.searchParams.get('grant') ?? undefined;
             const limit = Number(url.searchParams.get('limit')) || 100;
-            return json({ events: await audit.recent({ grantId, limit, ...listFilter(a) }) });
+            return reply('log', { events: await audit.recent({ grantId, limit, ...listFilter(a) }) });
         }
         return json({ error: 'not found' }, 404);
         /** 404 (not 403) for someone else's grant: don't confirm that an id exists. */

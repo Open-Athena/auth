@@ -10,6 +10,7 @@
 import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
 import { type AvatarRef, type AvatarRefKind } from './avatar.js';
+import type { Whoami } from './http.js';
 import { type Profile } from './profile.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
@@ -224,25 +225,7 @@ export declare function createGate(opts: GateOptions): {
     enable: (id: string, nowMs?: number) => Promise<boolean>;
     update: (id: string, edit: GrantEdit, nowMs?: number) => Promise<Grant | null>;
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
-    whoami: (auth: Auth) => {
-        kind: "sso";
-        email: string;
-        admin: boolean;
-        scopes: string[];
-        subject: Subject | null;
-        id?: undefined;
-        name?: undefined;
-        expiresAt?: undefined;
-    } | {
-        kind: "grant";
-        id: string;
-        name: string | null;
-        subject: Subject | null;
-        email: string | null;
-        scopes: string[];
-        admin: boolean;
-        expiresAt: number | null;
-    };
+    whoami: (auth: Auth) => Whoami;
     getProfile: (auth: Auth) => Promise<Profile | null>;
     putProfile: (auth: Auth, input: ProfileInput, nowMs?: number) => Promise<PutProfileResult>;
     seedProfileFromClaims: (email: string, claims: {

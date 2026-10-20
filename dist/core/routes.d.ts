@@ -11,6 +11,7 @@ import type { DecisionView } from './decisions.js';
 import type { Auth } from './types.js';
 import type { AllowlistStore, AuditQuery } from './store.js';
 import type { Gate } from './gate.js';
+import type { AllowedForLink } from './http.js';
 export interface RouteOptions {
     /** Default `/api/auth`. */
     basePath?: string;
@@ -69,8 +70,5 @@ export interface RouteOptions {
 export declare function allowForLink(store: AllowlistStore, email: string, scopes: string[], { note, addedBy }: {
     note: string;
     addedBy: string | null;
-}): Promise<{
-    email: string;
-    status: 'added' | 'widened' | 'already';
-}>;
+}): Promise<AllowedForLink>;
 export declare function authRoutes(gate: Gate, opts?: RouteOptions): (req: Request) => Promise<Response | null>;
