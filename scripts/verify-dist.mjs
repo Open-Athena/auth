@@ -13,9 +13,9 @@
  *   defaults: Open-Athena/auth, the current `dist` branch head
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const REPO = process.argv[2] ?? 'Open-Athena/auth'
 const REF = process.argv[3] ?? 'dist'
@@ -42,7 +42,9 @@ const sha = capture('git', ['ls-remote', `https://github.com/${REPO}.git`, REF])
   ?.split(/\s+/)[0]
 if (!sha) throw new Error(`could not resolve ${REPO}#${REF}`)
 
-const dir = mkdtempSync(join(tmpdir(), 'oa-auth-verify-'))
+const scratch = new URL('../tmp/', import.meta.url)
+mkdirSync(scratch, { recursive: true })
+const dir = mkdtempSync(join(fileURLToPath(scratch), 'oa-auth-verify-'))
 console.log(`verifying ${REPO}#${REF} @ ${sha.slice(0, 7)} in ${dir}`)
 
 writeFileSync(
@@ -52,6 +54,7 @@ writeFileSync(
 
 const CHECK = String.raw`
 import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from '@open-athena/auth'
+import { createAuthClient, shareUrl, exchangeKeyParam, downscaleImage } from '@open-athena/auth/client'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
 import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
@@ -108,6 +111,8 @@ const checks = {
   'revoke kills live session':    afterRevoke === null,
   'bot filter discriminates':     isBot('Googlebot/2.1') === true && isBot(UA) === false,
   'testing stores exported':      [memoryGrantStore, memoryRequestStore, memoryAudit].every(f => typeof f === 'function'),
+  'framework-free client exported': [createAuthClient, shareUrl, exchangeKeyParam, downscaleImage].every(f => typeof f === 'function'),
+  'client preserves target view': shareUrl('test-token', 'https://x.test/slide/3?q=1#notes') === 'https://x.test/slide/3?q=1&key=test-token#notes',
 }
 
 let failed = 0

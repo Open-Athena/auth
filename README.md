@@ -31,6 +31,7 @@ Pre-1.0 and moving: the backend kernel, Google and email-code sign-in, request-a
 src/core/       sessions, tokens, grants, policy, requests, email codes, audit, routes — no CF, no Node
 src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
                 r2 (avatar bytes), google-directory (group → allowlist sync)
+src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
@@ -39,6 +40,26 @@ demo/           a working app on Pages + Functions + D1
 ```
 
 Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; every current consumer is on Cloudflare, so D1 is the only store adapter until a non-CF consumer appears.
+
+## Framework-Free Client
+
+Vue/Slidev, vanilla JavaScript and React can all call the same HTTP surface without importing React:
+
+```ts
+import { AuthClientError, createAuthClient, shareUrl } from '@open-athena/auth/client'
+
+const auth = createAuthClient() // defaults to /api/auth; fetch is injectable
+const { grant, token } = await auth.grants.mint({ scopes: ['reports'], name: 'Board packet' })
+const link = shareUrl(token, 'https://app.example/reports/3?tab=costs#notes')
+await auth.grants.update(grant.id, { note: 'Shared with the board' })
+await auth.grants.revoke(grant.id)
+```
+
+`grants` also supports `list({ active? })`, `disable`, `enable`, `rotate(id, { endSessions? })` and `activity`; the client has `whoami()`, `logout()` and `log({ grant?, limit? })`. Successful values retain the route's JSON envelope. Non-2xx responses throw `AuthClientError` with `status` and `body` (JSON when available, otherwise text/null); network and malformed-success-JSON errors stay distinct. Unlike `useWhoami`, `client.whoami()` throws on 401 rather than returning null. Allowlist wrappers and migrating the existing React hooks/admin UI onto this client are deferred.
+
+`displayName`, `hasScope`, `hasKeyParam`, `exchangeKeyParam` and `downscaleImage` are available from `/client`, along with the shared wire types. Existing `/react` helper imports still work. Importing `/client` is SSR-safe; browser-only helpers need browser APIs when called, and `shareUrl` needs an explicit absolute target outside the browser. It preserves the target's other query parameters and hash, replacing an existing `key`. The emitted module graph is checked during `pnpm build` for external dependencies, including React/Vue.
+
+The backend root import and platform adapters remain separate from `/client`; there is no Vue dependency or Vue-specific UI package. React hooks/components remain under `/react`.
 
 ## Installing
 

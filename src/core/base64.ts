@@ -7,7 +7,7 @@ export function b64uEncode(buf: ArrayBuffer | Uint8Array): string {
   return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
 }
 
-export function b64uDecodeBytes(s: string): Uint8Array {
+export function b64uDecodeBytes(s: string): Uint8Array<ArrayBuffer> {
   const bin = atob(s.replaceAll('-', '+').replaceAll('_', '/'))
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)

@@ -67,7 +67,7 @@ export async function verifySessionClaims(
   const i = value.indexOf('.')
   if (i < 0) return null
   const body = value.slice(0, i)
-  let sig: Uint8Array
+  let sig: ReturnType<typeof b64uDecodeBytes>
   let claims: unknown
   try {
     sig = b64uDecodeBytes(value.slice(i + 1))

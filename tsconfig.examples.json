@@ -6,6 +6,7 @@
   "compilerOptions": {
     "paths": {
       "@open-athena/auth": ["./src/index.ts"],
+      "@open-athena/auth/client": ["./src/client/index.ts"],
       "@open-athena/auth/react": ["./src/react/index.ts"],
       "@open-athena/auth/testing": ["./src/testing/index.ts"],
       "@open-athena/auth/*": ["./src/adapters/*.ts"]

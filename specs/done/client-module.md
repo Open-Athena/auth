@@ -1,5 +1,7 @@
 # A framework-free `@open-athena/auth/client`
 
+**Status (2026-10-19): implemented and verified locally.** `/client` exports the typed HTTP wrappers and framework-free helpers below; React imports remain compatible. The optional allowlist wrappers and hook/demo-client adoption are deferred. No publication or consumer deployment is included in this change.
+
 From the Slidev fork (`~/c/slidev`, Open-Athena/slidev), 2026-10-19. Slidev's Vue client is adding a "Get link" modal and a links table on top of `authRoutes` (`/api/auth/*`). disky's `/admin` (`site/src/AdminPage.tsx`) and the demo's `Admin.tsx` call the same routes with hand-written `fetch`es. A typed, framework-free client would serve all three.
 
 ## Ask
@@ -23,6 +25,8 @@ Then the React hooks and the demo's `Admin.tsx` can use the client too (optional
 - Each wrapper against `authRoutes` with the in-memory stores (`src/testing`): mint → list → update → revoke round trip; `shareUrl` keeps an existing query and a hash.
 - Error mapping: 401 / 403 / 404 come back as `AuthClientError` with the right `status`.
 - A check that `dist/client.mjs` imports no `react`.
+
+Implementation uses `dist/client/index.js` plus declarations, following this package's existing ESM `.js` layout rather than introducing `.mjs`. `scripts/verify-client.mjs` walks the emitted runtime module graph using the TypeScript parser, asserts zero external dependencies, imports it in Node without browser globals, and checks target-view URL preservation; it runs on every build. Source graph and helper tests plus real-route/in-memory-store client tests cover the API. `scripts/verify-dist.mjs` also imports the installed `/client` artifact. Contracts live in `core/http.ts` and `client/identity.ts`; route replies and `gate.whoami` are checked against those same types. The DOM-only client build is separate from the Workers-only core build.
 
 ## Consumer
 

@@ -20,6 +20,7 @@ import {
   parseAvatarRef,
 } from './avatar.js'
 import { looksAutomated } from './bots.js'
+import type { Whoami } from './http.js'
 import { type Profile, cleanName } from './profile.js'
 import { type EmailPolicy, adminPolicy, firstMatch } from './policy.js'
 import {
@@ -986,7 +987,7 @@ export function createGate(opts: GateOptions) {
   }
 
   /** The JSON an app hands its frontend. Never includes tokens or hashes. */
-  function whoami(auth: Auth) {
+  function whoami(auth: Auth): Whoami {
     return auth.kind === 'sso'
       ? { kind: 'sso' as const, email: auth.email, admin: auth.admin, scopes: auth.scopes, subject: auth.subject }
       : {

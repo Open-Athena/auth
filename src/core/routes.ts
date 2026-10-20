@@ -17,6 +17,7 @@ import { cleanSubject, isEmailish } from './requests.js'
 import { readCookie } from './session.js'
 import { hashToken } from './tokens.js'
 import { hasScope } from './types.js'
+import type { AllowedForLink, AuthResponses, GrantUpdateInput, MintInput, RotateInput } from './http.js'
 
 export interface RouteOptions {
   /** Default `/api/auth`. */
@@ -153,7 +154,7 @@ export async function allowForLink(
   email: string,
   scopes: string[],
   { note, addedBy }: { note: string; addedBy: string | null },
-): Promise<{ email: string; status: 'added' | 'widened' | 'already' }> {
+): Promise<AllowedForLink> {
   const existing = await store.lookup(email)
   if (existing && scopes.every(s => existing.includes(s))) return { email, status: 'already' }
   await store.put({
@@ -168,6 +169,11 @@ export async function allowForLink(
 }
 
 export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
+  const reply = <K extends keyof AuthResponses>(
+    _route: K,
+    data: AuthResponses[K],
+    headers: Record<string, string> = {},
+  ) => json(data, 200, headers)
   const {
     basePath = '/api/auth',
     adminScope = 'admin',
@@ -211,7 +217,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // ---- public -------------------------------------------------------------
 
     if (rest === '/whoami' && method === 'GET') {
-      if (auth) return json(present(gate.whoami(auth)))
+      if (auth) return reply('whoami', present(gate.whoami(auth)))
       // A dead cookie (revoked or expired grant, delisted email) is cleared
       // here, where the browser asks "who am I" — but only when the cookie is
       // what failed: a bad `?key=`/`Bearer` beside a live cookie is not a
@@ -230,7 +236,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     }
 
     if (rest === '/logout' && method === 'POST') {
-      return json({ ok: true }, 200, { 'set-cookie': await gate.signOut(req, auth) })
+      return reply('logout', { ok: true }, { 'set-cookie': await gate.signOut(req, auth) })
     }
 
     /**
@@ -326,35 +332,11 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         // `?active=1` opts out. (The *store* still defaults to active-only,
         // which is the right default for a gate check.)
         const includeRevoked = url.searchParams.get('active') !== '1'
-        return json({ grants: (await gate.list({ includeRevoked, ...listFilter(a) })).map(present) })
+        return reply('list', { grants: (await gate.list({ includeRevoked, ...listFilter(a) })).map(present) })
       }
 
       if (seg.length === 1 && method === 'POST') {
-        const b = await body<{
-          name: string
-          note: string
-          email: string
-          /** The recipient's name (`subject.name`); `name` is the link's admin-side label. */
-          subjectName: string
-          /**
-           * Anything `parseAvatarRef` takes — a GitHub/Bluesky/Mastodon profile
-           * or handle, an image URL, a `data:` URI (an upload, or a preview
-           * handed back). Copied before minting; never stored as a link.
-           * Absent: the recipient's Gravatar, if `email` has one. `null`: none.
-           */
-          avatar: string | null
-          scopes: string[]
-          maxRedeems: number | null
-          expiresInS: number | null
-          sessionTtlS: number | null
-          expiryEndsSessions: boolean
-          /**
-           * Also put `email` on the allowlist with the link's scopes, so the
-           * recipient can later sign in with Google or an emailed code, not
-           * only through the link. Revoking the link doesn't remove the row.
-           */
-          allowlist: boolean
-        }>(req)
+        const b = await body<MintInput>(req)
         if (!b.scopes?.length) return json({ error: 'scopes required' }, 400)
         // Checked before minting, so a request that can't be honored in full
         // doesn't leave a link behind.
@@ -401,14 +383,19 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
               })
             : null
         // The only time the raw token is ever visible.
-        return json({ grant: present(grant), token, ...(allowed ? { allowed } : {}) })
+        return reply('mint', { grant: present(grant), token, ...(allowed ? { allowed } : {}) })
       }
 
-      const id = seg[1]
+      let id: string | undefined
+      try {
+        id = seg[1] ? decodeURIComponent(seg[1]) : undefined
+      } catch {
+        return json({ error: 'invalid grant id' }, 400)
+      }
       if (id && seg[2] === 'revoke' && method === 'POST') {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        return json({ ok: await gate.revoke(id) })
+        return reply('revoke', { ok: await gate.revoke(id) })
       }
 
       // Re-key a leaked link without losing its subject/scopes/expiry. Body
@@ -416,10 +403,10 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (id && seg[2] === 'rotate' && method === 'POST') {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        const b = await body<{ endSessions?: boolean }>(req)
+        const b = await body<RotateInput>(req)
         const res = await gate.rotate(id, { endSessions: !!b.endSessions })
         // The only time the re-keyed raw token is ever visible.
-        return res ? json({ id, token: res.token }) : json({ error: 'not found' }, 404)
+        return res ? reply('rotate', { id, token: res.token }) : json({ error: 'not found' }, 404)
       }
 
       // Disable/enable are the reversible half: they stop new redemptions and
@@ -427,13 +414,13 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (id && (seg[2] === 'disable' || seg[2] === 'enable') && method === 'POST') {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        return json({ ok: seg[2] === 'disable' ? await gate.disable(id) : await gate.enable(id) })
+        return reply(seg[2], { ok: seg[2] === 'disable' ? await gate.disable(id) : await gate.enable(id) })
       }
 
       if (id && seg.length === 2 && method === 'PATCH') {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        const b = await body<GrantEdit>(req)
+        const b = await body<GrantUpdateInput>(req)
         // Whitelisted, not spread: a PATCH body is admin-supplied but still
         // untrusted structure, and `scopes`/`createdBy` are not negotiable
         // after minting. The holder's face goes in as a ref, as at mint.
@@ -453,14 +440,14 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           if (e instanceof InvalidImageError) return json({ error: 'invalid avatar', detail: e.message }, 400)
           throw e
         }
-        return grant ? json({ grant: present(grant) }) : json({ error: 'not found' }, 404)
+        return grant ? reply('update', { grant: present(grant) }) : json({ error: 'not found' }, 404)
       }
 
       if (id && seg[2] === 'activity' && method === 'GET') {
         if (!audit) return json({ error: 'audit query not configured' }, 501)
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
-        return json(await audit.activity(id))
+        return reply('activity', await audit.activity(id))
       }
     }
 
@@ -582,7 +569,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (!auth) return json({ error: 'unauthenticated' }, 401)
       const asset = await gate.getAsset(seg[1]!)
       if (!asset) return json({ error: 'not found' }, 404)
-      return new Response(asset.bytes, {
+      return new Response(new Uint8Array(asset.bytes), {
         headers: {
           'content-type': asset.type,
           // An id is never reused for different bytes: a new face is a new id.
@@ -599,7 +586,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       if (!audit) return json({ error: 'audit query not configured' }, 501)
       const grantId = url.searchParams.get('grant') ?? undefined
       const limit = Number(url.searchParams.get('limit')) || 100
-      return json({ events: await audit.recent({ grantId, limit, ...listFilter(a) }) })
+      return reply('log', { events: await audit.recent({ grantId, limit, ...listFilter(a) }) })
     }
 
     return json({ error: 'not found' }, 404)
