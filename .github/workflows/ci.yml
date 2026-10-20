@@ -46,6 +46,9 @@ jobs:
           # `exports` points at ./dist/*, so keep the directory rather than
           # letting the build output flatten to the branch root.
           preserve_dirs: dist
+          # npm-dist's default merge list omits peerDependenciesMeta, leaving
+          # newly added optional peers required on an existing dist branch.
+          pkg_include: name,description,type,bin,main,keywords,repository,author,license,homepage,bugs,exports,dependencies,peerDependencies,peerDependenciesMeta,optionalDependencies
           # Migrations are public surface (`./migrations/*`) but aren't build
           # output, so they have to be carried over explicitly. Ship the whole
           # directory (npm-dist `cp -r`s a dir entry) rather than a hand-kept
