@@ -18,6 +18,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm test:retained-runtime
       - run: pnpm build
       # The demo consumes the built package, so this also checks the exports map.
       - run: pnpm --filter @open-athena/auth-demo typecheck

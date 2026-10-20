@@ -56,6 +56,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:retained-runtime": "OA_D1_RUNTIME=1 vitest run test/d1-retained.test.ts",
     "test:browser": "pnpm --filter @open-athena/auth-demo build && playwright test"
   },
   "devDependencies": {

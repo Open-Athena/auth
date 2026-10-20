@@ -4,6 +4,8 @@ Decisions from the 2026-08-19/21 thread, for the work that isn't built yet. The 
 
 ## 1. A session registry, optional
 
+**2026-10-19 checkpoint:** the selection guard and internal grant-only atomic incoming-link storage are built; see [Multiple logins and account switching]. `SessionStore` authentication, per-device listing/revoke, callback completion and browser routes/UI remain pending. The new optional migration was not applied to any live database.
+
 `specs/auth-upstream-followups.md` §7 argued against this on the grounds that it costs a DB read per authenticated request. That argument was wrong twice over — grant sessions already do one (the re-join *is* instant revocation), and the `not-before` alternative needs the same read — and the ask that survives it is real: list active sessions, revoke one device, see last-seen.
 
 **Shape.** `sessions?: SessionStore` on `GateOptions`. Absent, everything behaves exactly as it does today and SSO sessions stay stateless. Present, the claim carries a `sid`, and:
@@ -30,7 +32,7 @@ Pay-for-what-you-use is the whole point: an app that wants share links and nothi
 
 ### Phase-1 registry and retained-login contract (implementation started, 2026-10-16)
 
-The table above is a registry-only sketch, not a complete retained-login schema or an implemented `SessionStore`. Current `SessionClaims` has no `sid`; `core/store.ts` has no session registry, and D1's current redemption CAS updates only a grant. The standalone selection-context codec and mutation guard are built in `src/core/selection-context.ts`; registry, retention, integration and UI remain unbuilt. [Multiple logins and account switching] owns the browser protocol, selection/version errors, pending-link atomic completion and concrete capacity/cleanup defaults. Both proposals use one session substrate, not competing registries. The user authorized starting implementation; this documentation subtask makes no code changes or commits. Deployments and live migrations require separate authorization.
+The table above is a registry-only sketch, not a complete retained-login schema or an implemented `SessionStore`. Current `SessionClaims` has no `sid`; `core/store.ts` has no session registry, and the existing public D1 redemption CAS updates only a grant. The selection guard and separate internal D1 atomic grant-completion substrate are built; broader registry authentication and browser integration remain pending. [Multiple logins and account switching] owns the browser protocol, storage checkpoint, selection/version errors, pending-link atomic completion and concrete capacity/cleanup defaults. Both proposals use one session substrate, not competing registries. Deployments and live migrations require separate authorization.
 
 **Three explicit modes.** With neither `sessions` nor retention configured, keep today's signed single-session cookie and zero-config behavior, including stateless email evidence plus live policy checks and grant re-joins. Registry-only mode opts into `sessions?: SessionStore`, a `sid`-bearing cookie and registry checks, without forcing a browser roster or picker. Retained mode separately opts into `retainedLogins` and requires an adapter with atomic browser-set operations. It uses a stable opaque HttpOnly browser handle and server-retained session rows instead of sending all accounts in cookies; inactive login evidence never enters JavaScript/localStorage. Do not interpret a registry-only adapter as sufficient support for retention.
 

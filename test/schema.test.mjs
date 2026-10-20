@@ -23,7 +23,7 @@ const tables = () => {
 describe('migrations/', () => {
   // Pre-1.0: one baseline, plus any additions not yet squashed into it.
   it('is the baseline plus unsquashed additions', () => {
-    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql'])
+    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql'])
   })
 
   it('builds exactly these tables and columns', () => {
@@ -109,6 +109,45 @@ describe('migrations/', () => {
         'added_by TEXT',
         'updated_at INTEGER NOT NULL',
       ],
+      retained_browser_sets: [
+        'id TEXT NOT NULL PK#1',
+        'gate_id TEXT NOT NULL',
+        'handle_hash TEXT NOT NULL',
+        'active_session_id TEXT',
+        'selection_version INTEGER NOT NULL DEFAULT 0',
+        'created_at INTEGER NOT NULL',
+        'expires_at INTEGER NOT NULL',
+      ],
+      retained_sessions: [
+        'id TEXT NOT NULL PK#1',
+        'browser_set_id TEXT NOT NULL',
+        'grant_id TEXT NOT NULL',
+        'issued_at INTEGER NOT NULL',
+        'expires_at INTEGER NOT NULL',
+        'revoked_at INTEGER',
+      ],
+      retained_pending: [
+        'id TEXT NOT NULL PK#1',
+        'browser_set_id TEXT NOT NULL',
+        'gate_id TEXT NOT NULL',
+        'grant_id TEXT NOT NULL',
+        'token_hash TEXT NOT NULL',
+        'expires_at INTEGER NOT NULL',
+        'consumed_operation_id TEXT',
+        'ready INTEGER NOT NULL',
+      ],
+      retained_operations: [
+        'id TEXT NOT NULL PK#1',
+        'browser_set_id TEXT NOT NULL',
+        'gate_id TEXT NOT NULL',
+        'input_json TEXT NOT NULL',
+        'attempt_id TEXT NOT NULL',
+        'session_id TEXT NOT NULL',
+        'minted INTEGER NOT NULL',
+        'committed_version INTEGER NOT NULL',
+        'expires_at INTEGER NOT NULL',
+        'stage INTEGER NOT NULL',
+      ],
     })
   })
 
@@ -121,6 +160,12 @@ describe('migrations/', () => {
       'constraint grants(token_hash)',
       'constraint pending_auth(id)',
       'constraint profiles(email)',
+      'constraint retained_browser_sets(gate_id,handle_hash)',
+      'constraint retained_browser_sets(id)',
+      'constraint retained_operations(attempt_id)',
+      'constraint retained_operations(id)',
+      'constraint retained_pending(id)',
+      'constraint retained_sessions(id)',
       'index access_log_daily_day',
       'index access_log_daily_grant',
       'index access_log_dedupe',
@@ -136,6 +181,11 @@ describe('migrations/', () => {
       'index pending_auth_email',
       'index pending_auth_ip',
       'index pending_auth_token',
+      'index retained_browser_gate',
+      'index retained_operation_expiry',
+      'index retained_pending_browser',
+      'index retained_pending_gate',
+      'index retained_session_membership',
     ])
   })
 })
