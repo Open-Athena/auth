@@ -27,6 +27,9 @@ export function App() {
           <code>@open-athena/auth</code>
         </Link>
         <div className="nav-links">
+          <a href="/vanilla">Vanilla</a>
+          <a href="/vue">Vue</a>
+          <a href="/react">React</a>
           <Link to="/dashboard" className={path === '/dashboard' ? 'on' : ''}>
             Dashboard
           </Link>

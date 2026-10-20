@@ -775,3 +775,30 @@ a.card {
     }
   }
 }
+
+.examples {
+  max-width: 54rem;
+  overflow-wrap: anywhere;
+  .example-intro { padding: 1rem 0 1.5rem; }
+  .lede { font-size: 1.25rem; margin-bottom: 0; }
+  .framework-tabs {
+    display: flex;
+    gap: 1.5rem;
+    border-bottom: 1px solid var(--line);
+    a { padding: 0.65rem 0; text-decoration: none; }
+    a[aria-current] { border-bottom: 2px solid var(--accent); color: var(--ink); font-weight: 600; }
+  }
+  .example-stage { padding: 1.5rem 0 2rem; min-height: 20rem; border-bottom: 1px solid var(--line); }
+  .example-caption { font-size: 0.8rem; color: var(--muted); margin: 0 0 1rem; }
+  h2 { margin-top: 0; }
+  .wall-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .example-identity {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    img { border-radius: 50%; object-fit: cover; }
+  }
+  .example-more { padding-top: 2rem; }
+}

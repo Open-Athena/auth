@@ -15,5 +15,5 @@
   // `src/react` and `test/react` are compiled by tsconfig.react.json instead —
   // see the note there.
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["src/react/**/*", "src/client/**/*", "test/react/**/*", "test/client*.ts"]
+  "exclude": ["src/react/**/*", "src/client/**/*", "src/vue/**/*", "test/vue*.ts", "test/react/**/*", "test/client*.ts"]
 }

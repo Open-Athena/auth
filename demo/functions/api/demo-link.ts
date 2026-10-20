@@ -22,7 +22,10 @@ const TTL_S = 60 * 60
 
 export const onRequestGet = async ({ request, env }: Ctx): Promise<Response> => {
   const { viewGate } = gates(env, request)
-  const named = new URL(request.url).searchParams.get('named') === '1'
+  const query = new URL(request.url).searchParams
+  const named = query.get('named') === '1'
+  const next = query.get('next') ?? '/dashboard'
+  const target = ['/', '/vanilla', '/vue', '/react', '/dashboard'].includes(next) ? next : '/dashboard'
 
   // A real face, copied here once rather than fetched in the recipient's
   // browser on every render. GitHub rather than Gravatar for the demo persona
@@ -46,6 +49,6 @@ export const onRequestGet = async ({ request, env }: Ctx): Promise<Response> => 
 
   return new Response(null, {
     status: 302,
-    headers: { location: `/dashboard?key=${token}`, 'cache-control': 'no-store' },
+    headers: { location: `${target}?key=${token}`, 'cache-control': 'no-store' },
   })
 }

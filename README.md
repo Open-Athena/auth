@@ -2,7 +2,7 @@
 
 > Named share links, Google sign-in, email codes, and an access log for gated dashboards.
 
-Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes) and unstyled React primitives (`useWhoami` / `AuthGate` / `SignInPanel` / `WhoamiChip`).
+Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes), a framework-free client, unstyled React primitives, and Vue `useWhoami` / `AuthGate` wrappers.
 
 Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
 
@@ -33,6 +33,7 @@ src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), r
                 r2 (avatar bytes), google-directory (group → allowlist sync)
 src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
+src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -59,7 +60,44 @@ await auth.grants.revoke(grant.id)
 
 `displayName`, `hasScope`, `hasKeyParam`, `exchangeKeyParam` and `downscaleImage` are available from `/client`, along with the shared wire types. Existing `/react` helper imports still work. Importing `/client` is SSR-safe; browser-only helpers need browser APIs when called, and `shareUrl` needs an explicit absolute target outside the browser. It preserves the target's other query parameters and hash, replacing an existing `key`. The emitted module graph is checked during `pnpm build` for external dependencies, including React/Vue.
 
-The backend root import and platform adapters remain separate from `/client`; there is no Vue dependency or Vue-specific UI package. React hooks/components remain under `/react`.
+The backend root import and platform adapters remain separate from `/client`. React hooks/components live under `/react`; Vue wrappers live under `/vue`. Vanilla apps need neither framework.
+
+## Vue
+
+Import `useWhoami`, `AuthGate`, and shared identity helpers from `@open-athena/auth/vue`. Vue is an optional peer dependency; React and TanStack Query are not required for this subpath.
+
+```vue
+<script setup lang="ts">
+import { AuthGate, displayName } from '@open-athena/auth/vue'
+
+const options = {
+  basePath: '/api/view',
+  exchange: { endpoint: '/api/view/exchange' },
+}
+</script>
+
+<template>
+  <AuthGate :options="options">
+    <template #loading>Checking access...</template>
+    <template #error="{ error }"><p role="alert">{{ error.message }}</p></template>
+    <template #unauthenticated><h2>Private workspace</h2></template>
+    <template #default="{ whoami, signOut }">
+      <p>{{ displayName(whoami) ?? 'Anonymous link' }}</p>
+      <button @click="signOut">Sign out</button>
+    </template>
+  </AuthGate>
+</template>
+```
+
+`useWhoami(options)` runs during component setup and returns readonly `whoami`, `loading`, and `error` refs plus `refetch()` and `signOut()`. A 401 means signed out; other failures populate `error`. Matching clients share state within a Vue app, not across apps or SSR requests. Options are setup-time configuration: remount to change them. The composable opts into key exchange through `exchange`; `AuthGate` enables it by default, before probing identity. The exchange endpoint defaults to `<basePath>/exchange`; a supplied custom client needs an explicit exchange endpoint if its base differs. Slots receive `whoami`, `loading`, `error`, `refetch`, and `signOut`. `signOut()` records errors in state and rejects, so event handlers should handle that rejection. The server must still enforce authorization.
+
+## Minimal Demo Routes
+
+The demo's [root][demo-root] and [Vanilla][demo-vanilla] routes use the framework-free client; [Vue][demo-vue] and [React][demo-react] show their respective wrappers. Framework links navigate to separate documents so vanilla loads neither framework, and Vue and React do not load each other.
+
+Each example opens a named or anonymous share link, exchanges its `key` for a session, removes the key from the URL, and shows the returned identity. Sign out returns to the private-workspace wall. The examples use raw identity JSON from `GET /api/view/whoami` (401 when signed out), `POST /api/view/exchange` with `{ token }`, and `POST /api/view/logout`; `/api/demo-link?named=1|0&next=<route>` mints a link and redirects back to the selected example.
+
+Run `pnpm test:browser` for isolated Chromium regressions (mocked auth boundaries). With `pnpm --filter @open-athena/auth-demo dev` running at `http://localhost:4187`, `pnpm test:browser:live` exercises actual local Pages Functions, D1, and shared session cookies across frameworks. It does not send email or authenticate with Google.
 
 ## Installing
 
@@ -78,7 +116,7 @@ pnpm add "@open-athena/auth@github:Open-Athena/auth#$SHA"
 
 The `dist` branch only advances on a commit whose tests passed, and CI then installs the published branch and exercises it (`scripts/verify-dist.mjs`) — so any SHA you can pin is green *as an artifact*, not just as source. It carries built JS + `.d.ts`, the migrations, and the peer-dep declarations; versions read `0.1.0-dist.<sha>`.
 
-Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), and `react` + `@tanstack/react-query` for the `/react` subpath.
+Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), `react` + `@tanstack/react-query` for `/react`, and `vue` for `/vue`.
 
 ## Migrations
 
@@ -321,3 +359,7 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 `pnpm build` compiles `src/core` and `src/adapters` against `@cloudflare/workers-types` alone (no Node types), which is what keeps them honest about being runtime-agnostic. `src/react` is a separate compilation because DOM lib and workers-types declare conflicting globals.
 
 [`npm-dist`]: https://github.com/runsascoded/npm-dist
+[demo-root]: https://auth.oa.dev/
+[demo-vanilla]: https://auth.oa.dev/vanilla
+[demo-vue]: https://auth.oa.dev/vue
+[demo-react]: https://auth.oa.dev/react

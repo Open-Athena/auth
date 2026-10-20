@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './test-browser',
+  testIgnore: '**/live/**',
   outputDir: './tmp/browser-results',
   use: { baseURL: 'http://localhost:4190', trace: 'retain-on-failure' },
   projects: [

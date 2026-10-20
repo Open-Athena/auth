@@ -54,6 +54,7 @@ export function Link({ to, children, className }: { to: string; children: ReactN
       onClick={e => {
         // Let modified clicks open a new tab, as a real link would.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+        if (['/', '/vanilla', '/vue', '/react'].includes(new URL(to, location.origin).pathname)) return
         e.preventDefault()
         navigate(to)
       }}

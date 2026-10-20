@@ -44,6 +44,10 @@
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
+    "./vue": {
+      "types": "./dist/vue/index.d.ts",
+      "default": "./dist/vue/index.js"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
@@ -52,12 +56,13 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.client.json && tsc -p tsconfig.build.react.json && node scripts/verify-client.mjs",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.client.json && tsc -p tsconfig.build.react.json && tsc -p tsconfig.build.vue.json && node scripts/verify-client.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.vue.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:retained-runtime": "OA_D1_RUNTIME=1 vitest run test/d1-retained.test.ts",
-    "test:browser": "pnpm --filter @open-athena/auth-demo build && playwright test"
+    "test:browser": "pnpm --filter @open-athena/auth-demo build && playwright test",
+    "test:browser:live": "playwright test -c playwright.live.config.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.0",
@@ -73,12 +78,14 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^5.8.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vue": "^3.5.44"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "*",
     "@tanstack/react-query": "^5.0.0",
-    "react": "^18.0.0 || ^19.0.0"
+    "react": "^18.0.0 || ^19.0.0",
+    "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
     "@cloudflare/workers-types": {
@@ -88,6 +95,9 @@
       "optional": true
     },
     "react": {
+      "optional": true
+    },
+    "vue": {
       "optional": true
     }
   }
