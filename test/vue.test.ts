@@ -3,7 +3,7 @@
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import type { App } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AuthGate, useWhoami } from '../src/vue/index.js'
+import { AuthGate, reportUnauthenticated, useWhoami } from '../src/vue/index.js'
 import type { UseWhoamiResult } from '../src/vue/index.js'
 import type { Whoami } from '../src/client/identity.js'
 
@@ -28,6 +28,7 @@ afterEach(() => {
   apps.splice(0).forEach(app => app.unmount())
   document.body.replaceChildren()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
   window.history.replaceState({}, '', '/')
 })
 
@@ -230,6 +231,104 @@ it.each([200, 503])('reuses in-flight logout across consumer remount (status %s)
     status === 200 ? null : undefined, false, status === 200 ? null : 'Auth request failed (503)',
     ['/api/auth/whoami', '/api/auth/logout'],
   ])
+})
+
+it('keeps the identity until a reported failure is authoritatively confirmed', async () => {
+  const probe = deferred<Response>()
+  const fetch = vi.fn().mockResolvedValueOnce(response()).mockReturnValueOnce(probe.promise).mockResolvedValue(response())
+  vi.stubGlobal('fetch', fetch)
+  let auth!: UseWhoamiResult
+  mount(defineComponent({ setup() {
+    auth = useWhoami()
+    return () => null
+  } }))
+  await flush()
+  reportUnauthenticated('revoked')
+  expect([auth.whoami.value, auth.reason.value, fetch.mock.calls.length]).toEqual([identity, 'revoked', 2])
+  probe.resolve(new Response('{"error":"unauthenticated"}', { status: 401 }))
+  await flush()
+  expect([auth.whoami.value, auth.reason.value, auth.error.value]).toEqual([null, 'revoked', null])
+})
+
+it('passes the retained report reason to the unauthenticated gate slot', async () => {
+  let status = 200
+  vi.stubGlobal('fetch', vi.fn(async () => status === 200 ? response() : new Response('{"error":"unauthenticated"}', { status })))
+  const { element } = mount(defineComponent({ setup: () => () => h(AuthGate, { options: { exchange: false } }, {
+    default: () => 'signed in',
+    unauthenticated: ({ reason }: { reason: string | null }) => `signed out:${reason}`,
+  }) }))
+  await flush()
+  status = 401
+  reportUnauthenticated('revoked')
+  await flush()
+  expect(element.textContent).toBe('signed out:revoked')
+})
+
+it('isolates reports by endpoint and clears reasons after a healthy authoritative probe', async () => {
+  const calls: string[] = []
+  const probe = deferred<Response>()
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    calls.push(url)
+    return calls.length > 2 ? probe.promise : Promise.resolve(response())
+  }))
+  const results: UseWhoamiResult[] = []
+  mount(defineComponent({ setup() {
+    results.push(useWhoami(), useWhoami({ basePath: '/other/' }))
+    return () => null
+  } }))
+  await flush()
+  reportUnauthenticated('expired', { endpoint: '/other/whoami' })
+  expect([calls, results.map(auth => [auth.whoami.value, auth.reason.value])]).toEqual([
+    ['/api/auth/whoami', '/other/whoami', '/other/whoami'], [[identity, null], [identity, 'expired']],
+  ])
+  probe.resolve(response())
+  await flush()
+  expect(results.map(auth => [auth.whoami.value, auth.reason.value, auth.error.value])).toEqual([
+    [identity, null, null], [identity, null, null],
+  ])
+})
+
+it.each(['{broken', 'null', '{"reason":"unknown"}', '{"reason":42}'])('handles malformed 401 reason bodies: %s', async body => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 401 })))
+  let auth!: UseWhoamiResult
+  mount(defineComponent({ setup() { auth = useWhoami(); return () => null } }))
+  await flush()
+  expect([auth.whoami.value, auth.reason.value, auth.error.value, auth.loading.value]).toEqual([null, null, null, false])
+})
+
+it('parses typed 401 reasons and clears them after successful sign out', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/logout')
+    ? new Response('{}')
+    : new Response('{"reason":"rotated"}', { status: 401 })))
+  let auth!: UseWhoamiResult
+  mount(defineComponent({ setup() { auth = useWhoami(); return () => null } }))
+  await flush()
+  expect([auth.whoami.value, auth.reason.value]).toEqual([null, 'rotated'])
+  await auth.signOut()
+  expect([auth.whoami.value, auth.reason.value, auth.error.value]).toEqual([null, null, null])
+})
+
+it('periodically revalidates only when configured and removes timers and reports on disposal', async () => {
+  vi.useFakeTimers()
+  const fetch = vi.fn(async () => response())
+  vi.stubGlobal('fetch', fetch)
+  const shown = ref(true)
+  const child = defineComponent({ setup() { useWhoami({ revalidateS: 2 }); return () => null } })
+  mount(defineComponent({ setup: () => () => shown.value ? h(child) : null }))
+  await vi.advanceTimersByTimeAsync(0)
+  expect([fetch.mock.calls.length, vi.getTimerCount()]).toEqual([1, 1])
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(fetch.mock.calls.length).toBe(2)
+  shown.value = false
+  await nextTick()
+  reportUnauthenticated('revoked')
+  window.dispatchEvent(new Event('focus'))
+  document.dispatchEvent(new Event('visibilitychange'))
+  await vi.advanceTimersByTimeAsync(4000)
+  expect([fetch.mock.calls.length, vi.getTimerCount()]).toEqual([2, 0])
+  mount(defineComponent({ setup() { useWhoami(); return () => null } }))
+  await vi.advanceTimersByTimeAsync(6000)
+  expect([fetch.mock.calls.length, vi.getTimerCount()]).toEqual([3, 0])
 })
 
 it('imports without browser globals and performs no network work', async () => {

@@ -1,9 +1,15 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useContext, useState } from 'react'
+import { sessionLossMessage, type SessionLossReason } from '../core/denial.js'
+import { SessionLossContext } from './sessionLoss.js'
 import { EmailCodeForm, type EmailCodeFormProps } from './EmailCodeForm.js'
 import { GoogleOneTap, type GoogleOneTapProps } from './GoogleOneTap.js'
 import { RequestAccessForm, type RequestAccessFormProps } from './RequestAccessForm.js'
 
 export interface SignInPanelProps {
+  /** Overrides the enclosing AuthGate's reason; null suppresses it. */
+  reason?: SessionLossReason | null
+  /** Override the default session-loss copy, or return null to hide it. */
+  reasonMessage?: ReactNode | ((reason: SessionLossReason) => ReactNode)
   /**
    * The primary affordance: "Continue with Google" → an immediate redirect to
    * the OIDC start Function (e.g. `/auth/google`). Google's picker handles
@@ -44,7 +50,7 @@ export interface SignInPanelProps {
   /** Render the request-access form. `true` for defaults, or pass props. */
   requestAccess?: boolean | RequestAccessFormProps
   children?: ReactNode
-  classNames?: Partial<Record<'root' | 'title' | 'hint' | 'button' | 'googleButton' | 'switchAccount' | 'divider', string>>
+  classNames?: Partial<Record<'root' | 'title' | 'hint' | 'reason' | 'button' | 'googleButton' | 'switchAccount' | 'divider', string>>
 }
 
 const withParam = (url: string, k: string, v: string): string => `${url}${url.includes('?') ? '&' : '?'}${k}=${encodeURIComponent(v)}`
@@ -96,7 +102,12 @@ export function SignInPanel({
   requestAccess,
   children,
   classNames = {},
+  reason: reasonProp,
+  reasonMessage = sessionLossMessage,
 }: SignInPanelProps) {
+  const contextReason = useContext(SessionLossContext)
+  const reason = reasonProp === undefined ? contextReason : reasonProp
+  const message = reason && (typeof reasonMessage === 'function' ? reasonMessage(reason) : reasonMessage)
   const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl
   const denied = deniedEmail()
   const [accounts, setAccounts] = useState<string[]>([])
@@ -123,6 +134,7 @@ export function SignInPanel({
     <div className={classNames.root}>
       {title && <h1 className={classNames.title}>{title}</h1>}
       {hint && <p className={classNames.hint}>{hint}</p>}
+      {message && <p role="status" className={classNames.reason}>{message}</p>}
       {hinted && accounts.map(email => (
         <a key={email} className={classNames.googleButton ?? classNames.button} href={accounts.length > 1 ? withAccount(google!, email) : google}>
           {continueAs && continueAs(email)}

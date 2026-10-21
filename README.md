@@ -62,6 +62,37 @@ await auth.grants.revoke(grant.id)
 
 The backend root import and platform adapters remain separate from `/client`. React hooks/components live under `/react`; Vue wrappers live under `/vue`. Vanilla apps need neither framework.
 
+## Session Loss
+
+`authenticate()` still returns `Auth | null`. For a gated route that needs a consistent 401, use the detailed result once:
+
+```ts
+const result = await gate.authenticateResult(request)
+if (!result.auth) return gate.unauthenticated(request, result)
+// Enforce this route's scopes against result.auth before serving private data.
+```
+
+The response is `{ error: 'unauthenticated', reason }`, where `reason` is `revoked`, `expired`, `rotated`, `delisted`, `invalid`, or `null` for an anonymous request. A failed session cookie is expired and the response requests `Clear-Site-Data: "cache"`; other cookies and browser storage are not cleared. Failed explicit Bearer or `?key=` credentials never clear the browser cookie/cache, even beside a live cookie. `gate.unauthenticated(request)` can resolve the failure itself when a caller has not already authenticated. `/whoami` and protected `authRoutes` endpoints use the same helper.
+
+In the app's fetch wrapper or query-cache 401 handler, report the failure to the matching whoami endpoint:
+
+```ts
+import { isSessionLossReason, reportUnauthenticated } from '@open-athena/auth/client'
+
+if (response.status === 401) {
+  const body = await response.clone().json().catch(() => null)
+  reportUnauthenticated(isSessionLossReason(body?.reason) ? body.reason : null, {
+    endpoint: '/api/view/whoami', // omit for the default /api/auth/whoami
+  })
+}
+```
+
+This revalidates identity; it is not an unconditional logout command. If a rejected explicit credential accompanied a healthy browser cookie, whoami can confirm that cookie and keep the app signed in. React and Vue observers receive the reason, including when the first 401 already cleared the cookie and a later whoami has no reason. A successful identity probe or explicit sign-out clears it. Existing imports remain valid; `reportUnauthenticated` is also exported from `/react` and `/vue`.
+
+React `AuthGate` passes the reason as the second argument to `signIn(refresh, reason)` and supplies it automatically to a nested `SignInPanel`. The panel accepts `reason` and `reasonMessage` overrides. Vue exposes `reason` as a readonly ref and in gate slot contexts; custom/vanilla walls can use `sessionLossMessage(reason)`. `useWhoami` and `AuthGate` (React) and the Vue options accept `revalidateS` for optional periodic probes, off by default. Focus/visibility checks remain enabled. No push connection is needed.
+
+Clear-Site-Data is a browser cache signal, not application-memory or service-worker cache cleanup, and support requires a secure context. Keep successful sensitive responses `Cache-Control: no-store` where appropriate. Consumers must also cancel/discard their own private query/store data on identity loss; target those caches rather than clearing the identity query itself while it is revalidating. Revocation cannot erase content already read or copied. See [Clear-Site-Data][clear-site-data].
+
 ## Vue
 
 Import `useWhoami`, `AuthGate`, and shared identity helpers from `@open-athena/auth/vue`. Vue is an optional peer dependency; React and TanStack Query are not required for this subpath.
@@ -363,3 +394,4 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 [demo-vanilla]: https://auth.oa.dev/vanilla
 [demo-vue]: https://auth.oa.dev/vue
 [demo-react]: https://auth.oa.dev/react
+[clear-site-data]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data

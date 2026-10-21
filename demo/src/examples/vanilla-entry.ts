@@ -1,10 +1,11 @@
-import { AuthClientError, createAuthClient, exchangeKeyParam, type Whoami } from '@open-athena/auth/client'
+import { AuthClientError, createAuthClient, exchangeKeyParam, isSessionLossReason, sessionLossMessage, subscribeUnauthenticated, type SessionLossReason, type Whoami } from '@open-athena/auth/client'
 import { endpoint, exchange, identityLabel, linkFor, mountShell, trackView } from './shell.js'
 
 const host = mountShell('Vanilla JS · @open-athena/auth/client')
 const client = createAuthClient({ basePath: endpoint })
 let version = 0
 let signingOut = false
+let reason: SessionLossReason | null = null
 
 function button(label: string, action: () => void): HTMLButtonElement {
   const node = document.createElement('button')
@@ -39,6 +40,12 @@ function render(whoami: Whoami | null): void {
     content.textContent = 'Your private workspace'
     for (const node of [name, subject, content, button('Sign out', () => void signOut())]) host.appendChild(node)
   } else {
+    if (reason) {
+      const message = document.createElement('p')
+      message.setAttribute('role', 'status')
+      message.textContent = sessionLossMessage(reason)
+      host.appendChild(message)
+    }
     const note = document.createElement('p')
     note.className = 'muted'
     note.textContent = 'Open a demo link to enter. No account needed.'
@@ -71,10 +78,14 @@ async function refresh(): Promise<void> {
   host.textContent = 'Checking access…'
   try {
     const identity = await client.whoami()
-    if (request === version) render(identity)
+    if (request === version) { reason = null; render(identity) }
   } catch (error) {
     if (request !== version) return
-    if (error instanceof AuthClientError && [401, 403].includes(error.status)) render(null)
+    if (error instanceof AuthClientError && [401, 403].includes(error.status)) {
+      const supplied = (error.body as { reason?: unknown } | null)?.reason
+      if (isSessionLossReason(supplied)) reason = supplied
+      render(null)
+    }
     else showError()
   }
 }
@@ -87,6 +98,7 @@ async function signOut(): Promise<void> {
   control.disabled = true
   try {
     await client.logout()
+    reason = null
     render(null)
   } catch {
     control.disabled = false
@@ -100,6 +112,11 @@ async function signOut(): Promise<void> {
 }
 
 host.textContent = 'Checking access…'
+subscribeUnauthenticated(event => {
+  if (event.endpoint !== `${endpoint}/whoami`) return
+  if (event.reason) reason = event.reason
+  void refresh()
+})
 void (async () => {
   await exchangeKeyParam(exchange)
   await refresh()

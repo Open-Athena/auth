@@ -5,10 +5,15 @@ import type { AuthClient, AuthClientOptions } from '../client/api.js'
 import { exchangeKeyParam, hasKeyParam } from '../client/exchange.js'
 import type { ExchangeOptions } from '../client/exchange.js'
 import type { Whoami } from '../client/identity.js'
+import { subscribeUnauthenticated } from '../client/auth-events.js'
+import { isSessionLossReason } from '../core/denial.js'
+import type { SessionLossReason } from '../core/denial.js'
 
 export interface UseWhoamiOptions extends AuthClientOptions {
   client?: AuthClient
   staleTime?: number
+  /** Periodic revalidation in seconds. Off by default. */
+  revalidateS?: number
   /** Disabled by default; AuthGate enables exchange before its first probe. */
   exchange?: ExchangeOptions | false
 }
@@ -17,6 +22,7 @@ export interface UseWhoamiResult {
   whoami: Readonly<Ref<Whoami | null | undefined>>
   loading: Readonly<Ref<boolean>>
   error: Readonly<Ref<Error | null>>
+  reason: Readonly<Ref<SessionLossReason | null>>
   refetch: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -25,6 +31,7 @@ function createState(client: AuthClient) {
   const whoami = shallowRef<Whoami | null>()
   const loading = shallowRef(true)
   const error = shallowRef<Error | null>(null)
+  const reason = shallowRef<SessionLossReason | null>(null)
   let generation = 0
   let updated = 0
   let pending: Promise<void> | undefined
@@ -42,12 +49,16 @@ function createState(client: AuthClient) {
         const identity = await client.whoami()
         if (request === generation) {
           whoami.value = identity
+          reason.value = null
           updated = Date.now()
         }
       } catch (cause) {
         if (request !== generation) return
         whoami.value = null
-        if (!(cause instanceof AuthClientError && cause.status === 401)) error.value = asError(cause)
+        if (cause instanceof AuthClientError && cause.status === 401) {
+          const body = cause.body
+          if (body && typeof body === 'object' && 'reason' in body && isSessionLossReason(body.reason)) reason.value = body.reason
+        } else error.value = asError(cause)
         updated = Date.now()
       } finally {
         if (request === generation) {
@@ -69,7 +80,10 @@ function createState(client: AuthClient) {
     logout = (async () => {
       try {
         await client.logout()
-        if (users) whoami.value = null
+        if (users) {
+          whoami.value = null
+          reason.value = null
+        }
       } catch (cause) {
         if (users) error.value = asError(cause)
         throw cause
@@ -82,7 +96,11 @@ function createState(client: AuthClient) {
   }
 
   return {
-    result: { whoami: shallowReadonly(whoami), loading: shallowReadonly(loading), error: shallowReadonly(error), refetch, signOut },
+    result: { whoami: shallowReadonly(whoami), loading: shallowReadonly(loading), error: shallowReadonly(error), reason: shallowReadonly(reason), refetch, signOut },
+    reported(value: SessionLossReason | null) {
+      if (value) reason.value = value
+      return refetch()
+    },
     retain() { users++ },
     release() {
       if (--users === 0) {
@@ -90,6 +108,7 @@ function createState(client: AuthClient) {
         pending = undefined
         whoami.value = undefined
         error.value = null
+        reason.value = null
         loading.value = true
         // Keep the entry while logout is in flight so a remount waits for it.
         return !logout
@@ -136,10 +155,15 @@ export function useWhoami(options: UseWhoamiOptions = {}): UseWhoamiResult {
   state.retain()
   let active = true
   let ready = false
+  let unsubscribe: (() => void) | undefined
+  let timer: ReturnType<typeof setInterval> | undefined
   const refresh = () => {
     if (active && ready) void state.ensure(options.staleTime ?? 5 * 60_000)
   }
   onMounted(async () => {
+    unsubscribe = subscribeUnauthenticated(event => {
+      if (event.endpoint === `${basePath}/whoami`) void state.reported(event.reason)
+    })
     if (options.exchange !== undefined && options.exchange !== false) {
       const opts = { endpoint: `${basePath}/exchange`, ...options.exchange }
       const key = JSON.stringify([opts.endpoint, opts.param ?? 'key'])
@@ -164,10 +188,15 @@ export function useWhoami(options: UseWhoamiOptions = {}): UseWhoamiResult {
     refresh()
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', visible)
+    if (options.revalidateS && options.revalidateS > 0) {
+      timer = setInterval(() => { void state.result.refetch() }, options.revalidateS * 1000)
+    }
   })
   function visible() { if (document.visibilityState === 'visible') refresh() }
   onScopeDispose(() => {
     active = false
+    unsubscribe?.()
+    if (timer !== undefined) clearInterval(timer)
     if (typeof window !== 'undefined') window.removeEventListener('focus', refresh)
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visible)
     if (state.release()) {

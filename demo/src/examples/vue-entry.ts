@@ -1,11 +1,12 @@
 import { createApp, defineComponent, h } from 'vue'
 import { AuthGate, type UseWhoamiResult } from '@open-athena/auth/vue'
-import type { Whoami } from '@open-athena/auth/client'
+import { sessionLossMessage, type SessionLossReason, type Whoami } from '@open-athena/auth/client'
 import { endpoint, exchange, identityLabel, linkFor, mountShell, trackView } from './shell.js'
 
 const host = mountShell('Vue · @open-athena/auth/vue')
 interface GateContext {
   whoami: Whoami | null | undefined
+  reason: SessionLossReason | null
   signOut: UseWhoamiResult['signOut']
   refetch: UseWhoamiResult['refetch']
 }
@@ -33,8 +34,9 @@ const Example = defineComponent({
         h('p', { role: 'alert' }, context.whoami ? 'Could not sign out. Please try again.' : 'Could not check access. Please try again.'),
         ...(!context.whoami ? [h('button', { class: 'btn', onClick: context.refetch }, 'Try again')] : []),
       ],
-      unauthenticated: () => [
+      unauthenticated: ({ reason }: GateContext) => [
         h('h2', 'Private workspace'),
+        ...(reason ? [h('p', { role: 'status' }, sessionLossMessage(reason))] : []),
         h('p', { class: 'muted' }, 'Open a demo link to enter. No account needed.'),
         h('div', { class: 'wall-actions' }, [
           h('a', { href: linkFor(true), class: 'btn primary' }, 'Open named link'),

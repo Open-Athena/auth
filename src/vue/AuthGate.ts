@@ -1,6 +1,7 @@
 import { defineComponent } from 'vue'
 import type { PropType, SlotsType, VNodeChild } from 'vue'
 import type { Whoami } from '../client/identity.js'
+import type { SessionLossReason } from '../core/denial.js'
 import { useWhoami } from './useWhoami.js'
 import type { UseWhoamiOptions } from './useWhoami.js'
 
@@ -8,6 +9,7 @@ export interface AuthGateSlotContext {
   whoami: Whoami | null | undefined
   loading: boolean
   error: Error | null
+  reason: SessionLossReason | null
   refetch: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -30,7 +32,7 @@ export const AuthGate = defineComponent({
     // Options are setup-time configuration; remount to change clients/endpoints.
     const auth = useWhoami({ exchange: {}, ...props.options })
     return () => {
-      const context = { whoami: auth.whoami.value, loading: auth.loading.value, error: auth.error.value, refetch: auth.refetch, signOut: auth.signOut }
+      const context = { whoami: auth.whoami.value, loading: auth.loading.value, error: auth.error.value, reason: auth.reason.value, refetch: auth.refetch, signOut: auth.signOut }
       if (context.loading) return slots.loading?.(context)
       // Without an error slot, the wall receives the error and retry action.
       if (context.error) return slots.error ? slots.error({ ...context, error: context.error }) : slots.unauthenticated?.(context)

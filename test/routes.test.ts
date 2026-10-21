@@ -83,7 +83,7 @@ describe('mounting', () => {
 
 describe('whoami', () => {
   it('401s anonymously and reflects the identity once signed in', async () => {
-    expect(await call('/whoami')).toMatchObject({ status: 401, body: { error: 'unauthenticated' } })
+    expect(await call('/whoami')).toEqual({ status: 401, body: { error: 'unauthenticated', reason: null }, setCookie: null })
     const cookie = await asAdmin()
     expect(await call('/whoami', {}, cookie)).toMatchObject({
       status: 200,
@@ -100,19 +100,19 @@ describe('whoami', () => {
       const session = pair((await post('/exchange', { token: minted.body.token })).setCookie!)
       expect((await call('/whoami', {}, session)).status).toBe(200)
       await post(`/grants/${minted.body.grant.id}/revoke`, {}, admin)
-      expect(await call('/whoami', {}, session)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: EXPIRED })
+      expect(await call('/whoami', {}, session)).toEqual({ status: 401, body: { error: 'unauthenticated', reason: 'revoked' }, setCookie: EXPIRED })
     })
 
     it('is cleared when the session itself has expired', async () => {
       const cookie = await asAdmin()
       vi.setSystemTime(NOW + 31 * 24 * 3600 * 1000)
-      expect(await call('/whoami', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: EXPIRED })
+      expect(await call('/whoami', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated', reason: 'expired' }, setCookie: EXPIRED })
     })
 
     it('is not touched when no cookie was sent, or when a bad ?key= failed beside a live cookie', async () => {
-      expect(await call('/whoami')).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: null })
+      expect(await call('/whoami')).toEqual({ status: 401, body: { error: 'unauthenticated', reason: null }, setCookie: null })
       const cookie = await asAdmin()
-      expect(await call('/whoami?key=bogus', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated' }, setCookie: null })
+      expect(await call('/whoami?key=bogus', {}, cookie)).toEqual({ status: 401, body: { error: 'unauthenticated', reason: 'invalid' }, setCookie: null })
       expect((await call('/whoami', {}, cookie)).status).toBe(200)
     })
   })

@@ -20,8 +20,9 @@ interface Ctx {
 
 export const onRequest = async ({ request, env }: Ctx): Promise<Response> => {
   const { viewGate } = gates(env, request)
-  const auth = await viewGate.authenticate(request, undefined, { logView: false })
-  if (!auth) return json({ error: 'unauthenticated' }, 401)
+  const result = await viewGate.authenticateResult(request, undefined, { logView: false })
+  const auth = result.auth
+  if (!auth) return viewGate.unauthenticated(request, result)
   if (!hasScope(auth, VIEW_SCOPE)) return json({ error: 'forbidden' }, 403)
   return json({ ok: true, at: Math.floor(Date.now() / 1000) })
 }

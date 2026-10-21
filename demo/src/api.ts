@@ -1,4 +1,5 @@
 import type { AccessRequest, Grant, GrantActivity, StoredEvent } from '@open-athena/auth'
+import { isSessionLossReason, reportUnauthenticated } from '@open-athena/auth/client'
 
 export class ApiError extends Error {
   constructor(
@@ -17,6 +18,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
+  if (res.status === 401 && /^\/api\/(data|view|admin)\//.test(path)) {
+    reportUnauthenticated(isSessionLossReason(data?.reason) ? data.reason : null, {
+      endpoint: path.startsWith('/api/admin/') ? '/api/admin/whoami' : '/api/view/whoami',
+    })
+  }
   // `detail` is the human-readable why (e.g. which avatar source was refused), when the route gives one.
   if (!res.ok) throw new ApiError(res.status, data?.detail ?? data?.error ?? res.statusText)
   return data as T

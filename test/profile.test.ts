@@ -258,7 +258,7 @@ describe('routes: /api/auth/profile', () => {
 
   it('401s an anonymous GET', async () => {
     const { handle } = build(memoryProfileStore())
-    expect(await call(handle, { method: 'GET' })).toEqual({ status: 401, body: { error: 'unauthenticated' } })
+    expect(await call(handle, { method: 'GET' })).toEqual({ status: 401, body: { error: 'unauthenticated', reason: null } })
   })
 
   it('returns null with no row, then reflects a PUT', async () => {

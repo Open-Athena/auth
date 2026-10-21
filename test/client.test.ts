@@ -73,7 +73,7 @@ describe('typed auth client', () => {
   it('retains real route errors and their status', async () => {
     const anonymous = await fixture({}, null)
     expect(await httpError(anonymous.client.whoami())).toEqual({
-      name: 'AuthClientError', status: 401, body: { error: 'unauthenticated' },
+      name: 'AuthClientError', status: 401, body: { error: 'unauthenticated', reason: null },
     })
     const { client } = await fixture()
     const scoped = await fixture()

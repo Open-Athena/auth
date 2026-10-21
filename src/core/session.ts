@@ -64,29 +64,40 @@ export async function verifySessionClaims(
   secret: string,
   nowMs: number,
 ): Promise<{ sub: string; iat: number; exp: number } | null> {
+  const result = await inspectSessionClaims(value, secret, nowMs)
+  return result.ok ? result.claims : null
+}
+
+/** Signature-checked diagnostics: never trust an unverified payload's expiry. */
+export async function inspectSessionClaims(
+  value: string,
+  secret: string,
+  nowMs: number,
+): Promise<{ ok: true; claims: { sub: string; iat: number; exp: number } } | { ok: false; reason: 'expired' | 'invalid' }> {
+  const invalid = { ok: false, reason: 'invalid' } as const
   const i = value.indexOf('.')
-  if (i < 0) return null
+  if (i < 0) return invalid
   const body = value.slice(0, i)
   let sig: ReturnType<typeof b64uDecodeBytes>
   let claims: unknown
   try {
     sig = b64uDecodeBytes(value.slice(i + 1))
   } catch {
-    return null
+    return invalid
   }
   // Verify before parsing: an unauthenticated payload never reaches JSON.parse.
-  if (!(await crypto.subtle.verify('HMAC', await hmacKey(secret, ['verify']), sig, enc.encode(body)))) return null
+  if (!(await crypto.subtle.verify('HMAC', await hmacKey(secret, ['verify']), sig, enc.encode(body)))) return invalid
   try {
     claims = JSON.parse(b64uDecodeString(body))
   } catch {
-    return null
+    return invalid
   }
   const { v, sub, iat, exp } = (claims ?? {}) as Partial<SessionClaims>
-  if (v !== 1 || typeof sub !== 'string' || typeof exp !== 'number') return null
+  if (v !== 1 || typeof sub !== 'string' || typeof exp !== 'number' || !Number.isFinite(exp)) return invalid
   // `<=` so expiry is judged identically everywhere: grants (`expiresAt > nowS`),
   // id_tokens, and sessions all treat "exactly at exp" as expired.
-  if (exp * 1000 <= nowMs) return null
-  return { sub, iat: typeof iat === 'number' ? iat : 0, exp }
+  if (exp * 1000 <= nowMs) return { ok: false, reason: 'expired' }
+  return { ok: true, claims: { sub, iat: typeof iat === 'number' ? iat : 0, exp } }
 }
 
 /** Returns the `sub` claim, or null if the value is malformed, forged, or expired. */

@@ -1,4 +1,4 @@
-import { createAuthClient, displayName } from '@open-athena/auth/client'
+import { createAuthClient, displayName, sessionLossMessage } from '@open-athena/auth/client'
 import { Avatar, useWhoami, useKeyExchange, useForgetWhoami, type Whoami } from '@open-athena/auth/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -29,12 +29,13 @@ function Identity({ whoami }: { whoami: Whoami }) {
 
 function Example() {
   const ready = useKeyExchange(exchange)
-  const { whoami, error, refresh } = useWhoami(source, { enabled: ready })
+  const { whoami, error, refresh, reason } = useWhoami(source, { enabled: ready })
   if (!ready || whoami === undefined) return <p>Checking access…</p>
   if (error) return <><p role="alert">Could not check access. Please try again.</p><button className="btn" onClick={refresh}>Try again</button></>
   if (whoami) return <Identity whoami={whoami} />
   return <>
     <h2>Private workspace</h2>
+    {reason && <p role="status">{sessionLossMessage(reason)}</p>}
     <p className="muted">Open a demo link to enter. No account needed.</p>
     <div className="wall-actions">
       <a className="btn primary" href={linkFor(true)}>Open named link</a>

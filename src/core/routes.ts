@@ -14,7 +14,6 @@ import type { Gate, GrantEdit, ProfileInput } from './gate.js'
 import { assetId } from './assets.js'
 import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvatarRef } from './avatar.js'
 import { cleanSubject, isEmailish } from './requests.js'
-import { readCookie } from './session.js'
 import { hashToken } from './tokens.js'
 import { hasScope } from './types.js'
 import type { AllowedForLink, AuthResponses, GrantUpdateInput, MintInput, RotateInput } from './http.js'
@@ -197,9 +196,10 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // Resolve identity once per request; admin routes then re-check the scope.
     // `logView: false` because these endpoints are plumbing, not pages — a view
     // row per `/whoami` poll would bury the routes a visitor actually read.
-    const auth = await gate.authenticate(req, undefined, { logView: false })
+    const result = await gate.authenticateResult(req, undefined, { logView: false })
+    const auth = result.auth
     const require = async (scope: string): Promise<Auth | Response> => {
-      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      if (!auth) return gate.unauthenticated(req, result)
       if (!hasScope(auth, scope)) return json({ error: 'forbidden' }, 403)
       return auth
     }
@@ -218,13 +218,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
 
     if (rest === '/whoami' && method === 'GET') {
       if (auth) return reply('whoami', present(gate.whoami(auth)))
-      // A dead cookie (revoked or expired grant, delisted email) is cleared
-      // here, where the browser asks "who am I" — but only when the cookie is
-      // what failed: a bad `?key=`/`Bearer` beside a live cookie is not a
-      // reason to log the browser out.
-      const presented = req.headers.get('Authorization')?.startsWith('Bearer ') || url.searchParams.has('key')
-      const stale = !presented && readCookie(req, gate.cookieName) !== null
-      return json({ error: 'unauthenticated' }, 401, stale ? { 'set-cookie': gate.expireCookie(req) } : {})
+      return gate.unauthenticated(req, result)
     }
 
     if (rest === '/exchange' && method === 'POST') {
@@ -262,13 +256,13 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // never takes an email argument, `PUT` only ever writes the caller's row.
     // No admin scope: editing your own label is not an admin action.
     if (rest === '/profile' && method === 'GET') {
-      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      if (!auth) return gate.unauthenticated(req, result)
       const p = await gate.getProfile(auth)
       return json(p ? { name: p.name, avatar: served(p.avatar) } : null)
     }
 
     if (rest === '/profile' && method === 'PUT') {
-      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      if (!auth) return gate.unauthenticated(req, result)
       const res = await gate.putProfile(auth, await readProfileInput(req))
       if (!res.ok) {
         const status =
@@ -540,7 +534,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // admin or SSO principal only — a share-link visitor has nothing to set, and
     // shouldn't get a server that fetches images on request.
     if (rest === '/avatar' && method === 'POST') {
-      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      if (!auth) return gate.unauthenticated(req, result)
       if (auth.kind !== 'sso' && !hasScope(auth, adminScope)) return json({ error: 'forbidden' }, 403)
       const b = await body<{ ref?: string; email?: string }>(req)
       try {
@@ -566,7 +560,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
     // session will do (the id is unguessable, and faces aren't secrets from
     // someone already let in); an anonymous request gets nothing.
     if (seg[0] === 'avatar' && seg.length === 2 && method === 'GET') {
-      if (!auth) return json({ error: 'unauthenticated' }, 401)
+      if (!auth) return gate.unauthenticated(req, result)
       const asset = await gate.getAsset(seg[1]!)
       if (!asset) return json({ error: 'not found' }, 404)
       return new Response(new Uint8Array(asset.bytes), {

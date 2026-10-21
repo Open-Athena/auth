@@ -41,6 +41,7 @@ export { verifyRs256Jwt } from './core/jwt.js'
 export type { VerifyJwtOptions } from './core/jwt.js'
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js'
 export type {
+  AuthenticationResult,
   AvatarInput,
   Gate,
   GateOptions,
@@ -52,6 +53,8 @@ export type {
   RedeemResult,
   RequestAccessResult,
 } from './core/gate.js'
+export { isSessionLossReason, sessionLossMessage } from './core/denial.js'
+export type { SessionLossReason } from './core/denial.js'
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js'
 export type { AccessRequest, Notify, NotifyEvent, RateLimit, RequestStatus } from './core/requests.js'
 export { authRoutes } from './core/routes.js'

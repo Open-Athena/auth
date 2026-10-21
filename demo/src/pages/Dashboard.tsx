@@ -6,8 +6,7 @@ import {
   displayName,
 } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
-import { ApiError, VIEW_SOURCE, api } from '../api.js'
+import { VIEW_SOURCE, api } from '../api.js'
 import { Link } from '../router.js'
 import { SignIn } from '../SignIn.js'
 
@@ -19,7 +18,7 @@ export function Dashboard() {
       loading={<p className="muted">Checking your access…</p>}
       signIn={refresh => <Wall onSignedIn={refresh} />}
     >
-      {(whoami, refresh) => <Gated whoami={whoami} onLost={refresh} />}
+      {whoami => <Gated whoami={whoami} />}
     </AuthGate>
   )
 }
@@ -61,15 +60,11 @@ function Wall({ onSignedIn }: { onSignedIn: () => void }) {
   )
 }
 
-function Gated({ whoami, onLost }: { whoami: Whoami; onLost: () => void }) {
+function Gated({ whoami }: { whoami: Whoami }) {
   // The gated fetch, polled: a link revoked in the admin page fails it within
   // five seconds, and the page drops back to the wall instead of showing a
   // stale page with an error tucked in a corner.
   const probe = useQuery({ queryKey: ['private'], queryFn: api.privateData, retry: false, refetchInterval: 5000 })
-
-  useEffect(() => {
-    if (probe.error instanceof ApiError && [401, 403].includes(probe.error.status)) onLost()
-  }, [probe.error, onLost])
 
   if (probe.error) return <p className="err">Access ended: {probe.error.message}</p>
 

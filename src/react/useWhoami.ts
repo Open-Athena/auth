@@ -1,9 +1,68 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { subscribeUnauthenticated } from '../client/auth-events.js'
+import { isSessionLossReason, type SessionLossReason } from '../core/denial.js'
 import { DEFAULT_WHOAMI_ENDPOINT, type Whoami, type WhoamiSource } from './types.js'
 
 export const WHOAMI_KEY = ['oa-auth', 'whoami'] as const
+const REASON_KEY = ['oa-auth', 'session-loss'] as const
+
+interface RevalidationSubscription {
+  observers: number
+  revalidate: () => void
+  dispose: () => void
+}
+
+const subscriptions = new WeakMap<QueryClient, Map<string, RevalidationSubscription>>()
+
+/** Share event side effects, just as TanStack shares the identity query. */
+function retainRevalidation(client: QueryClient, endpoint: string) {
+  let endpoints = subscriptions.get(client)
+  if (!endpoints) {
+    endpoints = new Map()
+    subscriptions.set(client, endpoints)
+  }
+  let subscription = endpoints.get(endpoint)
+  if (!subscription) {
+    const revalidate = () => {
+      void client.cancelQueries({ queryKey: [...WHOAMI_KEY, endpoint], exact: true })
+      void client.invalidateQueries({ queryKey: [...WHOAMI_KEY, endpoint], exact: true })
+    }
+    const unsubscribe = subscribeUnauthenticated(event => {
+      if (event.endpoint !== endpoint) return
+      if (event.reason) client.setQueryData([...REASON_KEY, endpoint], event.reason)
+      revalidate()
+    })
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') revalidate()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    subscription = {
+      observers: 0,
+      revalidate,
+      dispose: () => {
+        unsubscribe()
+        document.removeEventListener('visibilitychange', onVisibility)
+      },
+    }
+    endpoints.set(endpoint, subscription)
+  }
+  subscription.observers++
+  const retained = subscription
+  return {
+    revalidate: retained.revalidate,
+    release: () => {
+      if (--retained.observers === 0) {
+        retained.dispose()
+        endpoints.delete(endpoint)
+      }
+    },
+  }
+}
 
 export interface UseWhoamiOptions<T> {
+  /** Periodic revalidation in seconds. Off by default. */
+  revalidateS?: number
   /** Default 5 minutes. Identity rarely changes mid-session; the gate re-checks server-side anyway. */
   staleTime?: number
   /** Hold the probe until a `?key=` exchange has finished. */
@@ -28,6 +87,7 @@ export interface UseWhoamiOptions<T> {
 }
 
 export interface UseWhoamiResult<T> {
+  reason: SessionLossReason | null
   /** `undefined` while loading, `null` when signed out, else the identity. */
   whoami: T | null | undefined
   refresh: () => void
@@ -40,11 +100,28 @@ export interface UseWhoamiResult<T> {
  */
 export function useWhoami<T extends Whoami = Whoami>(
   source: WhoamiSource = {},
-  { staleTime = 5 * 60_000, enabled = true, devIdentity }: UseWhoamiOptions<T> = {},
+  { staleTime = 5 * 60_000, enabled = true, devIdentity, revalidateS }: UseWhoamiOptions<T> = {},
 ): UseWhoamiResult<T> {
   const client = useQueryClient()
   const endpoint = source.endpoint ?? DEFAULT_WHOAMI_ENDPOINT
   const stubbed = devIdentity !== undefined
+  const reasonKey = [...REASON_KEY, endpoint]
+  const { data: reason = null } = useQuery<SessionLossReason | null>({
+    queryKey: reasonKey,
+    queryFn: () => null,
+    enabled: false,
+    initialData: null,
+  })
+
+  useEffect(() => {
+    if (!enabled || stubbed) return
+    const { revalidate, release } = retainRevalidation(client, endpoint)
+    const timer = revalidateS && revalidateS > 0 ? setInterval(revalidate, revalidateS * 1000) : undefined
+    return () => {
+      release()
+      if (timer !== undefined) clearInterval(timer)
+    }
+  }, [client, endpoint, enabled, stubbed, revalidateS])
 
   const query = useQuery<T | null>({
     queryKey: [...WHOAMI_KEY, endpoint],
@@ -60,18 +137,30 @@ export function useWhoami<T extends Whoami = Whoami>(
     staleTime: q => (q.state.data == null ? 0 : staleTime),
     refetchOnWindowFocus: true,
     retry: false,
-    queryFn: async () => {
-      const res = await fetch(endpoint, { credentials: 'include', headers: { accept: 'application/json' } })
+    queryFn: async ({ signal }) => {
+      const res = await fetch(endpoint, { signal, credentials: 'include', headers: { accept: 'application/json' } })
       // "Not signed in" arrives as a status, not an exception.
-      if (res.status === 401 || res.status === 403 || res.status === 404) return null
+      if (res.status === 401 || res.status === 403 || res.status === 404) {
+        const body: unknown = await res.text()
+          .then(text => { try { return JSON.parse(text) } catch { return null } })
+        signal.throwIfAborted()
+        if (body && typeof body === 'object' && 'reason' in body && isSessionLossReason(body.reason)) {
+          client.setQueryData(reasonKey, body.reason)
+        }
+        return null
+      }
       if (!res.ok) throw new Error(`whoami failed: ${res.status}`)
-      return (await res.json()) as T
+      const identity = (await res.json()) as T
+      signal.throwIfAborted()
+      client.setQueryData(reasonKey, null)
+      return identity
     },
   })
 
-  if (stubbed) return { whoami: devIdentity, refresh: () => {}, error: null }
+  if (stubbed) return { whoami: devIdentity, reason: null, refresh: () => {}, error: null }
 
   return {
+    reason: query.data === null ? reason : null,
     whoami: enabled && query.isPending ? undefined : (query.data ?? null),
     refresh: () => void client.invalidateQueries({ queryKey: WHOAMI_KEY }),
     error: (query.error as Error | null) ?? null,
@@ -93,5 +182,8 @@ export function useWhoami<T extends Whoami = Whoami>(
  */
 export function useForgetWhoami(): () => void {
   const client = useQueryClient()
-  return () => void client.resetQueries({ queryKey: WHOAMI_KEY })
+  return () => {
+    client.setQueriesData({ queryKey: REASON_KEY }, null)
+    void client.resetQueries({ queryKey: WHOAMI_KEY })
+  }
 }
