@@ -4,6 +4,7 @@ import {
   RequestAccessForm,
   type Whoami,
   displayName,
+  useAccounts,
 } from '@open-athena/auth/react'
 import { useQuery } from '@tanstack/react-query'
 import { VIEW_SOURCE, api } from '../api.js'
@@ -18,8 +19,40 @@ export function Dashboard() {
       loading={<p className="muted">Checking your access…</p>}
       signIn={refresh => <Wall onSignedIn={refresh} />}
     >
-      {whoami => <Gated whoami={whoami} />}
+      {whoami => (
+        <>
+          <IncomingLink whoami={whoami} />
+          <Gated whoami={whoami} />
+        </>
+      )}
     </AuthGate>
+  )
+}
+
+/**
+ * A share link opened while already signed in doesn't sign you out of
+ * yourself: it's held, unspent, for you to choose. (The offer lapses after ten
+ * minutes; opening the link again brings it back.)
+ */
+function IncomingLink({ whoami }: { whoami: Whoami }) {
+  const { accounts, acceptIncoming, busy, error } = useAccounts({ basePath: '/api/view' })
+  const link = accounts?.incoming[0]
+  if (!link) return null
+  const label = link.subject?.name ?? link.name ?? 'someone'
+  return (
+    <div className="note incoming-link" role="status">
+      <p>
+        You opened a share link for <strong>{label}</strong> while signed in as <strong>{displayName(whoami) ?? 'yourself'}</strong>.
+        You're still you; the link is waiting, unused.
+      </p>
+      <div className="row">
+        <button className="btn small" type="button" disabled={busy} onClick={() => void acceptIncoming(link.id)}>
+          Continue as {label}
+        </button>
+        <span className="muted small">or ignore it: switch to it later from Accounts, until it lapses.</span>
+      </div>
+      {error && <p className="err">{error.message}</p>}
+    </div>
   )
 }
 

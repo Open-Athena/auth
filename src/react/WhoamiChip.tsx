@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { SELECTION_HEADER } from '../client/accounts.js'
 import { Avatar } from './Avatar.js'
 import { useForgetWhoami } from './useWhoami.js'
 import { type Whoami, displayName } from './types.js'
@@ -42,7 +43,10 @@ export function WhoamiChip({
   if (!whoami) return null
 
   async function signOut() {
-    if (logoutEndpoint) await fetch(logoutEndpoint, { method: 'POST', credentials: 'include' }).catch(() => {})
+    // In retained-login mode the server signs out only the account this page
+    // shows, so it's told which selection that was (a stale one is refused).
+    const headers: Record<string, string> = whoami?.selection ? { [SELECTION_HEADER]: whoami.selection } : {}
+    if (logoutEndpoint) await fetch(logoutEndpoint, { method: 'POST', credentials: 'include', headers }).catch(() => {})
     forget()
     onSignedOut?.()
   }

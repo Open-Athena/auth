@@ -10,7 +10,8 @@
  * to show.
  */
 import { type AuditQuery, type EmailPolicy, createGate, domainPolicy, firstMatch } from '@open-athena/auth'
-import { d1AuditQuery, d1AuditSink, d1GrantStore, d1ProfileStore, d1RequestStore } from '@open-athena/auth/d1'
+import { d1AuditQuery, d1AuditSink, d1GrantStore, d1ProfileStore, d1RequestStore, d1RetainedStore } from '@open-athena/auth/d1'
+import type { RetainedLimits } from '@open-athena/auth'
 
 export interface Env {
   DB: D1Database
@@ -97,8 +98,25 @@ export function mailable(email: string, env: Env): boolean {
   return at > 0 && domains.includes(email.slice(at + 1).toLowerCase())
 }
 
+/**
+ * Retained logins on the dashboard's gate: a browser keeps up to 8 accounts
+ * and switches between them. The gate-wide caps are storage bounds for a
+ * public demo, where anyone can create browser sets.
+ */
+const RETAINED: RetainedLimits = {
+  sessions: 8,
+  pending: 4,
+  gateBrowserSets: 50_000,
+  gatePending: 10_000,
+  browserTtlS: 30 * 86400,
+  pendingTtlS: 600,
+  retryTtlS: 86400,
+  defaultSessionTtlS: 7 * 86400,
+}
+
 export function gates(env: Env, req: Request) {
   const secret = secretFor(env, req)
+  const retainedStore = d1RetainedStore(env.DB, RETAINED)
   const store = d1GrantStore(env.DB)
   const requests = d1RequestStore(env.DB)
   const audit = d1AuditSink(env.DB)
@@ -120,6 +138,9 @@ export function gates(env: Env, req: Request) {
     // On for the demo, because the access log is the point. A real app should
     // ship this switch together with the disclosure copy, never silently.
     logViews: true,
+    // Several accounts per browser: sign in as a second address, or open a
+    // share link while signed in, and switch between them from the nav.
+    retained: { store: retainedStore },
   })
 
   // Strangers' access requests go through *this* gate (`/api/admin/request`):
@@ -139,7 +160,7 @@ export function gates(env: Env, req: Request) {
     approvalGrant: { scopes: [VIEW_SCOPE], expiresInS: 7 * 86400 },
   })
 
-  return { viewGate, adminGate, auditQuery: d1AuditQuery(env.DB) as AuditQuery, staffDomain, secret }
+  return { viewGate, adminGate, auditQuery: d1AuditQuery(env.DB) as AuditQuery, staffDomain, secret, retainedStore }
 }
 
 export const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>

@@ -375,13 +375,19 @@ export function retainedMode(opts: RetainedOptions, deps: Deps) {
       return await view({ ...h, browser: (await store.browser(h.binding, nowS))! }, req, nowS)
     },
 
-    /** Sign out of the active login only: it's removed from this browser, and the others stay. */
+    /**
+     * Sign out of the active login only: it's removed from this browser, and
+     * the others stay. A stale selection header is refused. No header at all
+     * is what a client from before retained mode sends; it signs out whichever
+     * login is active now, since a sign-out can only ever take access away.
+     */
     async signOut(req: Request, nowMs: number): Promise<string[]> {
       const nowS = sec(nowMs)
       const h = await held(req, nowS)
       const cookies = readCookie(req, deps.gateCookie) !== null ? [clearLegacy(req)] : []
       if (!h || !h.browser.activeSessionId) return cookies
-      const ctx = await store.remove({ ...h.binding, expected: expected(req, h), sessionId: h.browser.activeSessionId }, nowS)
+      const sent = req.headers.get(SELECTION_CONTEXT_HEADER) === null ? contextOf(h.browser) : expected(req, h)
+      const ctx = await store.remove({ ...h.binding, expected: sent, sessionId: h.browser.activeSessionId }, nowS)
       if (!ctx) throw new RetainedLoginError('selection_context_conflict')
       return cookies
     },

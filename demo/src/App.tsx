@@ -1,10 +1,11 @@
-import { type Whoami, WhoamiChip, useWhoami } from '@open-athena/auth/react'
+import { AccountSwitcher, type Whoami, WhoamiChip, useAccounts, useWhoami } from '@open-athena/auth/react'
 import type { ReactElement } from 'react'
 import { VIEW_SOURCE } from './api.js'
 import { Admin } from './pages/Admin.js'
 import { Dashboard } from './pages/Dashboard.js'
 import { Home } from './pages/Home.js'
 import { Privacy } from './pages/Privacy.js'
+import { AddAccount } from './pages/AddAccount.js'
 import { Profile } from './pages/Profile.js'
 import { Sessions } from './pages/Sessions.js'
 import { Link, Router, useNavigate, usePath } from './router.js'
@@ -15,6 +16,7 @@ const ROUTES: Record<string, () => ReactElement> = {
   '/admin': Admin,
   '/privacy': Privacy,
   '/profile': Profile,
+  '/signin': AddAccount,
 }
 
 export function App() {
@@ -61,16 +63,56 @@ export function App() {
 function NavChip() {
   const navigate = useNavigate()
   const { whoami } = useWhoami<Whoami>(VIEW_SOURCE)
-  if (!whoami) return null
+  if (!whoami) return <Accounts />
   return (
-    <WhoamiChip
+    <>
+      <Accounts />
+      <WhoamiChip
       whoami={whoami}
       avatar
       logoutEndpoint="/api/view/logout"
       // Only an email session owns a profile row; a link session is the link's.
       onOpenProfile={whoami.kind === 'sso' ? () => navigate('/profile') : undefined}
       classNames={{ root: 'chip', name: 'chip-name', button: 'btn small', avatar: 'avatar', identity: 'chip-identity' }}
-    />
+      />
+    </>
+  )
+}
+
+/**
+ * The browser's other logins (the dashboard gate retains several): a quiet
+ * menu that only appears once there's something to switch to, or a share link
+ * waiting to be used. One account looks exactly as it did before.
+ */
+function Accounts() {
+  const { accounts } = useAccounts({ basePath: '/api/view' })
+  if (!accounts || (accounts.accounts.length < 2 && !accounts.incoming.length)) return null
+  const waiting = accounts.incoming.length
+  return (
+    <details className="accounts-menu">
+      <summary className="btn small">
+        Accounts · {accounts.accounts.length}
+        {waiting > 0 && <span className="badge"> +{waiting}</span>}
+      </summary>
+      <AccountSwitcher
+        basePath="/api/view"
+        addAccountHref="/signin"
+        onChanged={() => document.querySelector<HTMLDetailsElement>('.accounts-menu')?.removeAttribute('open')}
+        classNames={{
+          root: 'accounts',
+          list: 'accounts-list',
+          item: 'account',
+          active: 'on',
+          switch: 'account-switch',
+          remove: 'btn small account-remove',
+          tag: 'tag soft',
+          incoming: 'account incoming',
+          actions: 'accounts-actions',
+          button: 'btn small',
+          error: 'err',
+        }}
+      />
+    </details>
   )
 }
 

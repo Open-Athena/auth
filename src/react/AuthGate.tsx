@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { SessionLossReason } from '../core/denial.js'
 import { SessionLossContext } from './sessionLoss.js'
+import { announceSelectionChange } from '../client/accounts.js'
+import { ACCOUNTS_KEY } from './Accounts.js'
 import { type ExchangeOptions, useKeyExchange } from './exchange.js'
 import { WHOAMI_KEY, useWhoami } from './useWhoami.js'
 import { DEFAULT_WHOAMI_ENDPOINT, type Whoami, type WhoamiSource } from './types.js'
@@ -46,6 +48,10 @@ export function AuthGate<T extends Whoami = Whoami>({
     const filters = { queryKey: [...WHOAMI_KEY, source.endpoint ?? DEFAULT_WHOAMI_ENDPOINT], exact: true }
     await client.cancelQueries(filters)
     await client.invalidateQueries(filters)
+    // Retained-login mode: the link may have joined this browser's accounts
+    // (or been held as one to switch to), here and in its other tabs.
+    void client.invalidateQueries({ queryKey: ACCOUNTS_KEY })
+    announceSelectionChange((exchange && exchange.endpoint ? exchange.endpoint : '/api/auth/exchange').replace(/\/exchange$/, ''))
   })
   const { whoami, refresh, reason } = useWhoami<T>(source, { enabled: ready, devIdentity, revalidateS })
 

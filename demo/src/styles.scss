@@ -817,3 +817,109 @@ a.card {
 .oa-slog-switch {
   --oa-slog-surface: var(--bg);
 }
+// The nav's Accounts menu (retained logins): a `<details>` dropdown.
+.accounts-menu {
+  position: relative;
+  summary {
+    list-style: none;
+    cursor: pointer;
+    &::-webkit-details-marker {
+      display: none;
+    }
+  }
+  .badge {
+    color: var(--accent, inherit);
+    font-weight: 600;
+  }
+  .accounts {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.4rem);
+    z-index: 20;
+    min-width: min(22rem, calc(100vw - 2rem));
+    padding: 0.6rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 28px rgb(0 0 0 / 0.25);
+  }
+  .accounts-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.25rem;
+  }
+  .account {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .account-switch {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.4rem 0.5rem;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    &:hover:not(:disabled) {
+      border-color: var(--line);
+    }
+    &:disabled {
+      cursor: default;
+    }
+  }
+  .account.on .account-switch {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+  }
+  .account.incoming {
+    justify-content: space-between;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.85rem;
+    border-top: 1px dashed var(--line);
+  }
+  .accounts-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--line);
+  }
+}
+
+.incoming-link {
+  margin-bottom: 1rem;
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+}
+
+// Narrow screens: the Accounts button sits wherever the nav wraps it, so a
+// right-aligned dropdown can run off the left edge. Open it in flow instead,
+// full width under the nav links.
+@media (max-width: 640px) {
+  .accounts-menu[open] {
+    flex-basis: 100%;
+  }
+  .accounts-menu .accounts {
+    position: static;
+    min-width: 0;
+    margin-top: 0.5rem;
+  }
+}

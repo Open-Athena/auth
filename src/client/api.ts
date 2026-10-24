@@ -1,3 +1,4 @@
+import { SELECTION_HEADER } from './accounts.js'
 import type {
   AuthResponses, GrantListInput, GrantUpdateInput, LogInput, MintInput, RotateInput,
 } from '../core/http.js'
@@ -21,18 +22,23 @@ function segment(id: string): string {
 
 export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fetch }: AuthClientOptions = {}) {
   const base = basePath.replace(/\/+$/, '')
+  /** The selection context the last identity response carried (retained-login mode), sent back on sign-out. */
+  let selection: string | null = null
   async function request<K extends keyof AuthResponses>(
     path: string,
     method = 'GET',
     input?: unknown,
+    headers: Record<string, string> = {},
   ): Promise<AuthResponses[K]> {
     const response = await fetch(`${base}${path}`, {
       method,
       credentials: 'same-origin',
-      ...(input === undefined ? {} : {
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      }),
+      ...(input === undefined
+        ? Object.keys(headers).length ? { headers } : {}
+        : {
+            headers: { 'content-type': 'application/json', ...headers },
+            body: JSON.stringify(input),
+          }),
     })
     let body: unknown
     try {
@@ -48,12 +54,15 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
       throw new AuthClientError(response.status, undefined)
     }
     if (!response.ok) throw new AuthClientError(response.status, body)
+    const sel = (body as { selection?: unknown } | null)?.selection
+    if (typeof sel === 'string') selection = sel
     return body as AuthResponses[K]
   }
   const grantPath = (id: string) => `/grants/${segment(id)}`
   return {
     whoami: () => request<'whoami'>('/whoami'),
-    logout: () => request<'logout'>('/logout', 'POST'),
+    /** In retained-login mode, signs out of the account this client last saw (a stale one is refused with 409). */
+    logout: () => request<'logout'>('/logout', 'POST', undefined, selection ? { [SELECTION_HEADER]: selection } : {}),
     grants: {
       mint: (input: MintInput) => request<'mint'>('/grants', 'POST', input),
       list: ({ active }: GrantListInput = {}) => request<'list'>(`/grants${active ? '?active=1' : ''}`),

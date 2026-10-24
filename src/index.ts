@@ -102,3 +102,15 @@ export type {
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js'
 export { formatScopes, hasScope, parseScopes } from './core/types.js'
 export type { Auth, Grant, NewGrant, GrantPatch, Subject } from './core/types.js'
+export { RetainedLoginError, selectionConflict } from './core/retained.js'
+export type { IncomingDecision, IncomingPolicy, RetainedOptions } from './core/retained.js'
+export type {
+  AddSession,
+  RetainedBinding,
+  RetainedBrowser,
+  RetainedLimits,
+  RetainedPending,
+  RetainedSession,
+  RetainedStore,
+  SelectSession,
+} from './core/retained-store.js'

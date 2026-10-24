@@ -52,10 +52,23 @@ The D1 implementation guards every write with the expected browser, version and 
 
 **Tests:** `test/retained-gate.test.ts` drives these through the routes with a cookie jar per browser, covering acceptance criteria 2–4, 6, 7, the server half of 8, and 9.
 
+## Client Checkpoint (2026-10-24)
+
+- **`/client`:** `createAccountsClient` (list, select, remove, acceptIncoming, logout, logoutAll) sends the selection header and throws `SelectionConflictError` on a stale one. `announceSelectionChange` and `onSelectionChange` use a `BroadcastChannel` per base path. `createAuthClient` remembers the selection from its own responses and sends it on `logout`.
+- **React:** `useAccounts` (TanStack Query) re-reads both the identity and the list after any change, here or in another tab. `<AccountSwitcher>` labels share links as such and adds a remove control and sign-out of all only when there's more than one account. `WhoamiChip` sends the whoami's selection on sign-out. `AuthGate` refreshes the accounts after a key exchange.
+- **Deviation:** a header-less `POST /logout` signs out the active login. That's what every pre-retention client sends, and a sign-out can only remove access; a present but stale header is still refused.
+- **Failed active login:** the 401 sends `Clear-Site-Data: "cache"` and clears the handle cookie when no other usable login remains.
+- **Demo:** the dashboard gate is retained. The nav's Accounts menu appears once there's something to switch to, a held link gets a banner on the dashboard, `/signin` adds an account, and cleanup runs on 2% of `/api/view` requests.
+- **Tests:**
+  - `test/react/accounts.test.tsx`;
+  - `test-browser/live/accounts.spec.ts` (held link, accept, switch back via the menu, sign out of all; desktop and mobile);
+  - the existing live suite passes against retained mode.
+
 **Remaining:**
-- the client (selection header, account calls), React hooks, picker and chip composition, and BroadcastChannel notices;
-- the demo walkthrough and browser tests;
-- gate-wide pending/bootstrap rate limits (the store's per-gate quotas exist; request-rate admission is still the app's).
+- the configurable resolution policy beyond `keep` / `switch` / a function (capability-aware choices);
+- gate-wide pending/bootstrap rate limits (the store's per-gate quotas exist; request-rate admission is still the app's);
+- the demo's explicit "selectable consumer policy" example;
+- atomic email-proof completion: an email code is consumed before the login is added.
 
 ## Goal and first-class simplicity requirement
 

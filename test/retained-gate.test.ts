@@ -176,8 +176,32 @@ describe('retained logins', () => {
     expect([await t.whoami(b), await t.accounts(b)]).toEqual([[401, 'revoked'], ['ann@x.test']])
     await t.mutate(b, '/accounts/select', { id: await t.idOf(b, 'ann@x.test') })
     expect(await t.whoami(b)).toBe('ann@x.test')
+    // Delisted with nothing else usable here: the browser's handle goes too.
     t.delisted.add('ann@x.test')
-    expect([await t.whoami(b), await t.accounts(b)]).toEqual([[401, 'delisted'], []])
+    expect([await t.whoami(b), [...b.jar.keys()], (await t.call(b, 'GET', '/accounts')).status]).toEqual([[401, 'delisted'], [], 404])
+  })
+
+  it("a failed active login clears the private cache, and the browser's handle only when nothing is left to switch to", async () => {
+    const t = setup()
+    const solo = new Browser()
+    const { grant, token } = await t.mint('Only')
+    await t.call(solo, 'POST', '/exchange', { token })
+    const pair = new Browser()
+    await t.signIn(pair, 'ann@x.test')
+    const second = await t.mint('Second')
+    await t.call(pair, 'POST', '/exchange', { token: second.token })
+    await t.mutate(pair, '/accounts/incoming', { id: (await t.call(pair, 'GET', '/accounts')).body.incoming[0].id })
+    await t.gate.revoke(grant.id)
+    await t.gate.revoke(second.grant.id)
+    const probe = async (b: Browser) => {
+      const res = (await t.handle(new Request(`${HOST}/api/auth/whoami`, { headers: { cookie: b.header() } })))!
+      b.take(res)
+      return [res.status, res.headers.get('clear-site-data'), [...b.jar.keys()]]
+    }
+    expect([await probe(solo), await probe(pair)]).toEqual([
+      [401, '"cache"', []],
+      [401, '"cache"', ['oa_auth_rs']],
+    ])
   })
 
   it('an explicit Bearer token stays request-scoped beside the browser’s logins', async () => {
@@ -206,12 +230,18 @@ describe('retained logins', () => {
     const conflict = { error: 'selection_context_conflict', recoverable: true, action: 'refresh_selection' }
     expect([
       await t.mutate(b, '/accounts/remove', { id: annId }).then(r => [r.status, r.body]),
-      await t.call(b, 'POST', '/logout', {}).then(r => [r.status, r.body]),
+      await t.mutate(b, '/logout').then(r => [r.status, r.body]),
+      await t.call(b, 'POST', '/accounts/select', { id: annId }).then(r => [r.status, r.body]),
     ]).toEqual([
+      [409, conflict],
       [409, conflict],
       [409, conflict],
     ])
     expect(await t.accounts(b)).toEqual(['*ann@x.test', 'bob@y.test'])
+    // A sign-out with no header at all (a client from before retained mode)
+    // signs out whatever is active now: it can only take access away.
+    expect((await t.call(b, 'POST', '/logout', {})).status).toBe(200)
+    expect(await t.accounts(b)).toEqual(['bob@y.test'])
   })
 
   it('sign out removes only the active login and selects nothing; sign out of all clears the browser', async () => {
