@@ -60,7 +60,7 @@
       "types": "./dist/react/session-log/index.d.ts",
       "default": "./dist/react/session-log/index.js"
     },
-    "./react/session-log.css": "./src/react/session-log/session-log.css",
+    "./react/session-log.css": "./dist/react/session-log/session-log.css",
     "./vue": {
       "types": "./dist/vue/index.d.ts",
       "default": "./dist/vue/index.js"
@@ -73,7 +73,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.client.json && tsc -p tsconfig.build.react.json && tsc -p tsconfig.build.vue.json && node scripts/verify-client.mjs",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.client.json && tsc -p tsconfig.build.react.json && tsc -p tsconfig.build.vue.json && cp src/react/session-log/session-log.css dist/react/session-log/ && node scripts/verify-client.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.vue.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

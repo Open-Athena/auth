@@ -25,7 +25,7 @@ const REF = process.argv[3] ?? 'dist'
 // set — a dropped migration passes every source test (the shim discovers the
 // dir) but breaks a consumer who applies the package's `migrations/` with a
 // `no such column`. The check below asserts shipped-set === this set.
-const sourceMigrations = readdirSync(new URL('../migrations/', import.meta.url))
+const sourceMigrations = readdirSync(new URL('../migrations/', import.meta.url), { recursive: true })
   .filter(f => f.endsWith('.sql'))
   .sort()
 
@@ -58,13 +58,17 @@ import { createAuthClient, shareUrl, exchangeKeyParam, downscaleImage } from '@o
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
 import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
+import { fromGate, sessionLogRoutes, validateBatch } from '@open-athena/auth/session-log'
+import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
+import { bootSessionLog, slog } from '@open-athena/auth/session-log/client'
+import { createRequire } from 'node:module'
 import { readdirSync, readFileSync } from 'node:fs'
 
 const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/auth/package.json', import.meta.url), 'utf8'))
 // What the installed package actually carries, discovered (not listed) so a
 // dropped file is visible as a set difference against the source manifest.
 const migrationsDir = new URL('./node_modules/@open-athena/auth/migrations/', import.meta.url)
-const shippedMigrations = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()
+const shippedMigrations = readdirSync(migrationsDir, { recursive: true }).filter(f => f.endsWith('.sql')).sort()
 const expectedMigrations = ${JSON.stringify(sourceMigrations)}
 const initDdl = shippedMigrations.includes('0001_init.sql')
   ? readFileSync(new URL('0001_init.sql', migrationsDir), 'utf8')
@@ -113,6 +117,8 @@ const checks = {
   'bot filter discriminates':     isBot('Googlebot/2.1') === true && isBot(UA) === false,
   'testing stores exported':      [memoryGrantStore, memoryRequestStore, memoryAudit].every(f => typeof f === 'function'),
   'framework-free client exported': [createAuthClient, shareUrl, exchangeKeyParam, downscaleImage].every(f => typeof f === 'function'),
+  'session log entrypoints':      [fromGate, sessionLogRoutes, validateBatch, d1SessionLogStore, bootSessionLog, slog].every(f => typeof f === 'function'),
+  'session log stylesheet':       readFileSync(createRequire(import.meta.url).resolve('@open-athena/auth/react/session-log.css'), 'utf8').includes('.oa-slog'),
   'client preserves target view': shareUrl('test-token', 'https://x.test/slide/3?q=1#notes') === 'https://x.test/slide/3?q=1&key=test-token#notes',
 }
 
