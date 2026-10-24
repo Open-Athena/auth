@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.a81e9b6",
+  "version": "0.1.0-dist.2a5aebf",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -35,10 +35,27 @@
       "types": "./dist/adapters/google-directory.d.ts",
       "default": "./dist/adapters/google-directory.js"
     },
+    "./session-log": {
+      "types": "./dist/session-log/index.d.ts",
+      "default": "./dist/session-log/index.js"
+    },
+    "./session-log/d1": {
+      "types": "./dist/adapters/d1-session-log.d.ts",
+      "default": "./dist/adapters/d1-session-log.js"
+    },
+    "./session-log/client": {
+      "types": "./dist/client/session-log/index.d.ts",
+      "default": "./dist/client/session-log/index.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
+    "./react/session-log": {
+      "types": "./dist/react/session-log/index.d.ts",
+      "default": "./dist/react/session-log/index.js"
+    },
+    "./react/session-log.css": "./dist/react/session-log/session-log.css",
     "./vue": {
       "types": "./dist/vue/index.d.ts",
       "default": "./dist/vue/index.js"

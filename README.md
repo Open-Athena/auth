@@ -34,6 +34,8 @@ src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), r
 src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
 src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
+src/session-log/  optional, time-boxed user-action logging (routes; D1 store in adapters/,
+                logger in client/session-log/, admin UI in react/session-log/)
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -121,6 +123,38 @@ const options = {
 ```
 
 `useWhoami(options)` runs during component setup and returns readonly `whoami`, `loading`, and `error` refs plus `refetch()` and `signOut()`. A 401 means signed out; other failures populate `error`. Matching clients share state within a Vue app, not across apps or SSR requests. Options are setup-time configuration: remount to change them. The composable opts into key exchange through `exchange`; `AuthGate` enables it by default, before probing identity. The exchange endpoint defaults to `<basePath>/exchange`; a supplied custom client needs an explicit exchange endpoint if its base differs. Slots receive `whoami`, `loading`, `error`, `refetch`, and `signOut`. `signOut()` records errors in state and rejects, so event handlers should handle that rejection. The server must still enforce authorization.
+
+## Session Log
+
+Optional, time-boxed logging of what signed-in users do, for replaying a reported bug: page loads, URL changes, clicks on controls, requests (route, status, timing, the error body's code), errors and console errors, viewport and visibility, plus app events you declare. It's an event log, not a screen recorder: no DOM snapshots, keystrokes, headers or request bodies (a request body is kept as counts and kinds only), and input contents only from fields marked `data-log-input`. Secrets in URLs (`key`, `code`, `token`, signed S3/GCS params, and any you add) are masked before they leave the page.
+
+It's off by default. An admin turns it on for a few days (default 7, at most 31, or explicitly with no end date); a dated run turns itself off, on the server and in open tabs. Batches are idempotent per `(sid, pid, seq)`, capped at 20,000 events per page load and per session, and purged after 30 days in bounded chunks.
+
+| Subpath | What |
+|---|---|
+| `@open-athena/auth/session-log` | `sessionLogRoutes({ store, identify, requireAdmin, appEvents? })` and `fromGate(gate, { adminScope })`; the shared shapes |
+| `@open-athena/auth/session-log/d1` | `d1SessionLogStore(db)`; schema in `migrations/session-log/` |
+| `@open-athena/auth/session-log/client` | `bootSessionLog({ build })` and `slog(kind, fields)`; the logger itself is a lazily imported chunk |
+| `@open-athena/auth/react/session-log` | `SessionLogSwitch`, `SessionList`, `SessionView` (needs a `QueryClientProvider`) |
+| `@open-athena/auth/react/session-log.css` | optional styles |
+
+```ts
+// functions/api/session-log/[[path]].ts: one routes instance per isolate (it caches the switch for 60 s)
+const handle = sessionLogRoutes({
+  store: d1SessionLogStore(env.DB),
+  ...fromGate(gate, { adminScope: 'admin' }),
+  appEvents: { 'movie.queued': ['query', 'format'] },   // a declared app event and its scalar fields
+  onSwitch: ({ prior, row }) => { /* your audit trail */ },
+})
+// in the app's entry: one request per page load while off
+void bootSessionLog({ build: import.meta.env.VITE_BUILD_SHA })
+// anywhere: a declared app event (dropped while off, or if undeclared)
+slog('movie.queued', { query, format })
+```
+
+The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
+
+The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
 
 ## Minimal Demo Routes
 

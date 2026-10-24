@@ -1,0 +1,398 @@
+/**
+ * The session logger: a lazily loaded chunk, imported by `bootSessionLog`
+ * (`./index.ts`) only while the admin switch is on. `Logger` buffers and
+ * flushes (pure: clock, transport and timers are the caller's); `install` wires
+ * it to the page (URL changes, clicks on controls, opted-in input fields,
+ * pickers, fetches, errors, console errors, viewport and visibility) and
+ * returns its undo.
+ */
+import { bodySummary, BUILTIN_FIELDS, LIMITS, TRUNC } from '../../core/session-log-shape.js';
+export { bodySummary };
+export const DEFAULT_ENDPOINT = '/api/session-log';
+export const FLUSH_MS = 10_000;
+export const FILTER_DEBOUNCE_MS = 800;
+export const RESIZE_DEBOUNCE_MS = 500;
+export const tr = (s, n) => {
+    const str = typeof s === 'string' ? s : String(s);
+    return str.length > n ? `${str.slice(0, n - 1)}…` : str;
+};
+const byteLen = (s) => new TextEncoder().encode(s).length;
+export class Logger {
+    sid;
+    pid;
+    build;
+    until;
+    send;
+    appEvents;
+    now;
+    buf = [];
+    seq = 0;
+    dropped = 0;
+    total = 0;
+    timer = null;
+    stopped = false;
+    /** Called once, on stop (`install`'s undo). */
+    onStop = null;
+    /** Called before each flush (commit debounced inputs). */
+    beforeFlush = null;
+    constructor(o) {
+        this.sid = o.sid;
+        this.pid = o.pid;
+        this.build = o.build;
+        this.until = o.until;
+        this.send = o.send;
+        this.appEvents = o.appEvents ?? {};
+        this.now = o.now ?? Date.now;
+    }
+    /** Start the periodic flush. */
+    begin() {
+        if (!this.timer && !this.stopped)
+            this.timer = setInterval(() => this.flush(false), FLUSH_MS);
+    }
+    /** Record an event (now). Strings past `TRUNC.stack` are cut; nothing else is copied. */
+    log(k, f = {}) {
+        this.push({ t: this.now(), k, ...f });
+    }
+    /**
+     * Record an event with its own timestamp (the boot shim's early errors, a
+     * fetch timed from its start). An app event the server didn't declare is
+     * dropped, and a declared one keeps only its declared scalar fields.
+     */
+    push(e) {
+        if (this.stopped)
+            return;
+        if (!Object.hasOwn(BUILTIN_FIELDS, e.k)) {
+            const fields = Object.hasOwn(this.appEvents, e.k) ? this.appEvents[e.k] : null;
+            if (!fields)
+                return;
+            const kept = { t: e.t, k: e.k };
+            for (const f of fields) {
+                const v = e[f];
+                if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                    kept[f] = v;
+            }
+            e = kept;
+        }
+        if (this.now() >= this.until) {
+            this.stop();
+            return;
+        }
+        if (this.total >= LIMITS.sessionEvents) {
+            this.dropped++;
+            return;
+        }
+        for (const key in e) {
+            const v = e[key];
+            if (typeof v === 'string' && v.length > TRUNC.stack)
+                e[key] = tr(v, TRUNC.stack);
+        }
+        this.total++;
+        this.buf.push(e);
+        if (this.buf.length >= LIMITS.flushEvents)
+            this.flush(false);
+    }
+    /** Send what's buffered, split so each body stays under `LIMITS.batchBytes` (and `batchEvents`). Never awaits
+     *  the sends; a 503 (off / expired server-side) stops the logger. */
+    flush(beacon) {
+        if (this.stopped)
+            return;
+        this.beforeFlush?.();
+        if (this.dropped) {
+            this.buf.unshift({ t: this.now(), k: 'dropped', n: this.dropped });
+            this.dropped = 0;
+        }
+        if (!this.buf.length)
+            return;
+        const events = this.buf;
+        this.buf = [];
+        const head = byteLen(JSON.stringify({ sid: this.sid, pid: this.pid, seq: 999_999, build: this.build, events: [] }));
+        let chunk = [];
+        let size = head;
+        const emit = () => {
+            if (!chunk.length)
+                return;
+            const b = { sid: this.sid, pid: this.pid, seq: this.seq++, build: this.build, events: chunk };
+            void this.send(JSON.stringify(b), beacon).then(s => { if (s === 503)
+                this.stop(); }, () => { });
+            chunk = [];
+            size = head;
+        };
+        for (const e of events) {
+            const n = byteLen(JSON.stringify(e)) + 1;
+            if (chunk.length && (size + n > LIMITS.batchBytes || chunk.length >= LIMITS.batchEvents))
+                emit();
+            chunk.push(e);
+            size += n;
+        }
+        emit();
+    }
+    /** Stop for good: flush what's buffered (events from before the stop), clear the timer, undo the wiring. */
+    stop() {
+        if (this.stopped)
+            return;
+        const pending = this.buf.length > 0 || this.dropped > 0;
+        if (pending)
+            this.flush(false);
+        this.stopped = true;
+        this.buf = [];
+        if (this.timer)
+            clearInterval(this.timer);
+        this.timer = null;
+        const un = this.onStop;
+        this.onStop = null;
+        un?.();
+    }
+    /** Buffered events (tests). */
+    get buffered() { return this.buf; }
+}
+/**
+ * URL params (lowercase) whose values never leave the page: share-link keys,
+ * OAuth codes and tokens, and signed-URL credentials (S3's `X-Amz-*`, GCS's
+ * `X-Goog-*`).
+ */
+export const SECRET_PARAMS = [
+    'key', 'token', 'code', 'state', 'nonce', 'access_token', 'id_token', 'sig', 'signature', 'secret', 'password',
+    'x-amz-signature', 'x-amz-credential', 'x-amz-security-token', 'x-goog-signature', 'x-goog-credential',
+];
+/**
+ * A URL as the log keeps it: same-origin → path + query (+ hash), secrets
+ * masked; cross-origin → origin + path. `extra`: more param names to mask.
+ */
+export function redactUrl(u, origin, extra = []) {
+    let url;
+    try {
+        url = new URL(u, origin);
+    }
+    catch {
+        return tr(u.split('?')[0] ?? '', TRUNC.url);
+    }
+    if (url.origin !== origin)
+        return tr(url.origin + url.pathname, TRUNC.url);
+    const secret = (k) => SECRET_PARAMS.includes(k) || extra.includes(k);
+    for (const k of [...url.searchParams.keys()])
+        if (secret(k.toLowerCase()))
+            url.searchParams.set(k, '…');
+    // `URLSearchParams` re-encodes `…`; keep the mask readable.
+    return tr(url.pathname + url.search.replace(/%E2%80%A6/g, '…') + url.hash, TRUNC.url);
+}
+/** A control's log name and label: its `data-log` (nearest), and its `aria-label`, else text, else title. */
+export function describeControl(el) {
+    const named = el.closest('[data-log]');
+    const n = named?.getAttribute('data-log') ?? undefined;
+    const raw = el.getAttribute('aria-label') ?? (el.textContent ?? '').replace(/\s+/g, ' ').trim() ?? '';
+    const l = raw || el.getAttribute('title') || el.getAttribute('name') || el.tagName.toLowerCase();
+    return { ...(n ? { n } : {}), l: tr(l, TRUNC.label) };
+}
+const CONTROLS = '[data-log],button,a[href],[role=button],[role=menuitem],[role=menuitemradio],[role=option],[role=tab],[role=checkbox],[role=switch],summary,input[type=checkbox],input[type=radio]';
+const errMsg = (x) => {
+    if (x instanceof Error)
+        return `${x.name}: ${x.message}`;
+    if (typeof x === 'string')
+        return x;
+    try {
+        return JSON.stringify(x) ?? String(x);
+    }
+    catch {
+        return String(x);
+    }
+};
+/** Wire `logger` to the page; returns the undo (restores every patch and listener). */
+export function install(p, logger, opts = {}) {
+    const { win, doc, con } = p;
+    const { endpoint = DEFAULT_ENDPOINT } = opts;
+    const secretParams = (opts.secretParams ?? []).map(k => k.toLowerCase());
+    const origin = win.location.origin;
+    const redact = (u) => redactUrl(u, origin, secretParams);
+    const offs = [];
+    const on = (t, type, fn, capture = false) => {
+        t.addEventListener(type, fn, capture);
+        offs.push(() => t.removeEventListener(type, fn, capture));
+    };
+    const safe = (fn) => (...a) => { try {
+        fn(...a);
+    }
+    catch { /* the log never breaks the page */ } };
+    // URL state: the boot URL, then every change (router pushes, `?d=` / `f=` replaces, back / forward).
+    let lastHref = win.location.href;
+    logger.log('start', { u: redact(lastHref), ...(doc.referrer ? { ref: redact(doc.referrer) } : {}) });
+    const navCheck = safe(() => {
+        const h = win.location.href;
+        if (h === lastHref)
+            return;
+        lastHref = h;
+        logger.log('nav', { u: redact(h) });
+    });
+    const hist = win.history;
+    const push = hist.pushState, replace = hist.replaceState;
+    hist.pushState = function (...a) { push.apply(hist, a); navCheck(); };
+    hist.replaceState = function (...a) { replace.apply(hist, a); navCheck(); };
+    offs.push(() => { hist.pushState = push; hist.replaceState = replace; });
+    on(win, 'popstate', navCheck);
+    on(win, 'hashchange', navCheck);
+    // Clicks on controls (capture: a handler that stops propagation still gets logged).
+    on(doc, 'click', safe((e) => {
+        const t = e.target;
+        const el = t?.closest?.(CONTROLS);
+        if (!el)
+            return;
+        const d = describeControl(el);
+        const x = el.type === 'checkbox' || el.type === 'radio' ? { x: !!el.checked } : {};
+        logger.log('click', { ...d, ...x });
+    }), true);
+    // The path filter (only `[data-log-input]` fields), debounced; committed before any flush.
+    const pendingInput = new Map();
+    const commit = (n) => {
+        const p0 = pendingInput.get(n);
+        if (!p0)
+            return;
+        clearTimeout(p0.timer);
+        pendingInput.delete(n);
+        logger.log('filter', { n, q: tr(p0.q, TRUNC.filter) });
+    };
+    logger.beforeFlush = () => { for (const n of [...pendingInput.keys()])
+        commit(n); };
+    on(doc, 'input', safe((e) => {
+        const t = e.target;
+        const el = t?.closest?.('[data-log-input]');
+        if (!el || typeof t?.value !== 'string')
+            return;
+        const n = el.getAttribute('data-log-input') ?? 'input';
+        const prev = pendingInput.get(n);
+        if (prev)
+            clearTimeout(prev.timer);
+        pendingInput.set(n, { q: t.value, timer: setTimeout(() => commit(n), FILTER_DEBOUNCE_MS) });
+    }), true);
+    offs.push(() => { for (const v of pendingInput.values())
+        clearTimeout(v.timer); });
+    // Pickers: a <select>'s choice.
+    on(doc, 'change', safe((e) => {
+        const t = e.target;
+        if (!t || t.tagName !== 'SELECT')
+            return;
+        const n = t.closest('[data-log]')?.getAttribute('data-log') ?? t.getAttribute('aria-label') ?? t.getAttribute('name') ?? t.id ?? 'select';
+        logger.log('pick', { n: tr(n, TRUNC.label), v: tr(t.value ?? '', TRUNC.label) });
+    }), true);
+    // API requests: route, status, duration, cache / engine headers, the error body's code.
+    const origFetch = win.fetch;
+    const wrapped = (async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes(endpoint))
+            return origFetch.call(win, input, init);
+        const t = Date.now(), t0 = p.perfNow();
+        const method = (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase();
+        const base = {
+            ...(method !== 'GET' ? { m: method } : {}),
+            u: redact(url),
+            ...(method !== 'GET' && init?.body != null ? { b: bodySummary(init.body) } : {}),
+        };
+        let res;
+        try {
+            res = await origFetch.call(win, input, init);
+        }
+        catch (e) {
+            safe(() => logger.push({ t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0), err: tr(e?.name === 'AbortError' ? 'abort' : errMsg(e), TRUNC.msg) }))();
+            throw e;
+        }
+        safe(() => {
+            const ms = Math.round(p.perfNow() - t0);
+            const h = res.headers;
+            const ev = { t, k: 'api', ...base, s: res.status, ms, ...(h.get('x-cache') ? { c: h.get('x-cache') } : {}), ...(h.get('x-query-engine') ? { qe: h.get('x-query-engine') } : {}) };
+            if (res.ok) {
+                logger.push(ev);
+                return;
+            }
+            res.clone().json().then((j) => logger.push(j && typeof j.error === 'string' ? { ...ev, err: tr(j.error, TRUNC.msg) } : ev), () => logger.push(ev));
+        })();
+        return res;
+    });
+    win.fetch = wrapped;
+    offs.push(() => { if (win.fetch === wrapped)
+        win.fetch = origFetch; });
+    // Client exceptions and unhandled rejections.
+    on(win, 'error', safe((e) => {
+        const ee = e;
+        logger.log('error', {
+            msg: tr(ee.message || errMsg(ee.error), TRUNC.msg),
+            ...(ee.filename ? { src: tr(`${redact(ee.filename)}:${ee.lineno}:${ee.colno}`, TRUNC.url) } : {}),
+            ...(ee.error instanceof Error && ee.error.stack ? { st: tr(ee.error.stack, TRUNC.stack) } : {}),
+        });
+    }));
+    on(win, 'unhandledrejection', safe((e) => {
+        const r = e.reason;
+        logger.log('reject', { msg: tr(errMsg(r), TRUNC.msg), ...(r instanceof Error && r.stack ? { st: tr(r.stack, TRUNC.stack) } : {}) });
+    }));
+    // Console errors (React's own reports land here).
+    const origError = con.error;
+    let inError = false;
+    con.error = (...a) => {
+        if (!inError) {
+            inError = true;
+            try {
+                logger.log('console', { msg: tr(a.map(errMsg).join(' '), TRUNC.msg) });
+            }
+            catch { /* never breaks console.error */ }
+            inError = false;
+        }
+        origError.apply(con, a);
+    };
+    offs.push(() => { con.error = origError; });
+    // Viewport (now, and on resize, debounced) and visibility; a hidden page flushes by beacon.
+    const viewport = () => logger.log('viewport', { w: win.innerWidth, h: win.innerHeight, dpr: Math.round(win.devicePixelRatio * 100) / 100 });
+    viewport();
+    let rz = null;
+    on(win, 'resize', () => { if (rz)
+        clearTimeout(rz); rz = setTimeout(safe(viewport), RESIZE_DEBOUNCE_MS); });
+    offs.push(() => { if (rz)
+        clearTimeout(rz); });
+    on(doc, 'visibilitychange', safe(() => {
+        logger.log('vis', { s: doc.visibilityState });
+        if (doc.visibilityState === 'hidden')
+            logger.flush(true);
+    }));
+    on(win, 'pagehide', safe(() => logger.flush(true)));
+    return () => { for (const off of offs.splice(0).reverse())
+        off(); };
+}
+/** A random id for `sid` / `pid` (`[A-Za-z0-9_-]`). */
+export const newId = () => typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+const SID_KEY = 'session-log-sid';
+/** This tab's session id: kept in `sessionStorage`, so a reload continues the session. */
+export function tabSid() {
+    try {
+        const have = sessionStorage.getItem(SID_KEY);
+        if (have && /^[A-Za-z0-9_-]{6,40}$/.test(have))
+            return have;
+        const sid = newId();
+        sessionStorage.setItem(SID_KEY, sid);
+        return sid;
+    }
+    catch {
+        return newId();
+    }
+}
+/** The transport: `sendBeacon` on page hide, else a `keepalive` POST through the page's own (unwrapped) fetch. */
+export const transport = (f, nav, endpoint = DEFAULT_ENDPOINT) => (body, beacon) => {
+    // A refused beacon (the browser's queue is full) falls back to the keepalive POST.
+    if (beacon && nav.sendBeacon?.(endpoint, new Blob([body], { type: 'application/json' })))
+        return Promise.resolve(null);
+    return f(endpoint, { method: 'POST', body, keepalive: true, credentials: 'same-origin', headers: { 'content-type': 'application/json' } })
+        .then(r => r.status, () => null);
+};
+/** Start logging on this page until `until`. Returns the `slog` sink. */
+export function start(o) {
+    const origFetch = window.fetch.bind(window);
+    const logger = new Logger({
+        sid: tabSid(),
+        pid: newId(),
+        build: o.build,
+        until: o.until,
+        appEvents: o.appEvents,
+        send: transport(origFetch, navigator, o.endpoint),
+    });
+    const page = { win: window, doc: document, con: console, perfNow: () => performance.now() };
+    logger.onStop = install(page, logger, o);
+    for (const e of o.early)
+        logger.push(e);
+    logger.begin();
+    return { log: (k, f) => logger.log(k, f), logger };
+}
