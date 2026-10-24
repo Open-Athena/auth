@@ -71,9 +71,13 @@ const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute:
 function Console({ whoami }: { whoami: Whoami }) {
   const qc = useQueryClient()
   const [tokens, setTokens] = useState<Record<string, string>>({})
+  // Minting or binding with "also let this email sign in" adds an allowlist
+  // row; the panel loads its own rows, so a link change remounts it.
+  const [allowlistKey, setAllowlistKey] = useState(0)
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['grants'] })
     void qc.invalidateQueries({ queryKey: ['log'] })
+    setAllowlistKey(k => k + 1)
   }
 
   const grants = useQuery({ queryKey: ['grants'], queryFn: api.grants, refetchInterval: 5000 })
@@ -271,7 +275,7 @@ function Console({ whoami }: { whoami: Whoami }) {
         </table>
       </section>
 
-      <Allowlist />
+      <Allowlist key={allowlistKey} />
 
       {whoami.scopes.includes('requests') && <RequestQueue onChange={invalidate} />}
     </div>
@@ -535,14 +539,23 @@ function RequestQueue({ onChange }: { onChange: () => void }) {
 /**
  * Rename the link's holder or change their face after minting. The face is
  * copied server-side, as at mint; leaving the field untouched keeps the
- * current one.
+ * current one. A link minted without an email can be given one here: the
+ * holder's existing session becomes theirs, with no new link to send.
  */
 function HolderEditor({ grant, onDone, onChanged }: { grant: Grant; onDone: () => void; onChanged: () => void }) {
   const [name, setName] = useState(subjectName(grant.subject) ?? '')
   // `undefined` = keep the current face; `null` = clear it; a `data:` URI = replace.
   const [avatar, setAvatar] = useState<string | null | undefined>(undefined)
+  const [email, setEmail] = useState('')
+  const [allowlist, setAllowlist] = useState(true)
+  const bind = grant.email === null && email.trim() !== ''
   const save = useMutation({
-    mutationFn: () => api.editHolder(grant.id, { subjectName: name, ...(avatar === undefined ? {} : { avatar }) }),
+    mutationFn: () =>
+      api.editHolder(grant.id, {
+        subjectName: name,
+        ...(avatar === undefined ? {} : { avatar }),
+        ...(bind ? { email: email.trim(), allowlist } : {}),
+      }),
     onSuccess: () => {
       onChanged()
       onDone()
@@ -560,6 +573,20 @@ function HolderEditor({ grant, onDone, onChanged }: { grant: Grant; onDone: () =
         <span>Holder's name</span>
         <input type="text" value={name} onChange={e => setName(e.target.value)} autoFocus />
       </label>
+      {grant.email === null && (
+        <>
+          <label>
+            <span>Their email</span>
+            <input type="email" value={email} placeholder="optional" onChange={e => setEmail(e.target.value)} />
+          </label>
+          {bind && (
+            <label className="check">
+              <input type="checkbox" checked={allowlist} onChange={e => setAllowlist(e.target.checked)} /> Also let this
+              email sign in with Google or an emailed code
+            </label>
+          )}
+        </>
+      )}
       <div className="avatar-field">
         <span>Face</span>
         <AvatarField

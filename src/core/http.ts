@@ -18,6 +18,8 @@ export interface MintInput extends Omit<NewGrant, 'subject' | 'createdBy' | 'exp
 export interface GrantUpdateInput extends Omit<GrantPatch, 'subject'> {
   subjectName?: string | null
   avatar?: string | null
+  /** With a non-null `email`: also put that address on the allowlist, as minting with `allowlist: true` does. */
+  allowlist?: boolean
 }
 
 export interface AllowedForLink {
@@ -26,6 +28,7 @@ export interface AllowedForLink {
 }
 
 export interface MintResponse { grant: Grant; token: string; allowed?: AllowedForLink }
+export interface UpdateResponse { grant: Grant; allowed?: AllowedForLink }
 export interface GrantsResponse { grants: Grant[] }
 export interface GrantResponse { grant: Grant }
 export interface OkResponse { ok: boolean }
@@ -41,7 +44,7 @@ export interface AuthResponses {
   logout: OkResponse
   mint: MintResponse
   list: GrantsResponse
-  update: GrantResponse
+  update: UpdateResponse
   revoke: OkResponse
   disable: OkResponse
   enable: OkResponse

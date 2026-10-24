@@ -77,7 +77,7 @@ export const api = {
   disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
   enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),
   /** The holder's name and face: `avatar` is a ref copied server-side; omit it to keep the face, `null` to clear it. */
-  editHolder: (id: string, edit: { subjectName: string; avatar?: string | null }) =>
+  editHolder: (id: string, edit: { subjectName: string; avatar?: string | null; email?: string; allowlist?: boolean }) =>
     call<{ grant: Grant }>(`/api/admin/grants/${id}`, { method: 'PATCH', body: JSON.stringify(edit) }),
   rotate: (id: string) => post<{ id: string; token: string }>(`/api/admin/grants/${id}/rotate`, { endSessions: false }),
   activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),

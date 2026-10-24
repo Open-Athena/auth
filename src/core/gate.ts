@@ -827,15 +827,30 @@ export function createGate(opts: GateOptions) {
    * `sessionTtlS` is the exception worth knowing about: it is baked into the
    * cookie at redeem time, so changing it only affects future redemptions.
    *
+   * Binding an `email` (or clearing it) likewise applies to the holder's
+   * existing session on its next request: no new link, nothing re-sent.
+   *
    * The holder's name and face apply on their next request: a grant session
    * re-reads its grant every time. A new `avatar` is copied first (throwing
    * `InvalidImageError` as `mint` does), and a replaced stored asset is
    * dropped only once the new subject is written.
    */
-  async function update(id: string, edit: GrantEdit, nowMs = Date.now()): Promise<Grant | null> {
+  async function update(
+    id: string,
+    edit: GrantEdit,
+    nowMs = Date.now(),
+    /** Further keys for the audit reason, for what the caller did alongside (the route's `allowlist`). */
+    alsoLogged: string[] = [],
+  ): Promise<Grant | null> {
     const nowS = sec(nowMs)
     const { subjectName: name, avatar, ...patch }: GrantPatch & GrantEdit = edit
     let prior: Subject | null = null
+    let priorEmail: string | null = null
+    if ('email' in edit) {
+      const existing = await store.byId(id)
+      if (!existing) return null
+      priorEmail = existing.email
+    }
     if ('subjectName' in edit || 'avatar' in edit) {
       const existing = await store.byId(id)
       if (!existing) return null
@@ -856,7 +871,11 @@ export function createGate(opts: GateOptions) {
     const grant = await store.update(id, patch)
     // Logged because changing a link's terms is exactly the sort of thing the
     // ledger exists to show: "who extended this, and when".
-    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(edit).sort().join(',') || null })
+    // A rebind also names the address it replaced, so "whose link was this"
+    // stays answerable after the fact.
+    const keys = [...Object.keys(edit), ...alsoLogged].sort().join(',')
+    const rebound = priorEmail !== null && edit.email != null && edit.email !== priorEmail
+    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: (rebound ? `${keys}; was ${priorEmail}` : keys) || null })
     const priorAsset = assetId(prior?.avatar)
     if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
       await assets.del(priorAsset).catch(() => {})
@@ -1074,6 +1093,7 @@ export function createGate(opts: GateOptions) {
     denyRequest,
     decide,
     list: (o?: GrantListOpts) => store.list(o),
+    byId: (id: string) => store.byId(id),
     listRequests: (o?: RequestListOpts) => requestStore().list(o),
   }
 }

@@ -43,3 +43,11 @@ First consumer: gcs.oa.dev's admin links table (Open-Athena/disky `site/src/Admi
 ## Consumer (disky, not this repo)
 
 gcs's `HolderCell` gains an email input, shown when the link has no email, with an "also create their account" checkbox defaulting on (`allowlist: true`), mirroring the mint form. It ships after this lands in a dist that disky's `site/package.json` pins.
+
+## Implemented (2026-10-24)
+
+- `GrantPatch.email` is written by `d1GrantStore` and `memoryGrantStore`. The retained-login D1 adapter has no `update` of its own: it joins `grants` live, and retained sessions aren't wired into authentication yet, so there's no separate path to cover.
+- `PATCH <base>/grants/:id` takes `email` (trimmed and lowercased; 400 `invalid email`; null or blank clears) and `allowlist` (501 `allowlist not configured`, 400 `allowlist needs a valid email`). It refuses a revoked link with 409 `link is revoked`. Every refusal is checked before the update, and the response is `{grant, allowed?}` (`UpdateResponse`).
+- `gate.byId` is new, used for the revoked check. `gate.update` takes a 4th argument, extra audit keys, so the route's `allowlist` shows up in the `update` reason. A rebind's reason is `email; was <prior>`.
+- The demo's holder editor shows "Their email" when a link has none, with the "also let this email sign in" checkbox defaulting on. The allowlist panel remounts after any link change, so a mint or bind with `allowlist` shows its row right away. Before, it needed a reload.
+- Tests are in `test/allowlist.test.ts`, under "PATCH /grants/:id binding an email", run against both the D1 and the memory store.

@@ -409,6 +409,15 @@ table {
     gap: 0.25rem;
     font-size: 0.85rem;
   }
+  label.check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    input {
+      width: auto;
+      margin-top: 0.15rem;
+    }
+  }
   .err {
     margin: 0;
   }
