@@ -523,3 +523,6 @@ export function d1Allowlist(db) {
         },
     };
 }
+// Retained logins (a gate's opt-in `retained` mode) live in their own file;
+// re-exported here so `/d1` stays the one D1 import.
+export { d1RetainedStore } from './d1-retained.js';

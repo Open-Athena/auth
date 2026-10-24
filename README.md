@@ -124,6 +124,29 @@ const options = {
 
 `useWhoami(options)` runs during component setup and returns readonly `whoami`, `loading`, and `error` refs plus `refetch()` and `signOut()`. A 401 means signed out; other failures populate `error`. Matching clients share state within a Vue app, not across apps or SSR requests. Options are setup-time configuration: remount to change them. The composable opts into key exchange through `exchange`; `AuthGate` enables it by default, before probing identity. The exchange endpoint defaults to `<basePath>/exchange`; a supplied custom client needs an explicit exchange endpoint if its base differs. Slots receive `whoami`, `loading`, `error`, `refetch`, and `signOut`. `signOut()` records errors in state and rejects, so event handlers should handle that rejection. The server must still enforce authorization.
 
+## Several Accounts in One Browser
+
+Off by default. With `retained` on a gate, a browser keeps several logins (email sign-ins and share links) and switches between them without signing in again. Each request acts as exactly one of them, the active one; scopes are never combined.
+
+```ts
+import { d1RetainedStore } from '@open-athena/auth/d1'
+const gate = createGate({
+  ...,
+  retained: { store: d1RetainedStore(env.DB, { sessions: 8, pending: 4, gateBrowserSets: 50_000, gatePending: 10_000,
+    browserTtlS: 30 * 86400, pendingTtlS: 600, retryTtlS: 86400, defaultSessionTtlS: 7 * 86400 }) },
+})
+```
+
+It needs migrations `0003` and `0004`. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
+
+- **Signing in** (Google, an emailed code, One Tap) adds the address and selects it. The browser's other logins stay.
+- **A share link** opened while signed in is held, unspent, as an account to switch to (`incoming: 'keep'`, the default), so a member following a guest link stays the member. `'switch'` changes to it at once, or a function decides per link. With no login, a link signs in as before.
+- **Routes** (with `authRoutes`): `GET /accounts`, `POST /accounts/select|remove|incoming` and `POST /logout-all`. `POST /logout` signs out of the active account only.
+- **Stale selections:** each change carries `X-OA-Selection-Context`, the selection the page last saw, which `whoami` and `exchange` return. A stale one gets 409, so a tab still showing account A can't act as B. `gate.retained.checkMutation(req)` applies the same check to your own mutations.
+- **Older clients:** a sign-out with no header (a client from before retained mode) signs out whatever is active.
+- **Client:** `createAccountsClient` (`/client`), or React's `useAccounts` and `<AccountSwitcher>`. Tabs hear about each other's switches over a `BroadcastChannel`.
+- **Existing sessions:** a single-session cookie from before is imported on the browser's next sign-in, keeping its original expiry, so turning this on signs nobody out.
+
 ## Session Log
 
 Optional, time-boxed logging of what signed-in users do, for replaying a reported bug: page loads, URL changes, clicks on controls, requests (route, status, timing, the error body's code), errors and console errors, viewport and visibility, plus app events you declare. It's an event log, not a screen recorder: no DOM snapshots, keystrokes, headers or request bodies (a request body is kept as counts and kinds only), and input contents only from fields marked `data-log-input`. Secrets in URLs (`key`, `code`, `token`, signed S3/GCS params, and any you add) are masked before they leave the page.

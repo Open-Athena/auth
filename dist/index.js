@@ -18,3 +18,4 @@ export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, gran
 export { SELECTION_CONTEXT_HEADER, MAX_SELECTION_CONTEXT_LENGTH, serializeSelectionContext, parseSelectionContext, nextSelectionVersion, checkSelectionContext, } from './core/selection-context.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';
 export { formatScopes, hasScope, parseScopes } from './core/types.js';
+export { RetainedLoginError, selectionConflict } from './core/retained.js';

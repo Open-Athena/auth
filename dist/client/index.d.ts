@@ -10,3 +10,5 @@ export { reportUnauthenticated, subscribeUnauthenticated } from './auth-events.j
 export type { UnauthenticatedEvent } from './auth-events.js';
 export { isSessionLossReason, sessionLossMessage } from '../core/denial.js';
 export type { SessionLossReason } from '../core/denial.js';
+export { AccountsError, SELECTION_HEADER, SelectionConflictError, announceSelectionChange, createAccountsClient, onSelectionChange, } from './accounts.js';
+export type { AccountsClient, AccountsClientOptions } from './accounts.js';

@@ -10,6 +10,7 @@ export declare class AuthClientError extends Error {
 }
 export declare function createAuthClient({ basePath, fetch }?: AuthClientOptions): {
     whoami: () => Promise<import("./identity.js").Whoami>;
+    /** In retained-login mode, signs out of the account this client last saw (a stale one is refused with 409). */
     logout: () => Promise<import("../core/http.js").OkResponse>;
     grants: {
         mint: (input: MintInput) => Promise<import("../core/http.js").MintResponse>;

@@ -1,3 +1,4 @@
+import { SELECTION_HEADER } from './accounts.js';
 export class AuthClientError extends Error {
     status;
     body;
@@ -15,14 +16,18 @@ function segment(id) {
 }
 export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fetch } = {}) {
     const base = basePath.replace(/\/+$/, '');
-    async function request(path, method = 'GET', input) {
+    /** The selection context the last identity response carried (retained-login mode), sent back on sign-out. */
+    let selection = null;
+    async function request(path, method = 'GET', input, headers = {}) {
         const response = await fetch(`${base}${path}`, {
             method,
             credentials: 'same-origin',
-            ...(input === undefined ? {} : {
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(input),
-            }),
+            ...(input === undefined
+                ? Object.keys(headers).length ? { headers } : {}
+                : {
+                    headers: { 'content-type': 'application/json', ...headers },
+                    body: JSON.stringify(input),
+                }),
         });
         let body;
         try {
@@ -45,12 +50,16 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
         }
         if (!response.ok)
             throw new AuthClientError(response.status, body);
+        const sel = body?.selection;
+        if (typeof sel === 'string')
+            selection = sel;
         return body;
     }
     const grantPath = (id) => `/grants/${segment(id)}`;
     return {
         whoami: () => request('/whoami'),
-        logout: () => request('/logout', 'POST'),
+        /** In retained-login mode, signs out of the account this client last saw (a stale one is refused with 409). */
+        logout: () => request('/logout', 'POST', undefined, selection ? { [SELECTION_HEADER]: selection } : {}),
         grants: {
             mint: (input) => request('/grants', 'POST', input),
             list: ({ active } = {}) => request(`/grants${active ? '?active=1' : ''}`),

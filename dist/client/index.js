@@ -4,3 +4,4 @@ export { exchangeKeyParam, hasKeyParam } from './exchange.js';
 export { downscaleDataUri, downscaleImage } from './image.js';
 export { reportUnauthenticated, subscribeUnauthenticated } from './auth-events.js';
 export { isSessionLossReason, sessionLossMessage } from '../core/denial.js';
+export { AccountsError, SELECTION_HEADER, SelectionConflictError, announceSelectionChange, createAccountsClient, onSelectionChange, } from './accounts.js';

@@ -211,9 +211,19 @@ export function createGate(opts) {
         const failure = result ?? await authenticateResult(req, Date.now(), { logView: false });
         const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         const explicit = /^Bearer(?:\s|$)/i.test(req.headers.get('Authorization') ?? '') || new URL(req.url).searchParams.has('key');
-        if (!failure.auth && failure.credential === 'cookie' && !explicit && readCookie(req, cookieName) !== null) {
-            headers.set('set-cookie', expireCookie(req));
-            headers.set('clear-site-data', '"cache"');
+        if (!failure.auth && failure.credential === 'cookie' && !explicit) {
+            if (readCookie(req, cookieName) !== null) {
+                headers.append('set-cookie', expireCookie(req));
+                headers.set('clear-site-data', '"cache"');
+            }
+            // Retained mode: the active login failed. The private cache goes, as
+            // above; the browser's handle goes only if no other login is left to
+            // switch to. A browser signed out on purpose (reason null) keeps both.
+            if (retained && failure.reason !== null && readCookie(req, retained.handleCookie) !== null) {
+                headers.set('clear-site-data', '"cache"');
+                if (!(await retained.accounts(req, Date.now()))?.accounts.length)
+                    headers.append('set-cookie', retained.clearHandle(req));
+            }
         }
         return new Response(JSON.stringify({ error: 'unauthenticated', reason: failure.auth ? null : failure.reason }) + '\n', { status: 401, headers });
     }

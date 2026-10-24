@@ -13,3 +13,4 @@ export { deniedEmail, SignInPanel } from './SignInPanel.js';
 export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from './types.js';
 export { WHOAMI_KEY, useForgetWhoami, useWhoami } from './useWhoami.js';
 export { WhoamiChip } from './WhoamiChip.js';
+export { ACCOUNTS_KEY, AccountSwitcher, useAccounts } from './Accounts.js';

@@ -100,7 +100,12 @@ export declare function retainedMode(opts: RetainedOptions, deps: Deps): {
     remove(req: Request, sessionId: string, nowMs: number): Promise<AccountsResponse | null>;
     /** Choose a held incoming link: it becomes a login (spending a redemption only if it's new here) and the active one. */
     acceptIncoming(req: Request, pendingId: string, nowMs: number): Promise<AccountsResponse | null>;
-    /** Sign out of the active login only: it's removed from this browser, and the others stay. */
+    /**
+     * Sign out of the active login only: it's removed from this browser, and
+     * the others stay. A stale selection header is refused. No header at all
+     * is what a client from before retained mode sends; it signs out whichever
+     * login is active now, since a sign-out can only ever take access away.
+     */
     signOut(req: Request, nowMs: number): Promise<string[]>;
     /** Sign this browser out of every login it holds; the handle is cleared. Other browsers are untouched. */
     signOutAll(req: Request, nowMs: number): Promise<string[]>;

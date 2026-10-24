@@ -28,3 +28,5 @@ export { WHOAMI_KEY, useForgetWhoami, useWhoami } from './useWhoami.js';
 export type { UseWhoamiOptions, UseWhoamiResult } from './useWhoami.js';
 export { WhoamiChip } from './WhoamiChip.js';
 export type { WhoamiChipProps } from './WhoamiChip.js';
+export { ACCOUNTS_KEY, AccountSwitcher, useAccounts } from './Accounts.js';
+export type { AccountSwitcherProps, UseAccountsOptions, UseAccountsResult } from './Accounts.js';
