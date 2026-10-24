@@ -367,16 +367,50 @@ export function authRoutes(gate, opts = {}) {
                     patch.subjectName = b.subjectName ?? null;
                 if ('avatar' in b)
                     patch.avatar = b.avatar ?? null;
+                // Binding an address is the admin attesting the holder is that person,
+                // as minting with an email already is. Checked in full before the
+                // update, so a request that can't be honored changes nothing.
+                let allowEmail = null;
+                if ('email' in b) {
+                    const email = (b.email ?? '').trim().toLowerCase();
+                    if (email && !isEmailish(email))
+                        return json({ error: 'invalid email' }, 400);
+                    patch.email = email || null;
+                }
+                if (b.allowlist) {
+                    if (!allowlist)
+                        return json({ error: 'allowlist not configured' }, 501);
+                    if (!patch.email)
+                        return json({ error: 'allowlist needs a valid email' }, 400);
+                    allowEmail = patch.email;
+                }
+                if (patch.email) {
+                    const existing = await gate.byId(id);
+                    if (!existing)
+                        return json({ error: 'not found' }, 404);
+                    // Binding an address to a dead link would only make an account by
+                    // the back door; the allowlist panel is the front door.
+                    if (existing.revokedAt !== null)
+                        return json({ error: 'link is revoked' }, 409);
+                }
                 let grant;
                 try {
-                    grant = await gate.update(id, patch);
+                    grant = await gate.update(id, patch, undefined, allowEmail ? ['allowlist'] : []);
                 }
                 catch (e) {
                     if (e instanceof InvalidImageError)
                         return json({ error: 'invalid avatar', detail: e.message }, 400);
                     throw e;
                 }
-                return grant ? reply('update', { grant: present(grant) }) : json({ error: 'not found' }, 404);
+                if (!grant)
+                    return json({ error: 'not found' }, 404);
+                const allowed = allowEmail !== null && allowlist
+                    ? await allowForLink(allowlist, allowEmail, grant.scopes, {
+                        note: grant.name?.trim() ? `with link "${grant.name.trim()}"` : 'with a share link',
+                        addedBy: a.kind === 'sso' ? a.email : creatorOf(a),
+                    })
+                    : null;
+                return reply('update', { grant: present(grant), ...(allowed ? { allowed } : {}) });
             }
             if (id && seg[2] === 'activity' && method === 'GET') {
                 if (!audit)

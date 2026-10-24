@@ -14,7 +14,7 @@ export declare function createAuthClient({ basePath, fetch }?: AuthClientOptions
     grants: {
         mint: (input: MintInput) => Promise<import("../core/http.js").MintResponse>;
         list: ({ active }?: GrantListInput) => Promise<import("../core/http.js").GrantsResponse>;
-        update: (id: string, patch: GrantUpdateInput) => Promise<import("../core/http.js").GrantResponse>;
+        update: (id: string, patch: GrantUpdateInput) => Promise<import("../core/http.js").UpdateResponse>;
         revoke: (id: string) => Promise<import("../core/http.js").OkResponse>;
         disable: (id: string) => Promise<import("../core/http.js").OkResponse>;
         enable: (id: string) => Promise<import("../core/http.js").OkResponse>;

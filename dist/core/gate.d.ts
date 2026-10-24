@@ -233,7 +233,7 @@ export declare function createGate(opts: GateOptions): {
     }, nowMs?: number) => Promise<MintResult | null>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
-    update: (id: string, edit: GrantEdit, nowMs?: number) => Promise<Grant | null>;
+    update: (id: string, edit: GrantEdit, nowMs?: number, alsoLogged?: string[]) => Promise<Grant | null>;
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
     whoami: (auth: Auth) => Whoami;
     getProfile: (auth: Auth) => Promise<Profile | null>;
@@ -282,6 +282,7 @@ export declare function createGate(opts: GateOptions): {
         nowMs?: number;
     }) => Promise<DecisionView>;
     list: (o?: GrantListOpts) => Promise<Grant[]>;
+    byId: (id: string) => Promise<Grant | null>;
     listRequests: (o?: RequestListOpts) => Promise<AccessRequest[]>;
 };
 export type Gate = ReturnType<typeof createGate>;

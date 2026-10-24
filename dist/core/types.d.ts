@@ -69,6 +69,12 @@ export interface GrantPatch {
     maxRedeems?: number | null;
     sessionTtlS?: number | null;
     expiryEndsSessions?: boolean;
+    /**
+     * Binds the link to a person (or clears that with null). A grant session
+     * re-reads its grant, so the holder's existing session is email-bound on its
+     * next request; nothing is re-sent.
+     */
+    email?: string | null;
     /** Replaces the holder's subject wholesale. Stores take it as given; `gate.update` builds it (copying any avatar) from a `GrantEdit`. */
     subject?: Subject | null;
 }

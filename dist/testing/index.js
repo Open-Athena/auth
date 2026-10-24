@@ -88,6 +88,8 @@ export function memoryGrantStore() {
                 next.sessionTtlS = patch.sessionTtlS ?? null;
             if ('expiryEndsSessions' in patch)
                 next.expiryEndsSessions = patch.expiryEndsSessions ?? true;
+            if ('email' in patch)
+                next.email = patch.email ?? null;
             if ('subject' in patch)
                 next.subject = patch.subject ?? null;
             rows.set(id, next);

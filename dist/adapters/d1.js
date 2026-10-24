@@ -116,6 +116,8 @@ export function d1GrantStore(db) {
                 cols.session_ttl = patch.sessionTtlS ?? null;
             if ('expiryEndsSessions' in patch)
                 cols.expiry_ends_sessions = patch.expiryEndsSessions ? 1 : 0;
+            if ('email' in patch)
+                cols.email = patch.email ?? null;
             if ('subject' in patch)
                 cols.subject_json = patch.subject ? JSON.stringify(patch.subject) : null;
             const entries = Object.entries(cols);
