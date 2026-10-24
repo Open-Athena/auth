@@ -12,6 +12,7 @@ import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvata
 import { cleanSubject, isEmailish } from './requests.js';
 import { hashToken } from './tokens.js';
 import { hasScope } from './types.js';
+import { RetainedLoginError, selectionConflict } from './retained.js';
 /**
  * Every response here is identity-shaped — who you are, which links are yours,
  * who asked for access — so none of it may be stored by anything between the
@@ -148,23 +149,96 @@ export function authRoutes(gate, opts = {}) {
             return (id ? `${basePath}/avatar/${id}` : v);
         };
         const present = (o) => o.subject?.avatar ? { ...o, subject: { ...o.subject, avatar: served(o.subject.avatar) } } : o;
+        const presentAccounts = (a) => ({
+            ...a,
+            accounts: a.accounts.map(present),
+            incoming: a.incoming.map(present),
+        });
         // ---- public -------------------------------------------------------------
         if (rest === '/whoami' && method === 'GET') {
-            if (auth)
-                return reply('whoami', present(gate.whoami(auth)));
-            return gate.unauthenticated(req, result);
+            if (!auth)
+                return gate.unauthenticated(req, result);
+            const selection = result.credential === 'cookie' ? await gate.retained?.selection(req, Date.now()) : null;
+            return reply('whoami', { ...present(gate.whoami(auth)), ...(selection ? { selection } : {}) });
         }
         if (rest === '/exchange' && method === 'POST') {
             const { token } = await body(req);
             if (!token)
                 return json({ error: 'token required' }, 400);
-            const res = await gate.redeem(token, req);
+            let res;
+            try {
+                res = await gate.redeem(token, req);
+            }
+            catch (e) {
+                if (e instanceof RetainedLoginError)
+                    return json({ error: e.code }, 409);
+                throw e;
+            }
             if (!res.ok)
                 return json({ error: 'invalid link', reason: res.reason }, 401);
-            return json(present(gate.whoami(res.auth)), 200, { 'set-cookie': res.cookie });
+            // Retained mode, with another login active: the link is held as an
+            // account to switch to (`incoming`), and the response says who stayed.
+            const out = json({
+                ...present(gate.whoami(res.auth)),
+                ...(res.selection ? { selection: res.selection } : {}),
+                ...(res.incoming ? { incoming: res.incoming } : {}),
+            }, 200);
+            for (const c of res.cookies)
+                out.headers.append('set-cookie', c);
+            return out;
         }
         if (rest === '/logout' && method === 'POST') {
-            return reply('logout', { ok: true }, { 'set-cookie': await gate.signOut(req, auth) });
+            let cookies;
+            try {
+                cookies = await gate.signOutCookies(req, auth);
+            }
+            catch (e) {
+                if (e instanceof RetainedLoginError)
+                    return selectionConflict();
+                throw e;
+            }
+            const out = reply('logout', { ok: true });
+            for (const c of cookies)
+                out.headers.append('set-cookie', c);
+            return out;
+        }
+        // Retained logins (a gate with `retained`): the browser's accounts, and
+        // switching, removing and accepting an incoming link. Each mutation takes
+        // the `X-OA-Selection-Context` the client last saw, and answers a stale
+        // one with 409 rather than acting as whoever is selected now.
+        if (gate.retained && (rest === '/accounts' || rest.startsWith('/accounts/') || rest === '/logout-all')) {
+            const r = gate.retained;
+            try {
+                if (rest === '/logout-all' && method === 'POST') {
+                    const out = reply('logout', { ok: true });
+                    for (const c of await r.signOutAll(req, Date.now()))
+                        out.headers.append('set-cookie', c);
+                    return out;
+                }
+                if (rest === '/accounts' && method === 'GET') {
+                    const a = await r.accounts(req, Date.now());
+                    return a ? reply('accounts', presentAccounts(a)) : json({ error: 'no accounts in this browser' }, 404);
+                }
+                const m = /^\/accounts\/(select|remove|incoming)$/.exec(rest);
+                if (m && method === 'POST') {
+                    const b = await body(req);
+                    const id = typeof b.id === 'string' && b.id ? b.id : null;
+                    if (m[1] !== 'select' && !id)
+                        return json({ error: 'id required' }, 400);
+                    const a = m[1] === 'select'
+                        ? await r.select(req, id, Date.now())
+                        : m[1] === 'remove'
+                            ? await r.remove(req, id, Date.now())
+                            : await r.acceptIncoming(req, id, Date.now());
+                    return a ? reply('accounts', presentAccounts(a)) : json({ error: 'no such account in this browser' }, 404);
+                }
+            }
+            catch (e) {
+                if (e instanceof RetainedLoginError) {
+                    return e.code === 'selection_context_conflict' ? selectionConflict() : json({ error: e.code }, 409);
+                }
+                throw e;
+            }
         }
         /**
          * First-party beacon for client-only signals — SPA route changes above all,

@@ -18,6 +18,7 @@ import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
 import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from './store.js';
 import { type DecisionLinkOptions, type DecisionView } from './decisions.js';
 import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js';
+import { type RetainedOptions } from './retained.js';
 export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
@@ -100,6 +101,13 @@ export interface GateOptions {
     avatarFetchTimeoutMs?: number;
     /** Injectable fetch for server-side avatar copying. Default global. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * Opt in to retained logins: a browser keeps several logins (email sign-ins
+     * and share links) and switches between them; requests act as the active
+     * one. Off by default: without it nothing here reads or writes the
+     * `retained_*` tables (migrations 0003 and 0004). See `RetainedOptions`.
+     */
+    retained?: RetainedOptions;
 }
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
 export interface AuthenticationResult {
@@ -127,8 +135,15 @@ export type RequestAccessResult =
 export type RedeemResult = {
     ok: true;
     grant: Grant;
+    /** Who the browser is now: the link's holder, or (retained mode, link held for later) the login that stayed active. */
     auth: Auth;
     cookie: string;
+    /** Every `Set-Cookie` to send (retained mode may also clear a single-session cookie). */
+    cookies: string[];
+    /** Retained mode: the link was held as an account to switch to (`AccountsResponse.incoming`), not signed into. */
+    incoming?: string;
+    /** Retained mode: the browser's selection context after this exchange. */
+    selection?: string;
 } | {
     ok: false;
     reason: RedeemFailure;
@@ -222,10 +237,47 @@ export declare function createGate(opts: GateOptions): {
     signIn: (email: string, req: Request, nowMs?: number) => Promise<{
         auth: Auth;
         cookie: string;
+        cookies: string[];
     } | null>;
     admits: (email: string) => Promise<string[] | null>;
     signOut: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string>;
+    signOutCookies: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string[]>;
     expireCookie: (req: Request) => string;
+    /** Retained-login operations (accounts, switching, sign-out-all, `checkMutation`), or null when off. */
+    retained: {
+        handleCookie: string;
+        clearHandle: (req: Request) => string;
+        authenticate(req: Request, nowMs: number, logView: boolean): Promise<"absent" | {
+            auth: Auth | null;
+            reason: SessionLossReason | null;
+        }>;
+        selection(req: Request, nowMs: number): Promise<string | null>;
+        signIn(req: Request, email: string, nowMs: number): Promise<string[]>;
+        incoming(req: Request, grant: Grant, tokenHash: string, nowMs: number): Promise<{
+            ok: true;
+            switched: true;
+            minted: boolean;
+            cookies: string[];
+            selection: string;
+        } | {
+            ok: true;
+            switched: false;
+            active: Auth;
+            pendingId: string | null;
+            cookies: string[];
+            selection: string;
+        } | {
+            ok: false;
+            cookies: string[];
+        }>;
+        accounts(req: Request, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        select(req: Request, sessionId: string | null, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        remove(req: Request, sessionId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        acceptIncoming(req: Request, pendingId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        signOut(req: Request, nowMs: number): Promise<string[]>;
+        signOutAll(req: Request, nowMs: number): Promise<string[]>;
+        checkMutation(req: Request, nowMs: number): Promise<Response | null>;
+    } | null;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
     rotate: (id: string, { endSessions }?: {

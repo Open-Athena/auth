@@ -12,6 +12,8 @@ export interface SsoWhoami {
     scopes: string[];
     /** The principal's self-set profile, or null (initials). Carried so `<Avatar>`/`displayName` render staff faces without a render-side change. */
     subject: Subject | null;
+    /** Retained-login mode only: the browser's selection context, sent back as `X-OA-Selection-Context` on mutations. */
+    selection?: string;
 }
 export interface GrantWhoami {
     kind: 'grant';
@@ -23,6 +25,8 @@ export interface GrantWhoami {
     scopes: string[];
     admin: false;
     expiresAt: number | null;
+    /** Retained-login mode only: see `SsoWhoami.selection`. */
+    selection?: string;
 }
 /** What a gate's `/whoami` returns: an email session, or a share-link session. */
 export type Whoami = SsoWhoami | GrantWhoami;

@@ -18,6 +18,7 @@ import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, gran
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
 import { ALL_SCOPES } from './types.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
+import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
 const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
 const sec = (nowMs) => Math.floor(nowMs / 1000);
@@ -83,6 +84,15 @@ export function createGate(opts) {
         return Object.keys(subject).length ? subject : null;
     }
     const notify = opts.notify ?? noopNotify;
+    const retained = opts.retained
+        ? retainedMode(opts.retained, {
+            secret,
+            gateCookie: cookieName,
+            sessionTtlS,
+            resolve: (req, claims, nowS, o) => resolveClaims(req, claims, nowS, o),
+            grantById: id => store.byId(id),
+        })
+        : null;
     const log = (event) => audit.log(event);
     async function logWithRequest(req, event, nowS) {
         const meta = await requestMeta(req, secret);
@@ -134,6 +144,13 @@ export function createGate(opts) {
             await store.touch(grant.id, nowS, touchIntervalS);
             return await afterAuth(grantAuth(grant));
         }
+        if (retained) {
+            const r = await retained.authenticate(req, nowMs, shouldLogView);
+            if (r !== 'absent') {
+                credential = 'cookie';
+                return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+            }
+        }
         const cookie = readCookie(req, cookieName);
         if (cookie === null)
             return failed(null);
@@ -141,26 +158,33 @@ export function createGate(opts) {
         const inspected = await inspectSessionClaims(cookie, secret, nowMs);
         if (!inspected.ok)
             return failed(inspected.reason);
-        const claims = inspected.claims;
+        const r = await resolveClaims(req, inspected.claims, nowS, { quiet: false });
+        return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+    }
+    /**
+     * A session's principal → its live identity, or why it has none. Shared by
+     * the single-session cookie and a retained login: an email re-derives its
+     * scopes from the policy, and a grant is re-joined every time, which is what
+     * makes revocation instant. `quiet` (listing a browser's logins) neither logs
+     * a deny nor touches the grant.
+     */
+    async function resolveClaims(req, claims, nowS, { quiet }) {
         const sub = claims.sub;
         const parsed = parseSub(sub);
         if (!parsed || !parsed.value)
-            return failed('invalid');
+            return { auth: null, reason: 'invalid' };
         if (parsed.kind === 'email') {
             const scopes = await policy(parsed.value);
             if (!scopes) {
-                await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS);
-                return failed('delisted');
+                if (!quiet)
+                    await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS);
+                return { auth: null, reason: 'delisted' };
             }
-            return await afterAuth({
-                kind: 'sso',
-                email: parsed.value,
-                admin: isAdmin(parsed.value),
-                scopes,
-                subject: await subjectFor(parsed.value),
-            });
+            return {
+                auth: { kind: 'sso', email: parsed.value, admin: isAdmin(parsed.value), scopes, subject: await subjectFor(parsed.value) },
+                reason: null,
+            };
         }
-        // Re-join the grant every request: this is what makes revocation instant.
         // `sessionValid`, not `canRedeem` — a disabled link keeps its existing
         // sessions alive, and an expired one only ends them if it was minted to.
         const grant = await store.byId(parsed.value);
@@ -170,16 +194,13 @@ export function createGate(opts) {
         const rotatedOut = grant !== null && grant.sessionsInvalidBefore !== null && claims.iat < grant.sessionsInvalidBefore;
         if (!grant || !sessionValid(grant, nowS) || rotatedOut) {
             const reason = !grant ? 'invalid' : grant.revokedAt !== null ? 'revoked' : rotatedOut ? 'rotated' : 'expired';
-            await logWithRequest(req, {
-                event: 'deny',
-                grantId: parsed.value,
-                sessionSub: sub,
-                reason,
-            }, nowS);
-            return failed(reason);
+            if (!quiet)
+                await logWithRequest(req, { event: 'deny', grantId: parsed.value, sessionSub: sub, reason }, nowS);
+            return { auth: null, reason };
         }
-        await store.touch(grant.id, nowS, touchIntervalS);
-        return await afterAuth(grantAuth(grant));
+        if (!quiet)
+            await store.touch(grant.id, nowS, touchIntervalS);
+        return { auth: grantAuth(grant), reason: null };
     }
     /** Existing callers keep their `Auth | null` contract. */
     async function authenticate(req, nowMs = Date.now(), options = {}) {
@@ -214,10 +235,42 @@ export function createGate(opts) {
     /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
     async function redeem(token, req, nowMs = Date.now()) {
         const nowS = sec(nowMs);
-        const existing = await store.byTokenHash(await hashToken(token));
+        const tokenHash = await hashToken(token);
+        const existing = await store.byTokenHash(tokenHash);
         if (!existing) {
             await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
             return { ok: false, reason: 'bad-token' };
+        }
+        if (retained) {
+            // A link this browser can't redeem leaves its logins as they are: a bad
+            // link never signs a member out.
+            if (!canRedeem(existing, nowS)) {
+                const reason = denyReason(existing);
+                await logWithRequest(req, { event: 'deny', grantId: existing.id, reason }, nowS);
+                return { ok: false, reason };
+            }
+            const r = await retained.incoming(req, existing, tokenHash, nowMs);
+            if (!r.ok) {
+                const now = await store.byId(existing.id);
+                const reason = now && canRedeem(now, nowS) ? 'exhausted' : now ? denyReason(now) : 'bad-token';
+                await logWithRequest(req, { event: 'deny', grantId: existing.id, reason }, nowS);
+                return { ok: false, reason };
+            }
+            if (!r.switched) {
+                return {
+                    ok: true,
+                    grant: existing,
+                    auth: r.active,
+                    cookie: r.cookies[0],
+                    cookies: r.cookies,
+                    selection: r.selection,
+                    ...(r.pendingId ? { incoming: r.pendingId } : {}),
+                };
+            }
+            const grant = (await store.byId(existing.id)) ?? existing;
+            if (r.minted)
+                await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS);
+            return { ok: true, grant, auth: grantAuth(grant), cookie: r.cookies[0], cookies: r.cookies, selection: r.selection };
         }
         const grant = await store.redeem(existing.id, nowS);
         if (!grant) {
@@ -231,7 +284,7 @@ export function createGate(opts) {
         const ttlS = grant.sessionTtlS ?? sessionTtlS;
         const cookie = cookieFor(req, await signSession(grantSub(grant.id), secret, nowMs, ttlS), ttlS);
         await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS);
-        return { ok: true, grant, auth: grantAuth(grant), cookie };
+        return { ok: true, grant, auth: grantAuth(grant), cookie, cookies: [cookie] };
     }
     /**
      * Would this address be admitted, and with what scopes? A pure policy check —
@@ -249,13 +302,27 @@ export function createGate(opts) {
             await logWithRequest(req, { event: 'deny', sessionSub: emailSub(email), reason: 'not-allowed' }, nowS);
             return null;
         }
-        const cookie = cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS);
+        // Retained mode adds the login to this browser and selects it, keeping its others.
+        const cookies = retained
+            ? await retained.signIn(req, email, nowMs)
+            : [cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)];
         await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS);
-        return { auth: { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) }, cookie };
+        const auth = { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) };
+        return { auth, cookie: cookies[0], cookies };
     }
     async function signOut(req, auth = null, nowMs = Date.now()) {
+        return (await signOutCookies(req, auth, nowMs))[0] ?? clearCookie({ name: cookieName, secure: isSecureRequest(req) });
+    }
+    /**
+     * Sign out, as every `Set-Cookie` to send. Retained mode removes only the
+     * active login from this browser (its others stay, and nothing else is
+     * selected in its place), and needs the request's `X-OA-Selection-Context`:
+     * a stale one throws `RetainedLoginError`.
+     */
+    async function signOutCookies(req, auth = null, nowMs = Date.now()) {
+        const cookies = retained ? await retained.signOut(req, nowMs) : [clearCookie({ name: cookieName, secure: isSecureRequest(req) })];
         await logWithRequest(req, { event: 'signout', sessionSub: auth?.kind === 'sso' ? emailSub(auth.email) : auth ? grantSub(auth.grant.id) : null }, sec(nowMs));
-        return clearCookie({ name: cookieName, secure: isSecureRequest(req) });
+        return cookies;
     }
     /**
      * The `Set-Cookie` that drops this gate's session cookie, with no sign-out
@@ -787,7 +854,10 @@ export function createGate(opts) {
         signIn,
         admits,
         signOut,
+        signOutCookies,
         expireCookie,
+        /** Retained-login operations (accounts, switching, sign-out-all, `checkMutation`), or null when off. */
+        retained,
         mint,
         revoke,
         rotate,

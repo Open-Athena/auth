@@ -18,6 +18,7 @@
  *   as the attacker.
  */
 import { b64uEncode } from '../core/base64.js';
+import { RetainedLoginError } from '../core/retained.js';
 import { verifyRs256Jwt } from '../core/jwt.js';
 import { clearCookie, isSecureRequest, readCookie, sessionCookie, signSession, verifySession } from '../core/session.js';
 import { generateToken } from '../core/tokens.js';
@@ -219,7 +220,22 @@ export function oidcCallback(opts) {
         // someone else's address on an account they haven't proved they own.
         if (claims.email_verified !== true || typeof claims.email !== 'string')
             return deny('no verified email');
-        const signedIn = await gate.signIn(claims.email, request);
+        // A browser already holding as many logins as its gate retains can't take
+        // another: back to the app, which can offer to remove one.
+        const full = (e) => {
+            if (!(e instanceof RetainedLoginError))
+                throw e;
+            const headers = new Headers({ location: `/?accounts=${e.code}`, 'cache-control': 'no-store' });
+            headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
+            return new Response(null, { status: 302, headers });
+        };
+        let signedIn;
+        try {
+            signedIn = await gate.signIn(claims.email, request);
+        }
+        catch (e) {
+            return full(e);
+        }
         // Authentication succeeded and authorization did not: the person is who
         // they say they are and still isn't allowed in. That distinction is what
         // lets an app pre-fill a request-access form with a *verified* address.
@@ -236,7 +252,8 @@ export function oidcCallback(opts) {
         if (seedProfile)
             await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         const headers = new Headers({ location: next, 'cache-control': 'no-store' });
-        headers.append('set-cookie', signedIn.cookie);
+        for (const c of signedIn.cookies)
+            headers.append('set-cookie', c);
         headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
         writeAccountHints(headers, request, hintCookie, claims.email);
         return new Response(null, { status: 302, headers });
@@ -324,7 +341,18 @@ export function googleOneTapVerify(opts) {
         }
         if (claims.email_verified !== true || typeof claims.email !== 'string')
             return deny('no verified email');
-        const signedIn = await gate.signIn(claims.email, request);
+        let signedIn;
+        try {
+            signedIn = await gate.signIn(claims.email, request);
+        }
+        catch (e) {
+            if (!(e instanceof RetainedLoginError))
+                throw e;
+            return new Response(JSON.stringify({ ok: false, error: e.code }) + '\n', {
+                status: 409,
+                headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+            });
+        }
         if (!signedIn) {
             const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
             writeAccountHints(headers, request, hintCookie, claims.email, true);
@@ -335,7 +363,8 @@ export function googleOneTapVerify(opts) {
         if (seedProfile)
             await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        headers.append('set-cookie', signedIn.cookie);
+        for (const c of signedIn.cookies)
+            headers.append('set-cookie', c);
         writeAccountHints(headers, request, hintCookie, claims.email);
         return new Response(JSON.stringify({ ok: true }) + '\n', { status: 200, headers });
     };
