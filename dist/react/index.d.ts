@@ -1,4 +1,6 @@
 export { AllowlistPanel } from './AllowlistPanel.js';
+export { reportUnauthenticated } from '../client/auth-events.js';
+export type { SessionLossReason } from '../core/denial.js';
 export type { AllowedEntry, AllowlistPanelProps } from './AllowlistPanel.js';
 export { AuthGate } from './AuthGate.js';
 export type { AuthGateProps } from './AuthGate.js';

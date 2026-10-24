@@ -1,5 +1,7 @@
 import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
-import { useState } from 'react';
+import { useContext, useState } from 'react';
+import { sessionLossMessage } from '../core/denial.js';
+import { SessionLossContext } from './sessionLoss.js';
 import { EmailCodeForm } from './EmailCodeForm.js';
 import { GoogleOneTap } from './GoogleOneTap.js';
 import { RequestAccessForm } from './RequestAccessForm.js';
@@ -35,7 +37,10 @@ export function deniedEmail() {
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, continueAs = defaultContinueAs, switchAccount = defaultSwitchAccount, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, requestAccess, children, classNames = {}, }) {
+export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', oneTap, continueAs = defaultContinueAs, switchAccount = defaultSwitchAccount, withNext = true, emailAuth, onSignedIn, title = 'This page is private', hint, requestAccess, children, classNames = {}, reason: reasonProp, reasonMessage = sessionLossMessage, }) {
+    const contextReason = useContext(SessionLossContext);
+    const reason = reasonProp === undefined ? contextReason : reasonProp;
+    const message = reason && (typeof reasonMessage === 'function' ? reasonMessage(reason) : reasonMessage);
     const google = googleUrl && withNext ? withNextParam(googleUrl) : googleUrl;
     const denied = deniedEmail();
     const [accounts, setAccounts] = useState([]);
@@ -52,7 +57,7 @@ export function SignInPanel({ googleUrl, googleLabel = 'Continue with Google', o
         ...(denied ? { defaultEmail: denied } : {}),
         ...(requestAccess === true ? {} : requestAccess),
     };
-    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), hinted && accounts.map(email => (_jsx("a", { className: classNames.googleButton ?? classNames.button, href: accounts.length > 1 ? withAccount(google, email) : google, children: continueAs && continueAs(email) }, email))), oneTap ? (
+    return (_jsxs("div", { className: classNames.root, children: [title && _jsx("h1", { className: classNames.title, children: title }), hint && _jsx("p", { className: classNames.hint, children: hint }), message && _jsx("p", { role: "status", className: classNames.reason, children: message }), hinted && accounts.map(email => (_jsx("a", { className: classNames.googleButton ?? classNames.button, href: accounts.length > 1 ? withAccount(google, email) : google, children: continueAs && continueAs(email) }, email))), oneTap ? (
             // `contents` keeps the wrapper out of the panel's layout.
             _jsx("div", { style: { display: hinted ? 'none' : 'contents' }, children: _jsx(GoogleOneTap, { ...oneTap, ...(onSignedIn ? { onSignedIn } : {}), onAccountHint: email => {
                         oneTap.onAccountHint?.(email);

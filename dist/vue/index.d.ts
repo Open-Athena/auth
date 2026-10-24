@@ -1,4 +1,7 @@
 export { AuthGate } from './AuthGate.js';
+export { reportUnauthenticated } from '../client/auth-events.js';
+export { isSessionLossReason, sessionLossMessage } from '../core/denial.js';
+export type { SessionLossReason } from '../core/denial.js';
 export type { AuthGateSlotContext, AuthGateSlots } from './AuthGate.js';
 export { useWhoami } from './useWhoami.js';
 export type { UseWhoamiOptions, UseWhoamiResult } from './useWhoami.js';

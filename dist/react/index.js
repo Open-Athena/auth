@@ -1,4 +1,5 @@
 export { AllowlistPanel } from './AllowlistPanel.js';
+export { reportUnauthenticated } from '../client/auth-events.js';
 export { AuthGate } from './AuthGate.js';
 export { Avatar, initialsOf } from './Avatar.js';
 export { AvatarField, downscaleImage } from './AvatarField.js';

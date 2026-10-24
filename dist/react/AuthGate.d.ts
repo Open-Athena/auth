@@ -1,13 +1,16 @@
 import type { ReactNode } from 'react';
+import type { SessionLossReason } from '../core/denial.js';
 import { type ExchangeOptions } from './exchange.js';
-import type { Whoami, WhoamiSource } from './types.js';
+import { type Whoami, type WhoamiSource } from './types.js';
 export interface AuthGateProps<T extends Whoami = Whoami> {
     /** Where the gate's `/whoami` is mounted. Default `/api/auth/whoami`. */
     source?: WhoamiSource;
     /** Rendered once an identity resolves. */
     children: ReactNode | ((whoami: T, refresh: () => void) => ReactNode);
     /** Rendered when nobody is signed in. */
-    signIn: ReactNode | ((refresh: () => void) => ReactNode);
+    signIn: ReactNode | ((refresh: () => void, reason: SessionLossReason | null) => ReactNode);
+    /** Periodic whoami revalidation in seconds. Off by default. */
+    revalidateS?: number;
     /**
      * Rendered while probing. Default: nothing — the probe is one cached request,
      * and a spinner that flashes for 80ms reads worse than a blank moment.
@@ -22,4 +25,4 @@ export interface AuthGateProps<T extends Whoami = Whoami> {
     devIdentity?: T | null;
 }
 /** Probe identity, then render the app or the wall. */
-export declare function AuthGate<T extends Whoami = Whoami>({ source, children, signIn, loading, exchange, devIdentity, }: AuthGateProps<T>): import("react").JSX.Element;
+export declare function AuthGate<T extends Whoami = Whoami>({ source, children, signIn, loading, exchange, devIdentity, revalidateS, }: AuthGateProps<T>): import("react").JSX.Element;

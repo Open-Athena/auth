@@ -1,10 +1,12 @@
 import type { PropType, SlotsType, VNodeChild } from 'vue';
 import type { Whoami } from '../client/identity.js';
+import type { SessionLossReason } from '../core/denial.js';
 import type { UseWhoamiOptions } from './useWhoami.js';
 export interface AuthGateSlotContext {
     whoami: Whoami | null | undefined;
     loading: boolean;
     error: Error | null;
+    reason: SessionLossReason | null;
     refetch: () => Promise<void>;
     signOut: () => Promise<void>;
 }

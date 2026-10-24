@@ -11,6 +11,7 @@ import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
 import { type AvatarRef, type AvatarRefKind } from './avatar.js';
 import type { Whoami } from './http.js';
+import type { SessionLossReason } from './denial.js';
 import { type Profile } from './profile.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
@@ -101,6 +102,11 @@ export interface GateOptions {
     fetch?: typeof globalThis.fetch;
 }
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
+export interface AuthenticationResult {
+    auth: Auth | null;
+    reason: SessionLossReason | null;
+    credential: 'cookie' | 'token' | 'none';
+}
 export type RequestAccessResult = 
 /** Policy matched: a grant was minted and handed to `notify` immediately. */
 {
@@ -205,9 +211,13 @@ export declare function sessionValid(grant: Grant, nowS: number): boolean;
  */
 export declare const isActive: typeof canRedeem;
 export declare function createGate(opts: GateOptions): {
-    authenticate: (req: Request, nowMs?: number, { logView: shouldLogView }?: {
+    authenticate: (req: Request, nowMs?: number, options?: {
         logView?: boolean;
     }) => Promise<Auth | null>;
+    authenticateResult: (req: Request, nowMs?: number, { logView: shouldLogView }?: {
+        logView?: boolean;
+    }) => Promise<AuthenticationResult>;
+    unauthenticated: (req: Request, result?: AuthenticationResult) => Promise<Response>;
     redeem: (token: string, req: Request, nowMs?: number) => Promise<RedeemResult>;
     signIn: (email: string, req: Request, nowMs?: number) => Promise<{
         auth: Auth;

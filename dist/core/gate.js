@@ -14,12 +14,12 @@ import { looksAutomated } from './bots.js';
 import { cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
-import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySessionClaims, } from './session.js';
+import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
 import { ALL_SCOPES } from './types.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
-const denyReason = (grant) => grant.revokedAt ? 'revoked' : grant.disabledAt ? 'disabled' : 'expired';
+const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
 const sec = (nowMs) => Math.floor(nowMs / 1000);
 /**
  * Wrap a fetch so each call aborts after `ms`. Used only on the profile-seed
@@ -97,7 +97,7 @@ export function createGate(opts) {
      * exchange; they are request-scoped and never count as a redemption, since a
      * redemption means "a browser session was minted".
      */
-    async function authenticate(req, nowMs = Date.now(), 
+    async function authenticateResult(req, nowMs = Date.now(), 
     /**
      * `logView: false` suppresses the automatic view row for this call. The
      * auth endpoints themselves use it: `/whoami` and `/track` are plumbing,
@@ -106,44 +106,51 @@ export function createGate(opts) {
      */
     { logView: shouldLogView = true } = {}) {
         const nowS = sec(nowMs);
+        let credential = 'none';
+        const failed = (reason) => ({ auth: null, reason, credential });
         const afterAuth = async (auth) => {
             if (logViews && shouldLogView)
                 await logView(req, auth, nowS);
-            return auth;
+            return { auth, reason: null, credential };
         };
         const url = new URL(req.url);
-        const presented = req.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1] ?? url.searchParams.get('key');
-        if (presented) {
+        const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
+        const tokenPresented = !!bearer || url.searchParams.has('key');
+        const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '');
+        if (tokenPresented) {
+            credential = 'token';
             const grant = await store.byTokenHash(await hashToken(presented));
             if (!grant) {
                 await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
-                return null;
+                return failed('invalid');
             }
             // A presented token is the *link* being used, not a session being
             // resumed, so disabling blocks it: "stop letting new people in" has to
             // include the person still pasting the raw link into curl.
             if (!canRedeem(grant, nowS)) {
                 await logWithRequest(req, { event: 'deny', grantId: grant.id, reason: denyReason(grant) }, nowS);
-                return null;
+                return failed(grant.revokedAt !== null ? 'revoked' : isExpired(grant, nowS) ? 'expired' : 'invalid');
             }
             await store.touch(grant.id, nowS, touchIntervalS);
             return await afterAuth(grantAuth(grant));
         }
         const cookie = readCookie(req, cookieName);
-        if (!cookie)
-            return null;
-        const claims = await verifySessionClaims(cookie, secret, nowMs);
-        if (!claims)
-            return null;
+        if (cookie === null)
+            return failed(null);
+        credential = 'cookie';
+        const inspected = await inspectSessionClaims(cookie, secret, nowMs);
+        if (!inspected.ok)
+            return failed(inspected.reason);
+        const claims = inspected.claims;
         const sub = claims.sub;
         const parsed = parseSub(sub);
-        if (!parsed)
-            return null;
+        if (!parsed || !parsed.value)
+            return failed('invalid');
         if (parsed.kind === 'email') {
             const scopes = await policy(parsed.value);
             if (!scopes) {
                 await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS);
-                return null;
+                return failed('delisted');
             }
             return await afterAuth({
                 kind: 'sso',
@@ -162,16 +169,32 @@ export function createGate(opts) {
         // same "re-join every request" hook that makes revoke instant.
         const rotatedOut = grant !== null && grant.sessionsInvalidBefore !== null && claims.iat < grant.sessionsInvalidBefore;
         if (!grant || !sessionValid(grant, nowS) || rotatedOut) {
+            const reason = !grant ? 'invalid' : grant.revokedAt !== null ? 'revoked' : rotatedOut ? 'rotated' : 'expired';
             await logWithRequest(req, {
                 event: 'deny',
                 grantId: parsed.value,
                 sessionSub: sub,
-                reason: !grant ? 'expired' : rotatedOut ? 'rotated' : denyReason(grant),
+                reason,
             }, nowS);
-            return null;
+            return failed(reason);
         }
         await store.touch(grant.id, nowS, touchIntervalS);
         return await afterAuth(grantAuth(grant));
+    }
+    /** Existing callers keep their `Auth | null` contract. */
+    async function authenticate(req, nowMs = Date.now(), options = {}) {
+        return (await authenticateResult(req, nowMs, options)).auth;
+    }
+    /** Shared 401 for gated data routes as well as `/whoami`. */
+    async function unauthenticated(req, result) {
+        const failure = result ?? await authenticateResult(req, Date.now(), { logView: false });
+        const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        const explicit = /^Bearer(?:\s|$)/i.test(req.headers.get('Authorization') ?? '') || new URL(req.url).searchParams.has('key');
+        if (!failure.auth && failure.credential === 'cookie' && !explicit && readCookie(req, cookieName) !== null) {
+            headers.set('set-cookie', expireCookie(req));
+            headers.set('clear-site-data', '"cache"');
+        }
+        return new Response(JSON.stringify({ error: 'unauthenticated', reason: failure.auth ? null : failure.reason }) + '\n', { status: 401, headers });
     }
     async function logView(req, auth, nowS = sec(Date.now()), path) {
         if (filterBots && looksAutomated(req))
@@ -742,6 +765,8 @@ export function createGate(opts) {
     }
     return {
         authenticate,
+        authenticateResult,
+        unauthenticated,
         redeem,
         signIn,
         admits,

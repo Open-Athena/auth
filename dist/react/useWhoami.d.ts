@@ -1,6 +1,9 @@
+import { type SessionLossReason } from '../core/denial.js';
 import { type Whoami, type WhoamiSource } from './types.js';
 export declare const WHOAMI_KEY: readonly ["oa-auth", "whoami"];
 export interface UseWhoamiOptions<T> {
+    /** Periodic revalidation in seconds. Off by default. */
+    revalidateS?: number;
     /** Default 5 minutes. Identity rarely changes mid-session; the gate re-checks server-side anyway. */
     staleTime?: number;
     /** Hold the probe until a `?key=` exchange has finished. */
@@ -24,6 +27,7 @@ export interface UseWhoamiOptions<T> {
     devIdentity?: T | null;
 }
 export interface UseWhoamiResult<T> {
+    reason: SessionLossReason | null;
     /** `undefined` while loading, `null` when signed out, else the identity. */
     whoami: T | null | undefined;
     refresh: () => void;
@@ -33,7 +37,7 @@ export interface UseWhoamiResult<T> {
  * Probe the current identity. `retry: false` because a 401
  * is a real answer, not a transient failure — retrying it just delays the wall.
  */
-export declare function useWhoami<T extends Whoami = Whoami>(source?: WhoamiSource, { staleTime, enabled, devIdentity }?: UseWhoamiOptions<T>): UseWhoamiResult<T>;
+export declare function useWhoami<T extends Whoami = Whoami>(source?: WhoamiSource, { staleTime, enabled, devIdentity, revalidateS }?: UseWhoamiOptions<T>): UseWhoamiResult<T>;
 /**
  * Drop any cached identity — call after signing out so the wall appears at once.
  *

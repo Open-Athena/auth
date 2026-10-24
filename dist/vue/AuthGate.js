@@ -11,7 +11,7 @@ export const AuthGate = defineComponent({
         // Options are setup-time configuration; remount to change clients/endpoints.
         const auth = useWhoami({ exchange: {}, ...props.options });
         return () => {
-            const context = { whoami: auth.whoami.value, loading: auth.loading.value, error: auth.error.value, refetch: auth.refetch, signOut: auth.signOut };
+            const context = { whoami: auth.whoami.value, loading: auth.loading.value, error: auth.error.value, reason: auth.reason.value, refetch: auth.refetch, signOut: auth.signOut };
             if (context.loading)
                 return slots.loading?.(context);
             // Without an error slot, the wall receives the error and retry action.

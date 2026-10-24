@@ -33,6 +33,18 @@ export declare function verifySessionClaims(value: string, secret: string, nowMs
     iat: number;
     exp: number;
 } | null>;
+/** Signature-checked diagnostics: never trust an unverified payload's expiry. */
+export declare function inspectSessionClaims(value: string, secret: string, nowMs: number): Promise<{
+    ok: true;
+    claims: {
+        sub: string;
+        iat: number;
+        exp: number;
+    };
+} | {
+    ok: false;
+    reason: 'expired' | 'invalid';
+}>;
 /** Returns the `sub` claim, or null if the value is malformed, forged, or expired. */
 export declare function verifySession(value: string, secret: string, nowMs: number): Promise<string | null>;
 export interface CookieOpts {

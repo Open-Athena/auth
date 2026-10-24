@@ -10,6 +10,7 @@ export { emailNotify } from './core/email.js';
 export { emailCodeAuth } from './core/email-codes.js';
 export { verifyRs256Jwt } from './core/jwt.js';
 export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
+export { isSessionLossReason, sessionLossMessage } from './core/denial.js';
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';
 export { authRoutes } from './core/routes.js';
 export { adminPolicy, allowlistPolicy, anyEmailPolicy, domainPolicy, firstMatch } from './core/policy.js';

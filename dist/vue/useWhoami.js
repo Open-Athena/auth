@@ -1,10 +1,13 @@
 import { getCurrentInstance, onMounted, onScopeDispose, shallowReadonly, shallowRef } from 'vue';
 import { AuthClientError, createAuthClient } from '../client/api.js';
 import { exchangeKeyParam, hasKeyParam } from '../client/exchange.js';
+import { subscribeUnauthenticated } from '../client/auth-events.js';
+import { isSessionLossReason } from '../core/denial.js';
 function createState(client) {
     const whoami = shallowRef();
     const loading = shallowRef(true);
     const error = shallowRef(null);
+    const reason = shallowRef(null);
     let generation = 0;
     let updated = 0;
     let pending;
@@ -22,6 +25,7 @@ function createState(client) {
                 const identity = await client.whoami();
                 if (request === generation) {
                     whoami.value = identity;
+                    reason.value = null;
                     updated = Date.now();
                 }
             }
@@ -29,7 +33,12 @@ function createState(client) {
                 if (request !== generation)
                     return;
                 whoami.value = null;
-                if (!(cause instanceof AuthClientError && cause.status === 401))
+                if (cause instanceof AuthClientError && cause.status === 401) {
+                    const body = cause.body;
+                    if (body && typeof body === 'object' && 'reason' in body && isSessionLossReason(body.reason))
+                        reason.value = body.reason;
+                }
+                else
                     error.value = asError(cause);
                 updated = Date.now();
             }
@@ -53,8 +62,10 @@ function createState(client) {
         logout = (async () => {
             try {
                 await client.logout();
-                if (users)
+                if (users) {
                     whoami.value = null;
+                    reason.value = null;
+                }
             }
             catch (cause) {
                 if (users)
@@ -70,7 +81,12 @@ function createState(client) {
         return logout;
     }
     return {
-        result: { whoami: shallowReadonly(whoami), loading: shallowReadonly(loading), error: shallowReadonly(error), refetch, signOut },
+        result: { whoami: shallowReadonly(whoami), loading: shallowReadonly(loading), error: shallowReadonly(error), reason: shallowReadonly(reason), refetch, signOut },
+        reported(value) {
+            if (value)
+                reason.value = value;
+            return refetch();
+        },
         retain() { users++; },
         release() {
             if (--users === 0) {
@@ -78,6 +94,7 @@ function createState(client) {
                 pending = undefined;
                 whoami.value = undefined;
                 error.value = null;
+                reason.value = null;
                 loading.value = true;
                 // Keep the entry while logout is in flight so a remount waits for it.
                 return !logout;
@@ -126,11 +143,17 @@ export function useWhoami(options = {}) {
     state.retain();
     let active = true;
     let ready = false;
+    let unsubscribe;
+    let timer;
     const refresh = () => {
         if (active && ready)
             void state.ensure(options.staleTime ?? 5 * 60_000);
     };
     onMounted(async () => {
+        unsubscribe = subscribeUnauthenticated(event => {
+            if (event.endpoint === `${basePath}/whoami`)
+                void state.reported(event.reason);
+        });
         if (options.exchange !== undefined && options.exchange !== false) {
             const opts = { endpoint: `${basePath}/exchange`, ...options.exchange };
             const key = JSON.stringify([opts.endpoint, opts.param ?? 'key']);
@@ -158,11 +181,17 @@ export function useWhoami(options = {}) {
         refresh();
         window.addEventListener('focus', refresh);
         document.addEventListener('visibilitychange', visible);
+        if (options.revalidateS && options.revalidateS > 0) {
+            timer = setInterval(() => { void state.result.refetch(); }, options.revalidateS * 1000);
+        }
     });
     function visible() { if (document.visibilityState === 'visible')
         refresh(); }
     onScopeDispose(() => {
         active = false;
+        unsubscribe?.();
+        if (timer !== undefined)
+            clearInterval(timer);
         if (typeof window !== 'undefined')
             window.removeEventListener('focus', refresh);
         if (typeof document !== 'undefined')
