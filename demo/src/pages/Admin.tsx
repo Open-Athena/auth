@@ -1,8 +1,11 @@
 import { type Grant, subjectName } from '@open-athena/auth'
 import { AllowlistPanel, type Whoami, Avatar, AvatarField, useWhoami } from '@open-athena/auth/react'
+import { SessionLogSwitch } from '@open-athena/auth/react/session-log'
+import { slog } from '@open-athena/auth/session-log/client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useEffect, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
+import { Link } from '../router.js'
 
 const SOURCE = { endpoint: '/api/admin/whoami' } as const
 const SANDBOX_KEY = 'oa-auth-demo:sandbox'
@@ -92,6 +95,8 @@ function Console({ whoami }: { whoami: Whoami }) {
   const mint = useMutation({
     mutationFn: api.mint,
     onSuccess: ({ grant, token }) => {
+      // An app event (declared on the server's `appEvents`): a no-op while the session log is off.
+      slog('demo.mint', { scopes: grant.scopes.join(','), expires: grant.expiresAt !== null })
       showToken(grant.id, token)
       invalidate()
     },
@@ -278,6 +283,19 @@ function Console({ whoami }: { whoami: Whoami }) {
       <Allowlist key={allowlistKey} />
 
       {whoami.scopes.includes('requests') && <RequestQueue onChange={invalidate} />}
+
+      {whoami.scopes.includes('requests') && (
+        <SessionLogSwitch
+          className="card oa-slog-switch"
+          description={
+            <p className="muted">
+              Records what signed-in visitors do here (pages, clicks on controls, requests, errors), to replay a reported
+              bug at <Link to="/admin/sessions">/admin/sessions</Link>. Off by default; it turns itself off after the
+              chosen day. Staff only, like the request queue: a session names its visitor.
+            </p>
+          }
+        />
+      )}
     </div>
   )
 }

@@ -1,0 +1,247 @@
+/*
+ * Optional styles for `@open-athena/auth/react/session-log`. Text and rule
+ * colors derive from the surrounding text color (`currentColor`), so they fit
+ * a light or dark app as is. `--oa-slog-surface` backs the sticky table head:
+ * set it to your page background (it guesses from the OS color scheme).
+ */
+.oa-slog,
+.oa-slog-switch {
+  --oa-slog-ink-2: color-mix(in srgb, currentColor 75%, transparent);
+  --oa-slog-ink-3: color-mix(in srgb, currentColor 55%, transparent);
+  --oa-slog-line: color-mix(in srgb, currentColor 18%, transparent);
+  --oa-slog-panel: color-mix(in srgb, currentColor 5%, transparent);
+  --oa-slog-surface: #fff;
+  --oa-slog-danger: #d14343;
+  --oa-slog-nav: #3b82f6;
+  --oa-slog-input: #10b981;
+  --oa-slog-app: #a855f7;
+  --oa-slog-api: #f59e0b;
+  --oa-slog-page: #64748b;
+}
+@media (prefers-color-scheme: dark) {
+  .oa-slog,
+  .oa-slog-switch {
+    --oa-slog-surface: #16181d;
+    --oa-slog-danger: #f07070;
+  }
+}
+
+.oa-slog-err {
+  color: var(--oa-slog-danger);
+}
+.oa-slog-dim {
+  color: var(--oa-slog-ink-3);
+}
+
+/* Controls size to their content and labels sit inline, whatever an app's global `input` / `label` rules say. */
+.oa-slog-switch,
+.oa-slog .oa-slog-filters {
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+  }
+  input {
+    width: auto;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    margin: 0;
+  }
+}
+
+.oa-slog-switch {
+  .oa-slog-status {
+    font-weight: 600;
+    margin: 0.6em 0;
+  }
+  form,
+  .oa-slog-ends {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+  }
+}
+
+.oa-slog {
+  max-width: 1200px;
+
+  .oa-slog-pager {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .oa-slog-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 13px;
+    input[type='search'],
+    input[type='date'] {
+      font: inherit;
+      padding: 3px 6px;
+      color: inherit;
+      background: transparent;
+      border: 1px solid var(--oa-slog-line);
+      border-radius: 4px;
+    }
+  }
+  .oa-slog-who {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 2px;
+  }
+  .oa-slog-guest {
+    font-size: 12px;
+    padding: 0 6px;
+    border: 1px solid var(--oa-slog-line);
+    border-radius: 9px;
+    color: var(--oa-slog-ink-2);
+    white-space: nowrap;
+  }
+  .oa-slog-meta {
+    font-size: 13px;
+    color: var(--oa-slog-ink-2);
+    overflow-wrap: anywhere;
+  }
+  .oa-slog-scroll {
+    overflow-x: auto;
+  }
+  .oa-slog-timeline-box {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .oa-slog-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    th,
+    td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--oa-slog-line);
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: var(--oa-slog-surface);
+    }
+    .oa-slog-num {
+      text-align: right;
+      white-space: nowrap;
+    }
+    tr.oa-slog-has-err td {
+      background: color-mix(in srgb, var(--oa-slog-danger) 9%, transparent);
+    }
+    tr.oa-slog-load td {
+      border-top: 2px solid var(--oa-slog-ink-3);
+    }
+    tr.oa-slog-focused td {
+      outline: 2px solid var(--oa-slog-nav);
+      outline-offset: -2px;
+    }
+    tr.oa-slog-hot td {
+      background: color-mix(in srgb, var(--oa-slog-nav) 14%, transparent);
+    }
+    td.oa-slog-kind,
+    td.oa-slog-open {
+      white-space: nowrap;
+    }
+    td.oa-slog-ev {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+  }
+  .oa-slog-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    vertical-align: middle;
+    background: var(--oa-slog-lane);
+  }
+  .oa-slog-lane-nav {
+    --oa-slog-lane: var(--oa-slog-nav);
+  }
+  .oa-slog-lane-input {
+    --oa-slog-lane: var(--oa-slog-input);
+  }
+  .oa-slog-lane-app {
+    --oa-slog-lane: var(--oa-slog-app);
+  }
+  .oa-slog-lane-api {
+    --oa-slog-lane: var(--oa-slog-api);
+  }
+  .oa-slog-lane-error {
+    --oa-slog-lane: var(--oa-slog-danger);
+  }
+  .oa-slog-lane-page {
+    --oa-slog-lane: var(--oa-slog-page);
+  }
+  .oa-slog-strip {
+    position: relative;
+    margin: 12px 0;
+    svg {
+      display: block;
+      width: 100%;
+      height: 84px;
+      cursor: pointer;
+    }
+    .oa-slog-lane-bg {
+      fill: var(--oa-slog-panel);
+      &:nth-child(even) {
+        fill: var(--oa-slog-surface);
+      }
+    }
+    .oa-slog-tick {
+      stroke: var(--oa-slog-lane);
+      stroke-width: 1.5;
+    }
+    .oa-slog-tick-err {
+      stroke: var(--oa-slog-danger);
+      stroke-width: 2.5;
+    }
+    .oa-slog-guide {
+      stroke: currentColor;
+      stroke-width: 1;
+      stroke-dasharray: 2 2;
+    }
+    figcaption {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--oa-slog-ink-2);
+      margin-top: 4px;
+    }
+    .oa-slog-lanes {
+      display: inline-flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+  }
+  .oa-slog-tip {
+    position: absolute;
+    transform: translate(-50%, calc(-100% - 10px));
+    max-width: min(480px, 90vw);
+    padding: 6px 8px;
+    font-size: 12px;
+    background: var(--oa-slog-surface);
+    border: 1px solid var(--oa-slog-line);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+    pointer-events: none;
+    overflow-wrap: anywhere;
+    z-index: 10;
+  }
+}

@@ -6,6 +6,7 @@ import { Dashboard } from './pages/Dashboard.js'
 import { Home } from './pages/Home.js'
 import { Privacy } from './pages/Privacy.js'
 import { Profile } from './pages/Profile.js'
+import { Sessions } from './pages/Sessions.js'
 import { Link, Router, useNavigate, usePath } from './router.js'
 
 const ROUTES: Record<string, () => ReactElement> = {
@@ -18,7 +19,7 @@ const ROUTES: Record<string, () => ReactElement> = {
 
 export function App() {
   const [path, navigate] = usePath()
-  const Page = ROUTES[path] ?? NotFound
+  const Page = ROUTES[path] ?? (path === '/admin/sessions' || path.startsWith('/admin/sessions/') ? Sessions : NotFound)
 
   return (
     <Router navigate={navigate}>

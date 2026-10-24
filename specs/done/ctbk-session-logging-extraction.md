@@ -32,3 +32,46 @@ Session events should retain the movie query and app build so an admin can reope
 ## Verification and completion
 
 Port precise tests for switch expiry, body/event caps, duplicate batches, identity spoofing, URL redaction, purge limits, and admin authorization. Exercise the recorder and shared viewer in disky and CTBK with real browser rendering. Ensure the default-off import adds only a small lazy boot shim. The initial package release should include both apps' adoption notes, required migrations, and checked-in pinned package revisions. Move this spec under `specs/done/` in the auth project with the completed change.
+
+## Implemented (2026-10-24)
+
+Ported from disky `cloud` at `ae2846d6`. The `hf` and `r2` worktrees differed only by being behind `cloud`; their only commits touching these files are merges.
+
+- **Shared shape:** `src/core/session-log-shape.ts`, pure, imported by every entry.
+  - Built-in kinds now have explicit field lists (`BUILTIN_FIELDS`). An undeclared field is a 400, so a client can't attach an `email` (or anything else) to a click.
+  - App events are `appEvents: { name: fields[] }`, checked at startup (`checkAppEvents`). They take scalar values only. The client drops undeclared names and fields before sending, and the server refuses them.
+- **`@open-athena/auth/session-log`:**
+  - `sessionLogRoutes({ store, identify, requireAdmin, appEvents, retainDays, filterEvents, onStored, onSwitch, onPurge })` is framework-neutral and returns `Response | null`. It takes an optional `{ waitUntil }`.
+  - `fromGate(gate, { adminScope, anonymous })` supplies `identify` and `requireAdmin` from an auth gate.
+  - The switch cache and purge throttle are per routes instance (one per isolate).
+  - disky's coupling is replaced by hooks:
+    - disky's `admin_edits` row becomes `onSwitch`;
+    - its activity-feed kind mute becomes `filterEvents`;
+    - `feedClient` becomes `onStored`;
+    - `purgeActivity` becomes `onPurge`.
+- **`/session-log/d1`:** `d1SessionLogStore(db, { purgeChunk, purgeChunks })`.
+  - Ingest is now one `batch`: the batch row, then the session upsert guarded by `changes() > 0`. A retried beacon counts nothing, and a failure leaves neither half.
+  - Purge deletes by `rowid` in chunks (default 500 × 20 per table per call); the next call continues.
+  - A missing table throws `SessionLogNotSetUp`, which the routes answer with 503.
+- **Migration:** `migrations/session-log/0001_session_log.sql`, a track of its own with `IF NOT EXISTS`, and the same schema as disky's tables.
+- **`/session-log/client`:**
+  - `bootSessionLog({ build, endpoint, secretParams })` and `slog`. The logger (`logger.js`) is a dynamic import.
+  - `scripts/verify-client.mjs` checks that the entry has no external imports, that the logger is reachable, and that the module imports in Node.
+  - Signed S3/GCS params are masked by default.
+  - DPR is rounded to 2 places.
+- **`/react/session-log`:** `SessionLogSwitch`, `SessionList` (controlled or uncontrolled params, `sessionHref`, `renderLink`, `renderViewer`) and `SessionView`.
+  - The timeline adds an `app` lane and filter.
+  - disky's floating-ui tooltip is a positioned div, so there's no new dependency.
+  - The optional CSS is `/react/session-log.css`, with colors from `currentColor` and an overridable `--oa-slog-surface`.
+- **Demo:**
+  - `/api/session-log` is mounted; reading sessions and flipping the switch is staff only (the `requests` scope), since every visitor is a sandbox admin.
+  - The switch is on `/admin` and the viewer at `/admin/sessions[/:sid]`.
+  - Minting fires the app event `demo.mint`.
+  - `db:local`, `db:remote` and `db:dev` also execute the session-log migration file.
+- **Tests:** `test/session-log.test.ts` (server, real D1 schema and gate), `test/client-session-log.test.ts`, `test/react/session-log-model.test.ts` and `test/react/session-log.test.tsx`.
+
+Not done here, and left to each app's own session:
+- disky switching to the shared modules;
+- CTBK's root boot, its movie lifecycle `slog` events and its `/admin/sessions` mount.
+
+Prod auth.oa.dev also needs `pnpm run db:remote`, which executes the session-log file before the deploy that mounts it.

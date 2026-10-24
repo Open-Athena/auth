@@ -811,3 +811,9 @@ a.card {
   }
   .example-more { padding-top: 2rem; }
 }
+
+// The session log's viewer and switch (`@open-athena/auth/react/session-log.css`) on this page's palette.
+.oa-slog,
+.oa-slog-switch {
+  --oa-slog-surface: var(--bg);
+}

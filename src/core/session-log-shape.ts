@@ -1,0 +1,317 @@
+/**
+ * The session log's wire shape and limits, shared by the client logger
+ * (`/session-log/client`), the endpoint (`/session-log`), the D1 store
+ * (`/session-log/d1`) and the viewer (`/react/session-log`). Pure: no Workers
+ * or DOM types, so every one of those builds can import it.
+ *
+ * An event log, not a screen recorder: page loads, URL changes, clicks on
+ * controls, opted-in input fields, requests, errors, viewport and visibility,
+ * plus whatever app events the app declares (each with its own field list).
+ * Never DOM snapshots, keystrokes, form contents, headers or request bodies.
+ */
+
+/** Built-in event kinds and the fields each may carry (besides `t` and `k`). Anything else is a 400. */
+export const BUILTIN_FIELDS = {
+  start: ['u', 'ref'],
+  nav: ['u'],
+  click: ['n', 'l', 'x'],
+  filter: ['n', 'q'],
+  pick: ['n', 'v'],
+  prefetch: ['w', 'p', 'd'],
+  api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b'],
+  error: ['msg', 'src', 'st'],
+  reject: ['msg', 'st'],
+  console: ['msg'],
+  viewport: ['w', 'h', 'dpr'],
+  vis: ['s'],
+  dropped: ['n'],
+} as const satisfies Record<string, readonly string[]>
+
+export type BuiltinKind = keyof typeof BUILTIN_FIELDS
+export const KINDS = Object.keys(BUILTIN_FIELDS) as BuiltinKind[]
+/** A built-in kind, or an app event's name. */
+export type Kind = BuiltinKind | (string & {})
+
+/**
+ * App events an app declares, by name, with the fields each may carry: e.g.
+ * `{ 'movie.queued': ['query', 'format'] }`. The client drops undeclared
+ * fields before sending; the server refuses an undeclared name or field. Field
+ * values are scalars (string, number, boolean, null), never objects: a declared
+ * schema can't smuggle a credential-bearing blob.
+ */
+export type AppEvents = Readonly<Record<string, readonly string[]>>
+
+/** An app event's name: lowercase, dotted, and not a built-in kind. */
+export const APP_EVENT_NAME = /^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$/
+
+/** Throws on a malformed declaration, so a typo fails at startup, not as a 400 per batch. */
+export function checkAppEvents(app: AppEvents): AppEvents {
+  for (const [name, fields] of Object.entries(app)) {
+    if (name.length > 40 || !APP_EVENT_NAME.test(name)) throw new Error(`session log: bad app event name ${JSON.stringify(name)}`)
+    if (name in BUILTIN_FIELDS) throw new Error(`session log: app event ${name} shadows a built-in kind`)
+    for (const f of fields) {
+      if (f === 't' || f === 'k' || !/^[A-Za-z][A-Za-z0-9_]{0,29}$/.test(f)) {
+        throw new Error(`session log: app event ${name}: bad field ${JSON.stringify(f)}`)
+      }
+    }
+  }
+  return app
+}
+
+type Scalar = string | number | boolean | null
+
+/** One event: a client timestamp (epoch ms), a kind, and the kind's short fields. */
+export type SlogEvent = { t: number; k: Kind } & Record<string, Scalar | Record<string, string | number>>
+
+/** One client flush. `sid` is per tab (survives reloads), `pid` per page load, `seq` per flush of that load. */
+export interface SlogBatch {
+  sid: string
+  pid: string
+  seq: number
+  build: string
+  events: SlogEvent[]
+}
+
+export const LIMITS = {
+  /** Server: request body bytes (`sendBeacon` / `keepalive` budgets are 64 KiB). */
+  bodyBytes: 65_536,
+  /** Client: a post's body stays under this (several posts otherwise). */
+  batchBytes: 60_000,
+  /** Server: events per batch. */
+  batchEvents: 300,
+  /** Client: flush once this many are buffered. */
+  flushEvents: 200,
+  /** Server: events stored per session; client: per page load. */
+  sessionEvents: 20_000,
+  /** Server: one event's serialized size. */
+  eventBytes: 4096,
+  /** The switch's latest dated end: through the UTC day this many days ahead (`FOREVER_MS` is the undated one). */
+  maxDays: 31,
+  /** The switch's end when turned on with no date. */
+  defaultDays: 7,
+} as const
+
+/** Client-side truncation, per field family. */
+export const TRUNC = { label: 60, filter: 200, url: 300, msg: 300, stack: 1500 } as const
+
+/** Kinds (and api statuses) that count as errors in the session summary. */
+export const isErrorEvent = (e: { k: Kind; s?: unknown }): boolean =>
+  e.k === 'error' ||
+  e.k === 'reject' ||
+  e.k === 'console' ||
+  (e.k === 'api' && typeof e.s === 'number' && (e.s === 0 || e.s >= 500))
+
+const ID = /^[A-Za-z0-9_-]{6,40}$/
+
+/** The end (exclusive) of the UTC day `days` after `now`'s. */
+export const endOfUtcDay = (now: number, days: number): number => {
+  const d = new Date(now)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days + 1)
+}
+
+/** Turning the switch on with no date: through the UTC day `LIMITS.defaultDays` from now. */
+export const defaultUntil = (now: number): number => endOfUtcDay(now, LIMITS.defaultDays)
+/** The latest an admin may set: through the UTC day `LIMITS.maxDays` from now. */
+export const maxUntil = (now: number): number => endOfUtcDay(now, LIMITS.maxDays)
+
+/**
+ * The switch's "no end date": stored as this `until_ms` (2100-01-01T00:00Z),
+ * not NULL (NULL is off), so every reader that only compares `until_ms` with
+ * its clock needs no special case: it never passes. Any stored value at or past
+ * it reads as indefinite. Dated ends stay within `LIMITS.maxDays`.
+ */
+export const FOREVER_MS = Date.UTC(2100, 0, 1)
+export const isForever = (until: number | null): boolean => until !== null && until >= FOREVER_MS
+
+/** The UTC date (`YYYY-MM-DD`) an exclusive end instant runs through. */
+export const lastDay = (until: number): string => new Date(until - 1).toISOString().slice(0, 10)
+
+/**
+ * An admin's `until` → the instant logging ends (epoch ms), or why it's
+ * refused. A bare date runs through that UTC day; an ISO instant ends at it;
+ * empty = `defaultUntil`. Past, or past `maxUntil`, is refused (a typo can't
+ * turn it on for a year).
+ */
+export function parseUntil(raw: string | null | undefined, now: number): { until: number } | { error: string } {
+  const s = raw?.trim()
+  if (!s) return { until: defaultUntil(now) }
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  const until = day ? Date.UTC(+day[1]!, +day[2]! - 1, +day[3]! + 1) : Date.parse(s)
+  if (!Number.isFinite(until)) return { error: `unparseable until: ${s}` }
+  if (until <= now) return { error: `until ${s} is in the past` }
+  if (until > maxUntil(now)) {
+    return { error: `until ${s} is more than ${LIMITS.maxDays} days ahead (latest: ${lastDay(maxUntil(now))})` }
+  }
+  return { until }
+}
+
+/** The stored switch (`until_ms`; null = off, or no row) → whether it's on now, or why not. */
+export function switchState(untilMs: number | null, now: number): { until: number | null; reason: string | null } {
+  if (untilMs === null) return { until: null, reason: 'off' }
+  if (untilMs <= now) return { until: untilMs, reason: 'expired' }
+  return { until: untilMs, reason: null }
+}
+
+export const isOn = (u: { until: number | null; reason: string | null }): boolean => u.until !== null && u.reason === null
+
+/**
+ * `GET` / `PUT <base>/switch` (admin): the switch now, who last set it (epoch
+ * s), and the bounds a new `until` must sit in. `indefinite`: on with no end
+ * date (`until` is then `FOREVER_MS`, or the far-future value stored).
+ */
+export interface SwitchState {
+  enabled: boolean
+  until: number | null
+  indefinite: boolean
+  reason: string | null
+  who: string | null
+  ts: number | null
+  defaultUntil: number
+  maxUntil: number
+}
+
+/** `GET <base>` (anyone): whether this request's tab should log. `enabled` only for an identified viewer. */
+export interface SessionLogConfig {
+  enabled: boolean
+  until: number | null
+  reason: string | null
+  /** The switch is on for every identified viewer (a privacy page can say so). */
+  on: boolean
+  retainDays: number
+  /** The app events this deployment accepts, so the client drops anything else before sending. */
+  appEvents: AppEvents
+}
+
+const isScalar = (v: unknown): boolean => v === null || ['string', 'number', 'boolean'].includes(typeof v)
+
+/** A posted body → the batch, or the status and reason it's refused with. */
+export function validateBatch(
+  raw: unknown,
+  app: AppEvents = {},
+): { batch: SlogBatch } | { status: 400 | 413; error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { status: 400, error: 'body must be a JSON object' }
+  const b = raw as Record<string, unknown>
+  if (typeof b.sid !== 'string' || !ID.test(b.sid)) return { status: 400, error: 'bad sid' }
+  if (typeof b.pid !== 'string' || !ID.test(b.pid)) return { status: 400, error: 'bad pid' }
+  if (!Number.isInteger(b.seq) || (b.seq as number) < 0 || (b.seq as number) > 1_000_000) {
+    return { status: 400, error: 'bad seq' }
+  }
+  if (typeof b.build !== 'string' || b.build.length > 40) return { status: 400, error: 'bad build' }
+  if (!Array.isArray(b.events) || !b.events.length) return { status: 400, error: 'events must be a non-empty array' }
+  if (b.events.length > LIMITS.batchEvents) return { status: 413, error: `more than ${LIMITS.batchEvents} events` }
+  for (const [i, e] of b.events.entries()) {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return { status: 400, error: `event ${i}: not an object` }
+    const ev = e as Record<string, unknown>
+    if (typeof ev.t !== 'number' || !Number.isFinite(ev.t)) return { status: 400, error: `event ${i}: bad t` }
+    const k = typeof ev.k === 'string' ? ev.k : ''
+    const builtin = Object.hasOwn(BUILTIN_FIELDS, k) ? (BUILTIN_FIELDS[k as BuiltinKind] as readonly string[]) : null
+    const declared = builtin ?? (Object.hasOwn(app, k) ? app[k]! : null)
+    if (!declared) return { status: 400, error: `event ${i}: unknown kind ${String(ev.k).slice(0, 40)}` }
+    for (const [key, v] of Object.entries(ev)) {
+      if (key === 't' || key === 'k') continue
+      if (!declared.includes(key)) return { status: 400, error: `event ${i}: undeclared field ${key.slice(0, 30)}` }
+      // One level of nesting, and only on the api event's request-body summary (`b`).
+      const nested =
+        builtin !== null &&
+        k === 'api' &&
+        key === 'b' &&
+        v !== null &&
+        typeof v === 'object' &&
+        !Array.isArray(v) &&
+        Object.values(v).every(x => typeof x === 'string' || typeof x === 'number')
+      if (!isScalar(v) && !nested) return { status: 400, error: `event ${i}: bad field ${key.slice(0, 30)}` }
+    }
+    if (JSON.stringify(ev).length > LIMITS.eventBytes) return { status: 413, error: `event ${i}: over ${LIMITS.eventBytes} bytes` }
+  }
+  return { batch: { sid: b.sid, pid: b.pid, seq: b.seq as number, build: b.build, events: b.events as SlogEvent[] } }
+}
+
+/** The session summary row (`session_log`), as the admin APIs return it. */
+export interface SessionRow {
+  sid: string
+  email: string | null
+  via: string | null
+  build: string | null
+  ua: string | null
+  started_ms: number
+  last_ms: number
+  n_events: number
+  n_errors: number
+  n_batches: number
+  first_url: string | null
+  received_ts: number
+}
+
+/** A position in the session list's order (`last_ms` desc, then `sid`): a row's `last_ms` and `sid`. */
+export interface Cursor {
+  lastMs: number
+  sid: string
+}
+
+/** A cursor on the wire and in the page URL: `<last_ms>.<sid>` (sids never hold a `.`). */
+export const fmtCursor = (r: Pick<SessionRow, 'last_ms' | 'sid'>): string => `${r.last_ms}.${r.sid}`
+export function parseCursor(s: string): Cursor | null {
+  const m = /^(\d{1,16})\.([A-Za-z0-9_-]{6,40})$/.exec(s)
+  return m ? { lastMs: Number(m[1]), sid: m[2]! } : null
+}
+
+/** Sessions per page (the list API's default `limit`; at most `SESSIONS_MAX_LIMIT`). */
+export const SESSIONS_PAGE = 50
+export const SESSIONS_MAX_LIMIT = 500
+
+/**
+ * `GET <base>/sessions`: one page, most recently active first. `total` = rows
+ * matching the filters, `offset` = how many of them precede this page; `prev` /
+ * `next` are the cursors (`before=` / `after=`) of the adjacent pages, null at
+ * either end.
+ */
+export interface SessionPage {
+  sessions: SessionRow[]
+  total: number
+  offset: number
+  prev: string | null
+  next: string | null
+}
+
+/** A stored event with where it came from (the page load and batch), as the session view gets it. */
+export type StoredEvent = SlogEvent & { pid: string; seq: number }
+
+/** `GET <base>/sessions/:sid`. */
+export interface SessionDetail {
+  session: SessionRow
+  events: StoredEvent[]
+}
+
+const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
+const KIND_KEYS = new Set(['kind', 'op', 'action', 'mode'])
+
+/**
+ * A JSON request body as counts and kinds only: per top-level key, an array's
+ * length, a short `kind`-like string, else the value's type. Not JSON (or not
+ * an object) → its type and length.
+ */
+export function bodySummary(body: unknown): Record<string, string | number> | null {
+  if (body == null) return null
+  if (typeof body !== 'string') return { type: Object.prototype.toString.call(body).slice(8, -1) }
+  let j: unknown
+  try {
+    j = JSON.parse(body)
+  } catch {
+    return { type: 'text', len: body.length }
+  }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) {
+    return Array.isArray(j) ? { type: 'array', len: j.length } : { type: typeof j }
+  }
+  const out: Record<string, string | number> = {}
+  for (const [k, v] of Object.entries(j as Record<string, unknown>).slice(0, 12)) {
+    out[cut(k, 30)] = Array.isArray(v)
+      ? v.length
+      : KIND_KEYS.has(k) && typeof v === 'string'
+        ? cut(v, 30)
+        : v === null
+          ? 'null'
+          : typeof v
+  }
+  return out
+}

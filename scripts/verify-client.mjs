@@ -31,9 +31,21 @@ function visit(path) {
 }
 visit(entry)
 deepEqual([...externals].sort(), [])
+const clientModules = visited.size
+
+// The session-log boot shim: no dependencies either, and its lazily imported
+// logger is reachable (the dynamic `import()` is followed like any other).
+const slogEntry = resolve(root, 'dist/client/session-log/index.js')
+visited.clear()
+visit(slogEntry)
+deepEqual([...externals].sort(), [])
+equal(visited.has(resolve(root, 'dist/client/session-log/logger.js')), true)
+const slog = await import(pathToFileURL(slogEntry).href)
+equal(typeof slog.bootSessionLog, 'function')
+equal(typeof slog.slog, 'function')
 const { createAuthClient, shareUrl, exchangeKeyParam, downscaleImage } = await import(pathToFileURL(entry).href)
 equal(typeof createAuthClient, 'function')
 equal(typeof exchangeKeyParam, 'function')
 equal(typeof downscaleImage, 'function')
 equal(shareUrl('test-token', 'https://app.test/slides/3?theme=dark#notes'), 'https://app.test/slides/3?theme=dark&key=test-token#notes')
-console.log(`client artifact: ${visited.size} modules, no external dependencies, SSR import and share URL verified`)
+console.log(`client artifact: ${clientModules} modules (session log: ${visited.size}), no external dependencies, SSR import and share URL verified`)

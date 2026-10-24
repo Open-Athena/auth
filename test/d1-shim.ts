@@ -47,11 +47,24 @@ const migrationsDir = fileURLToPath(new URL('../migrations/', import.meta.url).h
 /** Every `.sql` in `migrations/`, in the order wrangler applies them. */
 const MIGRATION_RE = /\.sql$/
 
-/** A fresh in-memory database with every migration applied, discovered not listed. */
+/** Every `.sql` in one migrations directory, in the order wrangler applies them. */
+function applyDir(db: DatabaseSync, dir: string): void {
+  for (const name of readdirSync(dir).filter(f => MIGRATION_RE.test(f)).sort()) db.exec(readFileSync(dir + name, 'utf8'))
+}
+
+/**
+ * A fresh in-memory database with every core migration applied, discovered
+ * not listed, plus any optional `tracks` (subdirectories of `migrations/`,
+ * e.g. `session-log`). `raw` is the underlying SQLite, for setup and checks.
+ */
+export function testDbRaw(tracks: string[] = []): { db: D1Database; raw: DatabaseSync } {
+  const raw = new DatabaseSync(':memory:')
+  applyDir(raw, migrationsDir)
+  for (const t of tracks) applyDir(raw, `${migrationsDir}${t}/`)
+  return { db: shim(raw), raw }
+}
+
+/** A fresh in-memory database with every core migration applied. */
 export function testDb(): D1Database {
-  const db = new DatabaseSync(':memory:')
-  for (const name of readdirSync(migrationsDir).filter(f => MIGRATION_RE.test(f)).sort()) {
-    db.exec(readFileSync(migrationsDir + name, 'utf8'))
-  }
-  return shim(db)
+  return testDbRaw().db
 }

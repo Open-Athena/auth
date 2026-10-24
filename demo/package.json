@@ -7,10 +7,10 @@
     "dev": "pnpm -w run build && pnpm db:local && wrangler pages dev --ip 0.0.0.0 --port 4187 -- pnpm vite --port 4188 --strictPort",
     "build": "pnpm -w run build && vite build",
     "typecheck": "tsc --noEmit",
-    "db:local": "wrangler d1 migrations apply oa-auth-demo --local",
-    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo --remote",
+    "db:local": "wrangler d1 migrations apply oa-auth-demo --local && wrangler d1 execute oa-auth-demo --local --file ../migrations/session-log/0001_session_log.sql",
+    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo --remote && CI=1 scripts/oa-wrangler.sh d1 execute oa-auth-demo --remote --file ../migrations/session-log/0001_session_log.sql",
     "deploy": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo --branch main",
-    "db:dev": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo-dev --remote --config wrangler.dev.toml",
+    "db:dev": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-auth-demo-dev --remote --config wrangler.dev.toml && CI=1 scripts/oa-wrangler.sh d1 execute oa-auth-demo-dev --remote --config wrangler.dev.toml --file ../migrations/session-log/0001_session_log.sql",
     "deploy:dev": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo-dev --branch main"
   },
   "dependencies": {
