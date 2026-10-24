@@ -23,15 +23,22 @@ function shim(db: DatabaseSync): D1Database {
         return { meta: { changes: Number(res.changes) } } as never
       },
       raw: async () => [] as never,
+      exec: async () => {
+        const results = stmt().all(...bound) as Row[]
+        const changes = Number((db.prepare('SELECT changes() AS n').get() as { n: number }).n)
+        return { results, meta: { changes } }
+      },
     } as unknown as D1PreparedStatement
   }
   // `batch` runs its statements in one transaction, like D1's — the allowlist
   // sync's replace-by-source relies on the delete and re-insert being atomic.
+  // Each result carries its rows (a SELECT, or `RETURNING`) and `changes`, as
+  // D1's do, so a store can read inside its own transaction.
   const batch = async (stmts: D1PreparedStatement[]) => {
     db.exec('BEGIN')
     try {
       const out: unknown[] = []
-      for (const s of stmts) out.push(await s.run())
+      for (const s of stmts) out.push(await (s as unknown as { exec(): Promise<unknown> }).exec())
       db.exec('COMMIT')
       return out
     } catch (e) {

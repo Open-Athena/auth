@@ -1,7 +1,8 @@
 import type {
-  CommitIncoming, IncomingResult, PendingIncoming, RetainedBinding, RetainedLimits, RetainedStore,
+  AddSession, CommitIncoming, IncomingResult, PendingIncoming, RetainedBinding, RetainedBrowser, RetainedLimits,
+  RetainedPending, RetainedSession, RetainedStore, SelectSession,
 } from '../core/retained-store.js'
-import { serializeSelectionContext } from '../core/selection-context.js'
+import { type SelectionContext, serializeSelectionContext } from '../core/selection-context.js'
 
 function integer(value: number, positive = false): void {
   if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < (positive ? 1 : 0)) {
@@ -20,20 +21,28 @@ function binding(input: RetainedBinding, now: number): void {
   integer(now)
 }
 
-function pending(input: PendingIncoming, now: number): void {
+function expectedFor(input: RetainedBinding & { expected: SelectionContext }, now: number): void {
   binding(input, now)
   serializeSelectionContext(input.expected)
   if (input.expected.browserSetId !== input.browserSetId) throw new TypeError('Mismatched browser context')
+}
+
+/** A principal in the session-cookie format, as the table's CHECK accepts it. */
+function principal(sub: string): void {
+  if (typeof sub !== 'string' || sub.length > 512 || !/^[eg]:./.test(sub)) throw new TypeError('Invalid retained principal')
+}
+
+function pending(input: PendingIncoming, now: number): void {
+  expectedFor(input, now)
   id(input.pendingId)
   id(input.grantId)
   id(input.tokenHash)
 }
 
-/** Internal optional adapter: requires migration 0003 and transactional D1 batch.
+/** The retained-login registry on D1: requires migrations 0003 and 0004 and transactional D1 batch.
  * No read/independent-write completion, compensations or network policy callbacks.
  * Caller must enforce deployment rate admission before bootstrap/pending creation.
- * Hard storage quotas count expired rows too until explicit maintenance removes
- * them. Cleanup and the rest of the registry are intentionally not implemented.
+ * Hard storage quotas count expired rows too until `cleanup` removes them.
  */
 export function d1RetainedStore(db: D1Database, suppliedLimits: RetainedLimits): RetainedStore {
   const limits = { ...suppliedLimits }
@@ -46,12 +55,136 @@ export function d1RetainedStore(db: D1Database, suppliedLimits: RetainedLimits):
   const expectedBrowser = `${liveBrowser} AND b.active_session_id IS ? AND b.selection_version = ?
     AND b.selection_version < 9007199254740991`
   const browserArgs = (i: RetainedBinding, now: number) => [i.browserSetId, i.gateId, i.handleHash, now] as const
-  const contextArgs = (i: PendingIncoming, now: number) => [...browserArgs(i, now), i.expected.sessionId, i.expected.version]
+  const contextArgs = (i: RetainedBinding & { expected: SelectionContext }, now: number) => [...browserArgs(i, now), i.expected.sessionId, i.expected.version]
   const liveSession = `s.revoked_at IS NULL AND s.expires_at > ? AND g.revoked_at IS NULL
     AND (g.sessions_invalid_before IS NULL OR s.issued_at >= g.sessions_invalid_before)
     AND (g.expiry_ends_sessions = 0 OR g.expires_at IS NULL OR g.expires_at > ?)`
 
+  const context = (browserSetId: string) => sql(`SELECT id AS browserSetId, active_session_id AS sessionId,
+    selection_version AS version FROM retained_browser_sets WHERE id = ?`, browserSetId)
+
   return {
+    async browser(i, now) {
+      id(i.gateId)
+      id(i.handleHash)
+      integer(now)
+      return await sql(`SELECT id AS browserSetId, active_session_id AS activeSessionId, selection_version AS version,
+        expires_at AS expiresAt FROM retained_browser_sets WHERE gate_id = ? AND handle_hash = ? AND expires_at > ?`,
+      i.gateId, i.handleHash, now).first<RetainedBrowser>()
+    },
+
+    async sessions(i, now) {
+      binding(i, now)
+      const rows = await sql(`SELECT s.id, s.sub, s.issued_at AS issuedAt, s.expires_at AS expiresAt
+        FROM retained_sessions s JOIN retained_browser_sets b ON b.id = s.browser_set_id
+        WHERE ${liveBrowser} AND s.revoked_at IS NULL AND s.expires_at > ? ORDER BY s.issued_at, s.rowid`,
+      ...browserArgs(i, now), now).all<RetainedSession>()
+      return rows.results
+    },
+
+    async pendings(i, now) {
+      binding(i, now)
+      const rows = await sql(`SELECT p.id, p.grant_id AS grantId, p.token_hash AS tokenHash, p.expires_at AS expiresAt
+        FROM retained_pending p JOIN retained_browser_sets b ON b.id = p.browser_set_id
+        WHERE ${liveBrowser} AND p.ready = 1 AND p.consumed_operation_id IS NULL AND p.expires_at > ?
+        ORDER BY p.expires_at, p.id`, ...browserArgs(i, now), now).all<RetainedPending>()
+      return rows.results
+    },
+
+    async addSession(i: AddSession, now) {
+      expectedFor(i, now)
+      id(i.sessionId)
+      principal(i.sub)
+      integer(i.issuedAt)
+      integer(i.expiresAt)
+      if (i.expiresAt <= now || i.issuedAt > now) return null
+      if (typeof i.select !== 'boolean') throw new TypeError('Invalid selection mode')
+      const grantId = i.sub.startsWith('g:') ? i.sub.slice(2) : null
+      const results = await db.batch<SelectionContext>([
+        // Room is counted without the login this one replaces: re-signing in as
+        // the same address never needs a free slot.
+        sql(`INSERT INTO retained_sessions (id, browser_set_id, grant_id, issued_at, expires_at, sub)
+          SELECT ?, b.id, ?, ?, ?, ? FROM retained_browser_sets b WHERE ${expectedBrowser}
+          AND (SELECT COUNT(*) FROM retained_sessions WHERE browser_set_id = b.id AND revoked_at IS NULL
+            AND expires_at > ? AND sub != ?) < ?`,
+        i.sessionId, grantId, i.issuedAt, i.expiresAt, i.sub, ...contextArgs(i, now), now, i.sub, limits.sessions),
+        // The browser set moves to the new login if it's to be selected, or if
+        // the login it replaces was the active one.
+        sql(`UPDATE retained_browser_sets AS b SET
+          active_session_id = CASE WHEN ? = 1 OR active_session_id IN (SELECT id FROM retained_sessions
+            WHERE browser_set_id = b.id AND sub = ? AND id != ?) THEN ? ELSE active_session_id END,
+          selection_version = selection_version + 1
+          WHERE b.id = ? AND EXISTS (SELECT 1 FROM retained_sessions WHERE id = ? AND browser_set_id = b.id)`,
+        i.select ? 1 : 0, i.sub, i.sessionId, i.sessionId, i.browserSetId, i.sessionId),
+        sql(`UPDATE retained_sessions SET revoked_at = ? WHERE browser_set_id = ? AND sub = ? AND id != ?
+          AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM retained_sessions WHERE id = ? AND browser_set_id = ?)`,
+        now, i.browserSetId, i.sub, i.sessionId, i.sessionId, i.browserSetId),
+        context(i.browserSetId),
+      ])
+      return results[0]!.meta.changes === 1 ? (results[3]!.results[0] ?? null) : null
+    },
+
+    async select(i: SelectSession, now) {
+      expectedFor(i, now)
+      if (i.sessionId !== null) id(i.sessionId)
+      const results = await db.batch<SelectionContext>([
+        sql(`UPDATE retained_browser_sets AS b SET active_session_id = ?, selection_version = selection_version + 1
+          WHERE ${expectedBrowser} AND (? IS NULL OR EXISTS (SELECT 1 FROM retained_sessions s
+            WHERE s.id = ? AND s.browser_set_id = b.id AND s.revoked_at IS NULL AND s.expires_at > ?))`,
+        i.sessionId, ...contextArgs(i, now), i.sessionId, i.sessionId, now),
+        context(i.browserSetId),
+      ])
+      return results[0]!.meta.changes === 1 ? (results[1]!.results[0] ?? null) : null
+    },
+
+    async remove(i, now) {
+      expectedFor(i, now)
+      id(i.sessionId)
+      const results = await db.batch<SelectionContext>([
+        sql(`UPDATE retained_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?
+          AND browser_set_id IN (SELECT b.id FROM retained_browser_sets b WHERE ${expectedBrowser})`,
+        now, i.sessionId, now, ...contextArgs(i, now)),
+        // `changes()` is the removal's: the selection moves only if a login was removed.
+        sql(`UPDATE retained_browser_sets SET
+          active_session_id = CASE WHEN active_session_id = ? THEN NULL ELSE active_session_id END,
+          selection_version = selection_version + 1 WHERE changes() = 1 AND id = ?`,
+        i.sessionId, i.browserSetId),
+        context(i.browserSetId),
+      ])
+      return results[0]!.meta.changes === 1 ? (results[2]!.results[0] ?? null) : null
+    },
+
+    async endBrowser(i, now) {
+      binding(i, now)
+      const results = await db.batch([
+        sql(`UPDATE retained_sessions SET revoked_at = ? WHERE revoked_at IS NULL
+          AND browser_set_id IN (SELECT b.id FROM retained_browser_sets b WHERE ${liveBrowser})`,
+        now, ...browserArgs(i, now)),
+        sql(`UPDATE retained_browser_sets AS b SET expires_at = ?, active_session_id = NULL,
+          selection_version = selection_version + 1 WHERE ${liveBrowser} AND b.selection_version < 9007199254740991`,
+        now, ...browserArgs(i, now)),
+      ])
+      return results[1]!.meta.changes === 1
+    },
+
+    async cleanup(now, limit = 200) {
+      integer(now)
+      integer(limit, true)
+      const chunk = (table: string, where: string, ...args: (string | number)[]) =>
+        sql(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${where} LIMIT ?)`, ...args, limit)
+      // Children before parents: a browser set goes only once nothing references it.
+      const results = await db.batch([
+        chunk('retained_operations', 'expires_at <= ?', now),
+        chunk('retained_pending', 'expires_at <= ? OR consumed_operation_id IS NOT NULL', now),
+        chunk('retained_sessions', 'revoked_at IS NOT NULL OR expires_at <= ?', now),
+        chunk('retained_browser_sets', `expires_at <= ?
+          AND NOT EXISTS (SELECT 1 FROM retained_sessions WHERE browser_set_id = retained_browser_sets.id)
+          AND NOT EXISTS (SELECT 1 FROM retained_pending WHERE browser_set_id = retained_browser_sets.id)
+          AND NOT EXISTS (SELECT 1 FROM retained_operations WHERE browser_set_id = retained_browser_sets.id)`, now),
+      ])
+      return results.reduce((n, r) => n + (r.meta.changes ?? 0), 0)
+    },
+
     async bootstrap(i, now) {
       binding(i, now)
       integer(now + limits.browserTtlS)
@@ -137,8 +270,8 @@ export function d1RetainedStore(db: D1Database, suppliedLimits: RetainedLimits):
           AND (expires_at IS NULL OR expires_at > ?) AND (max_redeems IS NULL OR redeems < max_redeems)
           AND EXISTS (${op} AND minted = 1)`, now, now, i.grantId, i.tokenHash, now, attempt),
         assertStage(2, true),
-        sql(`INSERT INTO retained_sessions (id, browser_set_id, grant_id, issued_at, expires_at)
-          SELECT o.session_id, o.browser_set_id, g.id, ?, ? + COALESCE(g.session_ttl, ?)
+        sql(`INSERT INTO retained_sessions (id, browser_set_id, grant_id, issued_at, expires_at, sub)
+          SELECT o.session_id, o.browser_set_id, g.id, ?, ? + COALESCE(g.session_ttl, ?), 'g:' || g.id
           FROM retained_operations o JOIN grants g ON g.id = ? WHERE o.attempt_id = ? AND o.minted = 1`,
         now, now, limits.defaultSessionTtlS, i.grantId, attempt),
         assertStage(3, true),

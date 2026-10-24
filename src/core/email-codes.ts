@@ -22,6 +22,7 @@
  */
 import { requestMeta } from './audit.js'
 import type { Gate } from './gate.js'
+import { RetainedLoginError } from './retained.js'
 import type { SendEmail } from './email.js'
 import type { PendingAuthStore } from './store.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
@@ -231,7 +232,14 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
     const claimed = await store.consume(row.id, sec(nowMs()))
     if (!claimed) return fail()
 
-    const signedIn = await gate.signIn(row.email, request)
+    let signedIn: Awaited<ReturnType<Gate['signIn']>>
+    try {
+      signedIn = await gate.signIn(row.email, request)
+    } catch (e) {
+      // The browser holds as many logins as the gate retains: back to the app to make room.
+      if (!(e instanceof RetainedLoginError)) throw e
+      return new Response(null, { status: 302, headers: { location: `${defaultNext}?accounts=${e.code}`, 'cache-control': 'no-store' } })
+    }
     if (!signedIn) {
       return new Response(null, {
         status: 302,
@@ -239,7 +247,7 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
       })
     }
     const headers = new Headers({ location: next, 'cache-control': 'no-store' })
-    headers.append('set-cookie', signedIn.cookie)
+    for (const c of signedIn.cookies) headers.append('set-cookie', c)
     return new Response(null, { status: 302, headers })
   }
 
@@ -265,9 +273,17 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
     const claimed = await store.consume(id, sec(nowMs()))
     if (!claimed) return invalid
 
-    const signedIn = await gate.signIn(row.email, request)
+    let signedIn: Awaited<ReturnType<Gate['signIn']>>
+    try {
+      signedIn = await gate.signIn(row.email, request)
+    } catch (e) {
+      if (!(e instanceof RetainedLoginError)) throw e
+      return json({ ok: false, error: e.code }, 409)
+    }
     if (!signedIn) return json({ ok: false }, 403)
-    return json({ ok: true }, 200, { 'set-cookie': signedIn.cookie })
+    const res = json({ ok: true }, 200)
+    for (const c of signedIn.cookies) res.headers.append('set-cookie', c)
+    return res
   }
 
   /**

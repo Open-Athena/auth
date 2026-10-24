@@ -1,6 +1,6 @@
 # Multiple logins, account switching, and incoming link credentials
 
-Status: implementation in progress (2026-10-19). The selection-context codec/mutation guard and an internal D1 incoming-link storage substrate are built and tested. Full session-registry authentication, retained-account listing/switch/logout, callback integration and UI remain unbuilt. Origin: the CW storage dashboard's detailed OpenGraph sharing discussion on October 13, 2026. This is upstream library work for `@open-athena/auth`, not a CW-specific account picker or an instruction to change a live deployment. Update the spec alongside implementation phases, then move it under `specs/done/` with the completed implementation. Deployments and live migrations require separate authorization.
+Status: implementation in progress (2026-10-24). The backend phase is done: a gate's opt-in `retained` mode with email and share-link logins, switching, incoming-link holding, sign-out of one or all, and the selection-context guard (see "Gate Checkpoint" below). Client and React integration (hooks, account picker, cross-tab notices) and the demo walkthrough remain. Origin: the CW storage dashboard's detailed OpenGraph sharing discussion on October 13, 2026. This is upstream library work for `@open-athena/auth`, not a CW-specific account picker or an instruction to change a live deployment. Update the spec alongside implementation phases, then move it under `specs/done/` with the completed implementation. Deployments and live migrations require separate authorization.
 
 ## Storage Checkpoint (2026-10-19)
 
@@ -11,6 +11,51 @@ The caller must supply trusted gate/browser binding, a keyed handle hash, stable
 `test/d1-retained.test.ts` exercises the actual SQL with transactional SQLite, failure injection at every batch statement, caps/capacity, expiry, disable/revoke/rotation, stale selection and operation replay. `pnpm test:retained-runtime` additionally runs the actual batch against local Miniflare/workerd D1, including zero-row-trigger rollback and concurrent duplicates; it passed locally and is added to CI. These tests prove the storage protocol on the local D1 runtime, not production deployment or the complete browser flow.
 
 Still required: admission/rate-limit integration, authoritative request/session validation, email/OIDC proof completion, listing/switch/removal/sign-out operations, cleanup, cookie/routes and frontend transitions. The caller must never treat replayed historical session IDs as fresh or renewed authentication. The configurable resolution policy and no-extra-step single-account experience remain release gates. Remembered Google-account hints are separately shipped reauthentication shortcuts, not retained sessions.
+
+## Gate Checkpoint (2026-10-24)
+
+**Schema:** migration `0004_retained_principals.sql` rebuilds `retained_sessions` with:
+- `sub` (`e:<email>` | `g:<grant_id>`, the session-cookie format);
+- a nullable `grant_id`, tied to `sub` by a CHECK (with an explicit `IS NOT NULL`, since a CHECK passes on NULL).
+
+No remote database has applied 0003, so nothing needs migrating.
+
+**Store:** `RetainedStore` gains:
+- `browser`, `sessions` and `pendings`;
+- `addSession`, which replaces a live login with the same `sub` and needs no free slot to do it;
+- `select`, `remove` (removing the active login selects nothing) and `endBrowser`;
+- `cleanup`, bounded per table, children before parents.
+
+The D1 implementation guards every write with the expected browser, version and active session inside one batch. `remove` moves the selection only via `changes()`. The runtime test covers these on workerd D1.
+
+**Gate (`retained: { store, gateId?, cookieName?, incoming? }`):**
+- **Handle cookie:** `<cookie>_rs` holds 32 random bytes; the store keys the set by an HMAC of it under the gate secret. The cookie's Max-Age is capped by the set's absolute expiry.
+- **Authenticating:** with a handle, the active login authenticates through the same `resolveClaims` as the single-session cookie (live policy, grant re-join, rotation cutoff), and the legacy cookie is ignored. Without a handle, the single-session cookie still works.
+- **Import:** a new set imports a valid legacy cookie once, keeping its `iat`/`exp`, and the response clears that cookie.
+- **Sign-in:** `signIn` adds the login and selects it (results now carry `cookies: string[]`).
+- **Redeem:** `redeem` with no usable active login signs in, redeeming at most once; reopening the same link reuses that session. With an active login, `incoming` decides:
+  - `'keep'` (the default) holds the link as a pending account and spends no redemption;
+  - `'switch'` changes to it;
+  - a function decides per link.
+- **Bad links:** a bad or dead link leaves the browser's logins alone.
+- **Full browser:** `RetainedLoginError` codes answer as 409:
+  - email-code and OIDC sign-ins redirect to `?accounts=<code>` (JSON endpoints answer 409);
+  - an email code is already consumed by then, so the person requests a new one after making room. This is the non-atomic proof completion the spec flagged.
+
+**Routes:**
+- `whoami` and `exchange` carry `selection`. `exchange` also carries `incoming` when it held the link.
+- `GET /accounts` returns `AccountsResponse`, listing only logins whose evidence still holds.
+- `POST /accounts/select|remove|incoming` and `POST /logout` take `X-OA-Selection-Context`. A stale or missing one gets 409 `selection_context_conflict`, with no side effects.
+- Accepting a held link that can't be taken returns 409 `incoming-unavailable`.
+- `POST /logout-all` ends the browser set.
+- `gate.retained.checkMutation(req)` guards an app's own mutations.
+
+**Tests:** `test/retained-gate.test.ts` drives these through the routes with a cookie jar per browser, covering acceptance criteria 2–4, 6, 7, the server half of 8, and 9.
+
+**Remaining:**
+- the client (selection header, account calls), React hooks, picker and chip composition, and BroadcastChannel notices;
+- the demo walkthrough and browser tests;
+- gate-wide pending/bootstrap rate limits (the store's per-gate quotas exist; request-rate admission is still the app's).
 
 ## Goal and first-class simplicity requirement
 

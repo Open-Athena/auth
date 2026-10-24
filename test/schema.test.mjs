@@ -23,7 +23,7 @@ const tables = () => {
 describe('migrations/', () => {
   // Pre-1.0: one baseline, plus any additions not yet squashed into it.
   it('is the baseline plus unsquashed additions', () => {
-    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql'])
+    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql'])
   })
 
   it('builds exactly these tables and columns', () => {
@@ -121,10 +121,11 @@ describe('migrations/', () => {
       retained_sessions: [
         'id TEXT NOT NULL PK#1',
         'browser_set_id TEXT NOT NULL',
-        'grant_id TEXT NOT NULL',
+        'grant_id TEXT',
         'issued_at INTEGER NOT NULL',
         'expires_at INTEGER NOT NULL',
         'revoked_at INTEGER',
+        'sub TEXT NOT NULL',
       ],
       retained_pending: [
         'id TEXT NOT NULL PK#1',
@@ -186,6 +187,7 @@ describe('migrations/', () => {
       'index retained_pending_browser',
       'index retained_pending_gate',
       'index retained_session_membership',
+      'index retained_session_sub',
     ])
   })
 })

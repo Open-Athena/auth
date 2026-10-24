@@ -22,7 +22,7 @@ function fixture(overrides: Partial<RetainedLimits> = {}) {
   const sqlite = new DatabaseSync(':memory:')
   databases.push(sqlite)
   sqlite.exec('PRAGMA foreign_keys = ON')
-  for (const name of ['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql']) {
+  for (const name of ['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql']) {
     sqlite.exec(readFileSync(fileURLToPath(new URL(`../migrations/${name}`, import.meta.url).href), 'utf8'))
   }
   const executions = new WeakMap<D1PreparedStatement, () => D1Result>()
@@ -89,6 +89,129 @@ async function ready(overrides: Partial<RetainedLimits> = {}) {
   return { ...f, input }
 }
 
+describe('D1 retained registry: logins, selection and removal', () => {
+  const at = (version: number, sessionId: string | null = null) => ({ browserSetId: 'browser', sessionId, version })
+  const add = (f: ReturnType<typeof fixture>, o: { id: string; sub: string; version: number; select?: boolean; now?: number; exp?: number }) =>
+    f.store.addSession({
+      ...browser, expected: at(o.version, null), sessionId: o.id, sub: o.sub, issuedAt: 100,
+      expiresAt: o.exp ?? 5000, select: o.select ?? true,
+    }, o.now ?? 100)
+  async function set(overrides: Partial<RetainedLimits> = {}) {
+    const f = fixture(overrides)
+    expect(await f.store.bootstrap(browser, 100)).toBe(true)
+    return f
+  }
+  const live = async (f: ReturnType<typeof fixture>, now = 100) =>
+    (await f.store.sessions(browser, now)).map(r => [r.id, r.sub])
+
+  it('adds an email login and selects it; a second login selects too, keeping the first', async () => {
+    const f = await set()
+    expect(await f.store.browser({ gateId: 'gate', handleHash: 'keyed-handle-hash' }, 100)).toEqual({
+      browserSetId: 'browser', activeSessionId: null, version: 0, expiresAt: 2592100,
+    })
+    expect(await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0 })).toEqual(at(1, 'a'))
+    const second = await f.store.addSession({
+      ...browser, expected: at(1, 'a'), sessionId: 'b', sub: 'e:bob@y.test', issuedAt: 100, expiresAt: 5000, select: true,
+    }, 100)
+    expect([second, await live(f)]).toEqual([at(2, 'b'), [['a', 'e:ann@x.test'], ['b', 'e:bob@y.test']]])
+  })
+
+  it('refuses a stale context, a past expiry, or a full set; re-signing in as the same address needs no room and replaces it', async () => {
+    const f = await set({ sessions: 1 })
+    expect(await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0 })).toEqual(at(1, 'a'))
+    const again = (o: { id: string; sub: string; version: number; sessionId: string | null; exp?: number }) =>
+      f.store.addSession({
+        ...browser, expected: at(o.version, o.sessionId), sessionId: o.id, sub: o.sub, issuedAt: 100,
+        expiresAt: o.exp ?? 5000, select: true,
+      }, 100)
+    expect([
+      await again({ id: 'x', sub: 'e:bob@y.test', version: 0, sessionId: null }),
+      await again({ id: 'x', sub: 'e:bob@y.test', version: 1, sessionId: 'a', exp: 100 }),
+      await again({ id: 'x', sub: 'e:bob@y.test', version: 1, sessionId: 'a' }),
+      await again({ id: 'a2', sub: 'e:ann@x.test', version: 1, sessionId: 'a' }),
+    ]).toEqual([null, null, null, at(2, 'a2')])
+    expect([await live(f), f.rows('retained_sessions').map(r => [r.id, r.revoked_at])]).toEqual([
+      [['a2', 'e:ann@x.test']],
+      [['a', 100], ['a2', null]],
+    ])
+  })
+
+  it('adding without selecting keeps the active login, unless it replaces the active one', async () => {
+    const f = await set()
+    await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0 })
+    // A grant login must name a real grant: the foreign key, not a silent null.
+    await expect(f.store.addSession({
+      ...browser, expected: at(1, 'a'), sessionId: 'g', sub: 'g:grant', issuedAt: 100, expiresAt: 5000, select: false,
+    }, 100)).rejects.toThrow('FOREIGN KEY constraint failed')
+    f.grant()
+    const kept = await f.store.addSession({
+      ...browser, expected: at(1, 'a'), sessionId: 'g', sub: 'g:grant', issuedAt: 100, expiresAt: 5000, select: false,
+    }, 100)
+    const replaced = await f.store.addSession({
+      ...browser, expected: at(2, 'a'), sessionId: 'a2', sub: 'e:ann@x.test', issuedAt: 100, expiresAt: 5000, select: false,
+    }, 100)
+    expect([kept, replaced]).toEqual([at(2, 'a'), at(3, 'a2')])
+  })
+
+  it('selects a live member or none; refuses a stale context, another set\'s login, or a removed one', async () => {
+    const f = await set()
+    await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0 })
+    await f.store.addSession({ ...browser, expected: at(1, 'a'), sessionId: 'b', sub: 'e:bob@y.test', issuedAt: 100, expiresAt: 5000, select: true }, 100)
+    const other = { gateId: 'gate', browserSetId: 'other', handleHash: 'other-hash' }
+    await f.store.bootstrap(other, 100)
+    await f.store.addSession({ ...other, expected: { browserSetId: 'other', sessionId: null, version: 0 }, sessionId: 'o', sub: 'e:eve@z.test', issuedAt: 100, expiresAt: 5000, select: true }, 100)
+    const sel = (sessionId: string | null, version: number, current: string | null) =>
+      f.store.select({ ...browser, expected: at(version, current), sessionId }, 100)
+    expect([
+      await sel('a', 1, 'a'),
+      await sel('o', 2, 'b'),
+      await sel('a', 2, 'b'),
+      await sel('b', 3, 'a'),
+      await sel(null, 4, 'b'),
+    ]).toEqual([null, null, at(3, 'a'), at(4, 'b'), at(5, null)])
+    expect(await f.store.sessions({ ...browser, handleHash: 'wrong' }, 100)).toEqual([])
+  })
+
+  it("removing the active login leaves the browser signed out; removing another keeps the selection; a removed one can't be selected", async () => {
+    const f = await set()
+    await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0 })
+    await f.store.addSession({ ...browser, expected: at(1, 'a'), sessionId: 'b', sub: 'e:bob@y.test', issuedAt: 100, expiresAt: 5000, select: true }, 100)
+    const rm = (sessionId: string, version: number, current: string | null) =>
+      f.store.remove({ ...browser, expected: at(version, current), sessionId }, 100)
+    expect([
+      await rm('a', 1, 'a'),
+      await rm('a', 2, 'b'),
+      await rm('a', 3, 'b'),
+      await f.store.select({ ...browser, expected: at(3, 'b'), sessionId: 'a' }, 100),
+      await rm('b', 3, 'b'),
+    ]).toEqual([null, at(3, 'b'), null, null, at(4, null)])
+    expect(await live(f)).toEqual([])
+  })
+
+  it('ending the browser revokes every login and the handle; expired logins and sets are invisible and cleaned up in bounded chunks', async () => {
+    const f = await set()
+    await add(f, { id: 'a', sub: 'e:ann@x.test', version: 0, exp: 150 })
+    await f.store.addSession({ ...browser, expected: at(1, 'a'), sessionId: 'b', sub: 'e:bob@y.test', issuedAt: 100, expiresAt: 5000, select: true }, 100)
+    expect(await live(f, 150)).toEqual([['b', 'e:bob@y.test']])
+    expect(await f.store.endBrowser(browser, 200)).toBe(true)
+    expect([
+      await f.store.browser({ gateId: 'gate', handleHash: 'keyed-handle-hash' }, 200),
+      await f.store.sessions(browser, 200),
+      await f.store.endBrowser(browser, 200),
+    ]).toEqual([null, [], false])
+    // One row a table per call: the set goes only once its last login has.
+    expect([await f.store.cleanup(200, 1), await f.store.cleanup(200, 1), await f.store.cleanup(200, 1)]).toEqual([1, 2, 0])
+    expect([f.rows('retained_sessions'), f.rows('retained_browser_sets')]).toEqual([[], []])
+  })
+
+  it('the table refuses a principal that names no grant, or a grant session without its grant id', async () => {
+    const f = await set()
+    expect(() => f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('x', 'browser', NULL, 1, 2, NULL, 'g:grant')`)).toThrow(/CHECK constraint failed/)
+    expect(() => f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('x', 'browser', NULL, 1, 2, NULL, 'x:who')`)).toThrow(/CHECK constraint failed/)
+    await expect(add(f, { id: 'x', sub: 'nobody', version: 0 })).rejects.toThrow('Invalid retained principal')
+  })
+})
+
 describe('optional D1 retained incoming completion', () => {
   it('bootstraps only an empty set; pending proof changes version but never redeems', async () => {
     const f = await ready()
@@ -109,7 +232,7 @@ describe('optional D1 retained incoming completion', () => {
     const f = await ready()
     expect(await f.store.commitIncoming(f.input, 101)).toEqual({ sessionId: 'session', committedVersion: 2 })
     expect(f.rows('retained_sessions')).toEqual([{
-      id: 'session', browser_set_id: 'browser', grant_id: 'grant', issued_at: 101, expires_at: 3701, revoked_at: null,
+      id: 'session', browser_set_id: 'browser', grant_id: 'grant', issued_at: 101, expires_at: 3701, revoked_at: null, sub: 'g:grant',
     }])
     expect(f.rows('grants').map(g => [g.redeems, g.first_used_at, g.last_used_at])).toEqual([[1, 101, 101]])
     expect(f.rows('retained_pending').map(p => [p.id, p.consumed_operation_id])).toEqual([['pending', 'operation']])
@@ -214,7 +337,7 @@ describe('optional D1 retained incoming completion', () => {
 
   it('capacity is checked at the authoritative insert boundary', async () => {
     const f = await ready({ sessions: 1 })
-    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('prior', 'browser', 'grant', 90, 1000, NULL)`)
+    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('prior', 'browser', 'grant', 90, 1000, NULL, 'g:grant')`)
     // A different grant cannot use the prior session's slot or identity.
     f.grant('second', 'second-hash')
     f.sqlite.exec("UPDATE retained_pending SET grant_id = 'second', token_hash = 'second-hash'")
@@ -229,13 +352,13 @@ describe('optional D1 retained incoming completion', () => {
     'sessions_invalid_before = 90',
   ])('reuses still-valid evidence at capacity without redeeming: %s', async change => {
     const f = await ready({ sessions: 1 })
-    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('existing', 'browser', 'grant', 90, 1000, NULL)`)
+    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('existing', 'browser', 'grant', 90, 1000, NULL, 'g:grant')`)
     f.sqlite.exec(`UPDATE grants SET ${change}`)
     const grantsBefore = f.rows('grants')
     expect(await f.store.commitIncoming(f.input, 101)).toEqual({ sessionId: 'existing', committedVersion: 2 })
     expect(f.rows('grants')).toEqual(grantsBefore)
     expect(f.rows('retained_sessions')).toEqual([{
-      id: 'existing', browser_set_id: 'browser', grant_id: 'grant', issued_at: 90, expires_at: 1000, revoked_at: null,
+      id: 'existing', browser_set_id: 'browser', grant_id: 'grant', issued_at: 90, expires_at: 1000, revoked_at: null, sub: 'g:grant',
     }])
     expect(f.rows('retained_operations').map(o => [o.session_id, o.minted])).toEqual([['existing', 0]])
   })
@@ -249,7 +372,7 @@ describe('optional D1 retained incoming completion', () => {
     "UPDATE retained_sessions SET expires_at = 101",
   ])('cannot reuse invalid evidence or invalid pending proof: %s', async change => {
     const f = await ready()
-    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('existing', 'browser', 'grant', 90, 1000, NULL)`)
+    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('existing', 'browser', 'grant', 90, 1000, NULL, 'g:grant')`)
     // Prevent fallback minting so an invalid existing session cannot be renewed.
     f.sqlite.exec('UPDATE grants SET redeems = max_redeems')
     f.sqlite.exec(change)
@@ -307,7 +430,7 @@ describe('optional D1 retained incoming completion', () => {
 
   it('session unique constraint failure rolls back proof and redemption', async () => {
     const f = await ready()
-    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('session', 'browser', 'grant', 90, 100, NULL)`)
+    f.sqlite.exec(`INSERT INTO retained_sessions VALUES ('session', 'browser', 'grant', 90, 100, NULL, 'g:grant')`)
     const before = f.snapshot()
     await expect(f.store.commitIncoming(f.input, 101)).rejects.toThrow('UNIQUE constraint failed: retained_sessions.id')
     expect(f.snapshot()).toEqual(before)
@@ -419,6 +542,19 @@ it.runIf(process.env.OA_D1_RUNTIME === '1')('Miniflare/workerd runs the actual D
     expect(await snapshot()).toEqual(committed)
     const counts = await db.prepare('SELECT redeems FROM grants').all()
     expect(counts.results).toEqual([{ redeems: 1 }])
+
+    // The registry's guards on the real runtime: removal's selection change
+    // rides `changes()`, and a stale context touches nothing.
+    const ctx = (version: number, sessionId: string | null) => ({ browserSetId: 'browser', sessionId, version })
+    expect(await store.addSession({ ...browser, expected: ctx(3, null), sessionId: 'email', sub: 'e:ann@x.test',
+      issuedAt: 102, expiresAt: 5000, select: true }, 102)).toEqual(ctx(4, 'email'))
+    const unchanged = await snapshot()
+    expect(await store.remove({ ...browser, expected: ctx(3, null), sessionId: 'email' }, 102)).toBeNull()
+    expect(await store.select({ ...browser, expected: ctx(3, null), sessionId: 'session' }, 102)).toBeNull()
+    expect(await snapshot()).toEqual(unchanged)
+    expect(await store.select({ ...browser, expected: ctx(4, 'email'), sessionId: 'session' }, 102)).toEqual(ctx(5, 'session'))
+    expect(await store.remove({ ...browser, expected: ctx(5, 'session'), sessionId: 'session' }, 102)).toEqual(ctx(6, null))
+    expect((await store.sessions(browser, 102)).map(r => r.id)).toEqual(['email'])
   } finally {
     await runtime.dispose()
   }
