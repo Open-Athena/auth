@@ -2,7 +2,7 @@
 
 > Named share links, Google sign-in, email codes, and an access log for gated dashboards.
 
-Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes) and unstyled React primitives (`useWhoami` / `AuthGate` / `SignInPanel` / `WhoamiChip`).
+Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes), a framework-free client, unstyled React primitives, and Vue `useWhoami` / `AuthGate` wrappers.
 
 Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
 
@@ -31,7 +31,11 @@ Pre-1.0 and moving: the backend kernel, Google and email-code sign-in, request-a
 src/core/       sessions, tokens, grants, policy, requests, email codes, audit, routes — no CF, no Node
 src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
                 r2 (avatar bytes), google-directory (group → allowlist sync)
+src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
 src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
+src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
+src/session-log/  optional, time-boxed user-action logging (routes; D1 store in adapters/,
+                logger in client/session-log/, admin UI in react/session-log/)
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -39,6 +43,149 @@ demo/           a working app on Pages + Functions + D1
 ```
 
 Peers of `adapters/d1` are any SQLite (Turso, better-sqlite3) or Postgres; every current consumer is on Cloudflare, so D1 is the only store adapter until a non-CF consumer appears.
+
+## Framework-Free Client
+
+Vue/Slidev, vanilla JavaScript and React can all call the same HTTP surface without importing React:
+
+```ts
+import { AuthClientError, createAuthClient, shareUrl } from '@open-athena/auth/client'
+
+const auth = createAuthClient() // defaults to /api/auth; fetch is injectable
+const { grant, token } = await auth.grants.mint({ scopes: ['reports'], name: 'Board packet' })
+const link = shareUrl(token, 'https://app.example/reports/3?tab=costs#notes')
+await auth.grants.update(grant.id, { note: 'Shared with the board' })
+await auth.grants.revoke(grant.id)
+```
+
+`grants` also supports `list({ active? })`, `disable`, `enable`, `rotate(id, { endSessions? })` and `activity`; the client has `whoami()`, `logout()` and `log({ grant?, limit? })`. Successful values retain the route's JSON envelope. Non-2xx responses throw `AuthClientError` with `status` and `body` (JSON when available, otherwise text/null); network and malformed-success-JSON errors stay distinct. Unlike `useWhoami`, `client.whoami()` throws on 401 rather than returning null. Allowlist wrappers and migrating the existing React hooks/admin UI onto this client are deferred.
+
+`displayName`, `hasScope`, `hasKeyParam`, `exchangeKeyParam` and `downscaleImage` are available from `/client`, along with the shared wire types. Existing `/react` helper imports still work. Importing `/client` is SSR-safe; browser-only helpers need browser APIs when called, and `shareUrl` needs an explicit absolute target outside the browser. It preserves the target's other query parameters and hash, replacing an existing `key`. The emitted module graph is checked during `pnpm build` for external dependencies, including React/Vue.
+
+The backend root import and platform adapters remain separate from `/client`. React hooks/components live under `/react`; Vue wrappers live under `/vue`. Vanilla apps need neither framework.
+
+## Session Loss
+
+`authenticate()` still returns `Auth | null`. For a gated route that needs a consistent 401, use the detailed result once:
+
+```ts
+const result = await gate.authenticateResult(request)
+if (!result.auth) return gate.unauthenticated(request, result)
+// Enforce this route's scopes against result.auth before serving private data.
+```
+
+The response is `{ error: 'unauthenticated', reason }`, where `reason` is `revoked`, `expired`, `rotated`, `delisted`, `invalid`, or `null` for an anonymous request. A failed session cookie is expired and the response requests `Clear-Site-Data: "cache"`; other cookies and browser storage are not cleared. Failed explicit Bearer or `?key=` credentials never clear the browser cookie/cache, even beside a live cookie. `gate.unauthenticated(request)` can resolve the failure itself when a caller has not already authenticated. `/whoami` and protected `authRoutes` endpoints use the same helper.
+
+In the app's fetch wrapper or query-cache 401 handler, report the failure to the matching whoami endpoint:
+
+```ts
+import { isSessionLossReason, reportUnauthenticated } from '@open-athena/auth/client'
+
+if (response.status === 401) {
+  const body = await response.clone().json().catch(() => null)
+  reportUnauthenticated(isSessionLossReason(body?.reason) ? body.reason : null, {
+    endpoint: '/api/view/whoami', // omit for the default /api/auth/whoami
+  })
+}
+```
+
+This revalidates identity; it is not an unconditional logout command. If a rejected explicit credential accompanied a healthy browser cookie, whoami can confirm that cookie and keep the app signed in. React and Vue observers receive the reason, including when the first 401 already cleared the cookie and a later whoami has no reason. A successful identity probe or explicit sign-out clears it. Existing imports remain valid; `reportUnauthenticated` is also exported from `/react` and `/vue`.
+
+React `AuthGate` passes the reason as the second argument to `signIn(refresh, reason)` and supplies it automatically to a nested `SignInPanel`. The panel accepts `reason` and `reasonMessage` overrides. Vue exposes `reason` as a readonly ref and in gate slot contexts; custom/vanilla walls can use `sessionLossMessage(reason)`. `useWhoami` and `AuthGate` (React) and the Vue options accept `revalidateS` for optional periodic probes, off by default. Focus/visibility checks remain enabled. No push connection is needed.
+
+Clear-Site-Data is a browser cache signal, not application-memory or service-worker cache cleanup, and support requires a secure context. Keep successful sensitive responses `Cache-Control: no-store` where appropriate. Consumers must also cancel/discard their own private query/store data on identity loss; target those caches rather than clearing the identity query itself while it is revalidating. Revocation cannot erase content already read or copied. See [Clear-Site-Data][clear-site-data].
+
+## Vue
+
+Import `useWhoami`, `AuthGate`, and shared identity helpers from `@open-athena/auth/vue`. Vue is an optional peer dependency; React and TanStack Query are not required for this subpath.
+
+```vue
+<script setup lang="ts">
+import { AuthGate, displayName } from '@open-athena/auth/vue'
+
+const options = {
+  basePath: '/api/view',
+  exchange: { endpoint: '/api/view/exchange' },
+}
+</script>
+
+<template>
+  <AuthGate :options="options">
+    <template #loading>Checking access...</template>
+    <template #error="{ error }"><p role="alert">{{ error.message }}</p></template>
+    <template #unauthenticated><h2>Private workspace</h2></template>
+    <template #default="{ whoami, signOut }">
+      <p>{{ displayName(whoami) ?? 'Anonymous link' }}</p>
+      <button @click="signOut">Sign out</button>
+    </template>
+  </AuthGate>
+</template>
+```
+
+`useWhoami(options)` runs during component setup and returns readonly `whoami`, `loading`, and `error` refs plus `refetch()` and `signOut()`. A 401 means signed out; other failures populate `error`. Matching clients share state within a Vue app, not across apps or SSR requests. Options are setup-time configuration: remount to change them. The composable opts into key exchange through `exchange`; `AuthGate` enables it by default, before probing identity. The exchange endpoint defaults to `<basePath>/exchange`; a supplied custom client needs an explicit exchange endpoint if its base differs. Slots receive `whoami`, `loading`, `error`, `refetch`, and `signOut`. `signOut()` records errors in state and rejects, so event handlers should handle that rejection. The server must still enforce authorization.
+
+## Several Accounts in One Browser
+
+Off by default. With `retained` on a gate, a browser keeps several logins (email sign-ins and share links) and switches between them without signing in again. Each request acts as exactly one of them, the active one; scopes are never combined.
+
+```ts
+import { d1RetainedStore } from '@open-athena/auth/d1'
+const gate = createGate({
+  ...,
+  retained: { store: d1RetainedStore(env.DB, { sessions: 8, pending: 4, gateBrowserSets: 50_000, gatePending: 10_000,
+    browserTtlS: 30 * 86400, pendingTtlS: 600, retryTtlS: 86400, defaultSessionTtlS: 7 * 86400 }) },
+})
+```
+
+It needs migrations `0003` and `0004`. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
+
+- **Signing in** (Google, an emailed code, One Tap) adds the address and selects it. The browser's other logins stay.
+- **A share link** opened while signed in is held, unspent, as an account to switch to (`incoming: 'keep'`, the default), so a member following a guest link stays the member. `'switch'` changes to it at once, or a function decides per link. With no login, a link signs in as before.
+- **Routes** (with `authRoutes`): `GET /accounts`, `POST /accounts/select|remove|incoming` and `POST /logout-all`. `POST /logout` signs out of the active account only.
+- **Stale selections:** each change carries `X-OA-Selection-Context`, the selection the page last saw, which `whoami` and `exchange` return. A stale one gets 409, so a tab still showing account A can't act as B. `gate.retained.checkMutation(req)` applies the same check to your own mutations.
+- **Older clients:** a sign-out with no header (a client from before retained mode) signs out whatever is active.
+- **Client:** `createAccountsClient` (`/client`), or React's `useAccounts` and `<AccountSwitcher>`. Tabs hear about each other's switches over a `BroadcastChannel`.
+- **Existing sessions:** a single-session cookie from before is imported on the browser's next sign-in, keeping its original expiry, so turning this on signs nobody out.
+
+## Session Log
+
+Optional, time-boxed logging of what signed-in users do, for replaying a reported bug: page loads, URL changes, clicks on controls, requests (route, status, timing, the error body's code), errors and console errors, viewport and visibility, plus app events you declare. It's an event log, not a screen recorder: no DOM snapshots, keystrokes, headers or request bodies (a request body is kept as counts and kinds only), and input contents only from fields marked `data-log-input`. Secrets in URLs (`key`, `code`, `token`, signed S3/GCS params, and any you add) are masked before they leave the page.
+
+It's off by default. An admin turns it on for a few days (default 7, at most 31, or explicitly with no end date); a dated run turns itself off, on the server and in open tabs. Batches are idempotent per `(sid, pid, seq)`, capped at 20,000 events per page load and per session, and purged after 30 days in bounded chunks.
+
+| Subpath | What |
+|---|---|
+| `@open-athena/auth/session-log` | `sessionLogRoutes({ store, identify, requireAdmin, appEvents? })` and `fromGate(gate, { adminScope })`; the shared shapes |
+| `@open-athena/auth/session-log/d1` | `d1SessionLogStore(db)`; schema in `migrations/session-log/` |
+| `@open-athena/auth/session-log/client` | `bootSessionLog({ build })` and `slog(kind, fields)`; the logger itself is a lazily imported chunk |
+| `@open-athena/auth/react/session-log` | `SessionLogSwitch`, `SessionList`, `SessionView` (needs a `QueryClientProvider`) |
+| `@open-athena/auth/react/session-log.css` | optional styles |
+
+```ts
+// functions/api/session-log/[[path]].ts: one routes instance per isolate (it caches the switch for 60 s)
+const handle = sessionLogRoutes({
+  store: d1SessionLogStore(env.DB),
+  ...fromGate(gate, { adminScope: 'admin' }),
+  appEvents: { 'movie.queued': ['query', 'format'] },   // a declared app event and its scalar fields
+  onSwitch: ({ prior, row }) => { /* your audit trail */ },
+})
+// in the app's entry: one request per page load while off
+void bootSessionLog({ build: import.meta.env.VITE_BUILD_SHA })
+// anywhere: a declared app event (dropped while off, or if undeclared)
+slog('movie.queued', { query, format })
+```
+
+The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
+
+The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
+
+## Minimal Demo Routes
+
+The demo's [root][demo-root] and [Vanilla][demo-vanilla] routes use the framework-free client; [Vue][demo-vue] and [React][demo-react] show their respective wrappers. Framework links navigate to separate documents so vanilla loads neither framework, and Vue and React do not load each other.
+
+Each example opens a named or anonymous share link, exchanges its `key` for a session, removes the key from the URL, and shows the returned identity. Sign out returns to the private-workspace wall. The examples use raw identity JSON from `GET /api/view/whoami` (401 when signed out), `POST /api/view/exchange` with `{ token }`, and `POST /api/view/logout`; `/api/demo-link?named=1|0&next=<route>` mints a link and redirects back to the selected example.
+
+Run `pnpm test:browser` for isolated Chromium regressions (mocked auth boundaries). With `pnpm --filter @open-athena/auth-demo dev` running at `http://localhost:4187`, `pnpm test:browser:live` exercises actual local Pages Functions, D1, and shared session cookies across frameworks. It does not send email or authenticate with Google.
 
 ## Installing
 
@@ -57,7 +204,7 @@ pnpm add "@open-athena/auth@github:Open-Athena/auth#$SHA"
 
 The `dist` branch only advances on a commit whose tests passed, and CI then installs the published branch and exercises it (`scripts/verify-dist.mjs`) — so any SHA you can pin is green *as an artifact*, not just as source. It carries built JS + `.d.ts`, the migrations, and the peer-dep declarations; versions read `0.1.0-dist.<sha>`.
 
-Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), and `react` + `@tanstack/react-query` for the `/react` subpath.
+Peer deps are all optional and only needed for what you use: `@cloudflare/workers-types` (types only), `react` + `@tanstack/react-query` for `/react`, and `vue` for `/vue`.
 
 ## Migrations
 
@@ -139,7 +286,9 @@ Use **one client per deployment** (the callback `aud` names the app, so a token 
 
 One Tap is button-first: Google's rendered button, with the redirect as its fallback. The corner prompt is opt-in (`oneTap={{ clientId, prompt: true }}`), because it's an overlay the visitor didn't ask for; turn it on where nearly everyone signs in with Google. `prompt: { autoSelect: true }` signs a returning visitor in with no click at all. Silent sign-in needs two things: the account has already granted *this* client through One Tap or the button (a redirect sign-in doesn't count), and the browser supports FedCM or allows third-party cookies. Both flows request FedCM, so Chrome shows its own account UI in the page instead of a popup window. An External consent screen can't be published without a privacy-policy link on its Branding page.
 
-**Several Google accounts in one browser.** Google shows its account chooser on every redirect unless the request names an account, so the handlers remember the last Google account that signed in (an `oa_google_hint` cookie, kept 400 days and through sign-out) and `oidcStart` sends it as `login_hint`: a returning visitor goes straight through, with no Google page at all (Google may show a one-time "signing back in" confirmation the first time). Once `googleOneTapNonce` (given `{ request }`) reports the remembered address, `SignInPanel` puts a "Continue as <address>" redirect in the Google slot in place of Google's own button (`continueAs={false}` keeps Google's), so a returning visitor is one click from signed in, and links "Not you? Use another Google account" to `?account=choose`, which skips the hint and asks Google for its chooser. A denied sign-in clears the hint. Pass `accountHintCookie: false` to every handler to turn it off, or a name to rename the cookie. On a site only one Workspace domain can enter, `oneTap={{ clientId, hd: 'openathena.ai' }}` keeps personal accounts out of Google's list entirely (and `authParams: { hd }` does the same for the redirect).
+**One click on the in-page button.** `GoogleOneTap` enables Google's `button_auto_select` by default: eligible returning users can click the personalized button without choosing the same account again. This is independent of `prompt: { autoSelect: true }`, which controls signing in without a click. Set `oneTap={{ clientId, buttonAutoSelect: false }}` to retain the button's chooser. Google/browser consent and eligibility rules still apply; this is not a guarantee that every sign-in skips confirmation.
+
+**Several Google accounts in one browser.** Successful sign-ins remember up to five normalized addresses in most-recently-used order, in HttpOnly `oa_google_hint` / `oa_google_hint_accounts` cookies kept through sign-out. `googleOneTapNonce({ gate })({ request })` returns `loginHint` and `loginHints`; `SignInPanel` renders one hinted redirect per saved account, plus "Use another Google account". `oidcStart` accepts `?account=<remembered email>` and sends that address as `login_hint`; `?account=choose` bypasses the hints and requests Google's chooser. Google may still require consent or reauthentication. These are display hints, not retained authenticated sessions or proof of email ownership; every click still authenticates with Google and checks live app policy. Denial removes only the refused address. Existing single-address cookies remain readable. Pass `accountHintCookie: false` to every handler to disable both cookies, or a name to rename them. `continueAs(email)` customizes each row's content; `continueAs={false}` keeps Google's own button. The demo uses the callback for its Google-mark/email/Last-used/arrow layout. On a Workspace-only site, `oneTap={{ clientId, hd: 'openathena.ai' }}` can restrict Google's offered accounts; server policy must still enforce access.
 
 Authorization-code flow, confidential clients only, nothing persisted between the two requests: `state` is HMAC'd with the gate secret and carries the `next` path plus a nonce, and the nonce is double-submitted via a short-lived cookie — without that, a signed state minted from the attacker's own sign-in is replayable against someone else's browser, and the victim ends up quietly signed in as the attacker. `GOOGLE` is a preset, not a special case; another issuer is four URLs.
 
@@ -207,6 +356,8 @@ authRoutes(gate, { allowlist })   // adds admin GET/POST/DELETE <base>/allowed; 
 Each row carries its own scopes, or pass `allowlistPolicy(store, { scopes })` to grant a fixed set to every member. Rows arrive by hand (the panel) or out of band: a directory sync owns a `source` and calls `store.replaceSource('sync:board@…', members)` — one transaction, so a sign-in mid-sync never sees the group empty and a sync never clobbers a hand-added guest. Mounting the editor doesn't change who gets in; that's the separate `policy` wiring, on purpose.
 
 A link can put its recipient on the list too. `POST <basePath>/grants` with `email` and `allowlist: true` mints the link and makes sure that address holds the link's scopes, so the person you sent it to can later sign in with Google or an emailed code instead of being turned away. An existing row that already covers the scopes is left alone; one that doesn't is widened and becomes `manual`. The response says which (`allowed: { email, status: 'added' | 'widened' | 'already' }`). Revoking the link doesn't remove the row: the link and the address are separate grants of access, and you revoke each where it lives.
+
+If you only learn the address after sending the link, bind it later: `PATCH <basePath>/grants/:id` with `email` (and optionally `allowlist: true`, with the same `allowed` result). Nothing is re-sent. A link session re-reads its grant on every request, so the holder's existing session is email-bound from its next request: `whoami` carries the address, and with `allowGrantSelfEdit` they can edit their own profile. `email: null` (or blank) unbinds it and leaves any allowlist row alone. A revoked link refuses with 409. The access log's `update` row names what changed, and a rebind also names the address it replaced (`email; was old@x.org`).
 
 **Google groups, synced.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), and nothing pushes a group change to a custom app (Google's Shared Signals role is *receiver*, session-revocation only). So "gate this to `board@`" is a periodic pull into the table above, and `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`:
 
@@ -291,9 +442,15 @@ pnpm install
 pnpm test        # vitest; core runs against an in-memory store, adapters against node:sqlite
 pnpm typecheck
 pnpm build
+pnpm test:browser      # real Chromium layout/links, mocked Google/auth boundaries
 cd demo && pnpm dev    # the whole thing running, on :4187
 ```
 
 `pnpm build` compiles `src/core` and `src/adapters` against `@cloudflare/workers-types` alone (no Node types), which is what keeps them honest about being runtime-agnostic. `src/react` is a separate compilation because DOM lib and workers-types declare conflicting globals.
 
 [`npm-dist`]: https://github.com/runsascoded/npm-dist
+[demo-root]: https://auth.oa.dev/
+[demo-vanilla]: https://auth.oa.dev/vanilla
+[demo-vue]: https://auth.oa.dev/vue
+[demo-react]: https://auth.oa.dev/react
+[clear-site-data]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data

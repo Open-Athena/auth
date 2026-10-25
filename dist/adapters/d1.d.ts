@@ -47,3 +47,4 @@ export declare function d1AuditSink(db: D1Database): AuditSink;
 export declare function d1ProfileStore(db: D1Database): ProfileStore;
 export declare function d1PendingAuthStore(db: D1Database): PendingAuthStore;
 export declare function d1Allowlist(db: D1Database): AllowlistStore;
+export { d1RetainedStore } from './d1-retained.js';

@@ -1,8 +1,13 @@
 import { type ReactNode } from 'react';
+import { type SessionLossReason } from '../core/denial.js';
 import { type EmailCodeFormProps } from './EmailCodeForm.js';
 import { type GoogleOneTapProps } from './GoogleOneTap.js';
 import { type RequestAccessFormProps } from './RequestAccessForm.js';
 export interface SignInPanelProps {
+    /** Overrides the enclosing AuthGate's reason; null suppresses it. */
+    reason?: SessionLossReason | null;
+    /** Override the default session-loss copy, or return null to hide it. */
+    reasonMessage?: ReactNode | ((reason: SessionLossReason) => ReactNode);
     /**
      * The primary affordance: "Continue with Google" → an immediate redirect to
      * the OIDC start Function (e.g. `/auth/google`). Google's picker handles
@@ -43,7 +48,7 @@ export interface SignInPanelProps {
     /** Render the request-access form. `true` for defaults, or pass props. */
     requestAccess?: boolean | RequestAccessFormProps;
     children?: ReactNode;
-    classNames?: Partial<Record<'root' | 'title' | 'hint' | 'button' | 'googleButton' | 'switchAccount' | 'divider', string>>;
+    classNames?: Partial<Record<'root' | 'title' | 'hint' | 'reason' | 'button' | 'googleButton' | 'switchAccount' | 'divider', string>>;
 }
 /**
  * The address a denied sign-in redirected back with (`/?denied=<email>`). Google
@@ -58,4 +63,4 @@ export declare function deniedEmail(): string | undefined;
  * on a bare 403: the person who legitimately lost access self-serves, and the
  * person who shouldn't have it hits a door that names itself.
  */
-export declare function SignInPanel({ googleUrl, googleLabel, oneTap, continueAs, switchAccount, withNext, emailAuth, onSignedIn, title, hint, requestAccess, children, classNames, }: SignInPanelProps): import("react").JSX.Element;
+export declare function SignInPanel({ googleUrl, googleLabel, oneTap, continueAs, switchAccount, withNext, emailAuth, onSignedIn, title, hint, requestAccess, children, classNames, reason: reasonProp, reasonMessage, }: SignInPanelProps): import("react").JSX.Element;

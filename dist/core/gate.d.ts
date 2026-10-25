@@ -10,12 +10,15 @@
 import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
 import { type AvatarRef, type AvatarRefKind } from './avatar.js';
+import type { Whoami } from './http.js';
+import type { SessionLossReason } from './denial.js';
 import { type Profile } from './profile.js';
 import { type EmailPolicy } from './policy.js';
 import { type AccessRequest, type Notify, type RateLimit } from './requests.js';
 import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestStore } from './store.js';
 import { type DecisionLinkOptions, type DecisionView } from './decisions.js';
 import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js';
+import { type RetainedOptions } from './retained.js';
 export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
@@ -98,8 +101,20 @@ export interface GateOptions {
     avatarFetchTimeoutMs?: number;
     /** Injectable fetch for server-side avatar copying. Default global. */
     fetch?: typeof globalThis.fetch;
+    /**
+     * Opt in to retained logins: a browser keeps several logins (email sign-ins
+     * and share links) and switches between them; requests act as the active
+     * one. Off by default: without it nothing here reads or writes the
+     * `retained_*` tables (migrations 0003 and 0004). See `RetainedOptions`.
+     */
+    retained?: RetainedOptions;
 }
 export type RedeemFailure = 'bad-token' | 'revoked' | 'disabled' | 'expired' | 'exhausted';
+export interface AuthenticationResult {
+    auth: Auth | null;
+    reason: SessionLossReason | null;
+    credential: 'cookie' | 'token' | 'none';
+}
 export type RequestAccessResult = 
 /** Policy matched: a grant was minted and handed to `notify` immediately. */
 {
@@ -120,8 +135,15 @@ export type RequestAccessResult =
 export type RedeemResult = {
     ok: true;
     grant: Grant;
+    /** Who the browser is now: the link's holder, or (retained mode, link held for later) the login that stayed active. */
     auth: Auth;
     cookie: string;
+    /** Every `Set-Cookie` to send (retained mode may also clear a single-session cookie). */
+    cookies: string[];
+    /** Retained mode: the link was held as an account to switch to (`AccountsResponse.incoming`), not signed into. */
+    incoming?: string;
+    /** Retained mode: the browser's selection context after this exchange. */
+    selection?: string;
 } | {
     ok: false;
     reason: RedeemFailure;
@@ -204,17 +226,58 @@ export declare function sessionValid(grant: Grant, nowS: number): boolean;
  */
 export declare const isActive: typeof canRedeem;
 export declare function createGate(opts: GateOptions): {
-    authenticate: (req: Request, nowMs?: number, { logView: shouldLogView }?: {
+    authenticate: (req: Request, nowMs?: number, options?: {
         logView?: boolean;
     }) => Promise<Auth | null>;
+    authenticateResult: (req: Request, nowMs?: number, { logView: shouldLogView }?: {
+        logView?: boolean;
+    }) => Promise<AuthenticationResult>;
+    unauthenticated: (req: Request, result?: AuthenticationResult) => Promise<Response>;
     redeem: (token: string, req: Request, nowMs?: number) => Promise<RedeemResult>;
     signIn: (email: string, req: Request, nowMs?: number) => Promise<{
         auth: Auth;
         cookie: string;
+        cookies: string[];
     } | null>;
     admits: (email: string) => Promise<string[] | null>;
     signOut: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string>;
+    signOutCookies: (req: Request, auth?: Auth | null, nowMs?: number) => Promise<string[]>;
     expireCookie: (req: Request) => string;
+    /** Retained-login operations (accounts, switching, sign-out-all, `checkMutation`), or null when off. */
+    retained: {
+        handleCookie: string;
+        clearHandle: (req: Request) => string;
+        authenticate(req: Request, nowMs: number, logView: boolean): Promise<"absent" | {
+            auth: Auth | null;
+            reason: SessionLossReason | null;
+        }>;
+        selection(req: Request, nowMs: number): Promise<string | null>;
+        signIn(req: Request, email: string, nowMs: number): Promise<string[]>;
+        incoming(req: Request, grant: Grant, tokenHash: string, nowMs: number): Promise<{
+            ok: true;
+            switched: true;
+            minted: boolean;
+            cookies: string[];
+            selection: string;
+        } | {
+            ok: true;
+            switched: false;
+            active: Auth;
+            pendingId: string | null;
+            cookies: string[];
+            selection: string;
+        } | {
+            ok: false;
+            cookies: string[];
+        }>;
+        accounts(req: Request, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        select(req: Request, sessionId: string | null, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        remove(req: Request, sessionId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        acceptIncoming(req: Request, pendingId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
+        signOut(req: Request, nowMs: number): Promise<string[]>;
+        signOutAll(req: Request, nowMs: number): Promise<string[]>;
+        checkMutation(req: Request, nowMs: number): Promise<Response | null>;
+    } | null;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
     rotate: (id: string, { endSessions }?: {
@@ -222,27 +285,9 @@ export declare function createGate(opts: GateOptions): {
     }, nowMs?: number) => Promise<MintResult | null>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
-    update: (id: string, edit: GrantEdit, nowMs?: number) => Promise<Grant | null>;
+    update: (id: string, edit: GrantEdit, nowMs?: number, alsoLogged?: string[]) => Promise<Grant | null>;
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
-    whoami: (auth: Auth) => {
-        kind: "sso";
-        email: string;
-        admin: boolean;
-        scopes: string[];
-        subject: Subject | null;
-        id?: undefined;
-        name?: undefined;
-        expiresAt?: undefined;
-    } | {
-        kind: "grant";
-        id: string;
-        name: string | null;
-        subject: Subject | null;
-        email: string | null;
-        scopes: string[];
-        admin: boolean;
-        expiresAt: number | null;
-    };
+    whoami: (auth: Auth) => Whoami;
     getProfile: (auth: Auth) => Promise<Profile | null>;
     putProfile: (auth: Auth, input: ProfileInput, nowMs?: number) => Promise<PutProfileResult>;
     seedProfileFromClaims: (email: string, claims: {
@@ -289,6 +334,7 @@ export declare function createGate(opts: GateOptions): {
         nowMs?: number;
     }) => Promise<DecisionView>;
     list: (o?: GrantListOpts) => Promise<Grant[]>;
+    byId: (id: string) => Promise<Grant | null>;
     listRequests: (o?: RequestListOpts) => Promise<AccessRequest[]>;
 };
 export type Gate = ReturnType<typeof createGate>;

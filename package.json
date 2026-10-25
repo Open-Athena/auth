@@ -1,12 +1,16 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.b3eb445",
+  "version": "0.1.0-dist.fd8dd1e",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
   "type": "module",
   "packageManager": "pnpm@10.18.1",
   "exports": {
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
@@ -31,9 +35,30 @@
       "types": "./dist/adapters/google-directory.d.ts",
       "default": "./dist/adapters/google-directory.js"
     },
+    "./session-log": {
+      "types": "./dist/session-log/index.d.ts",
+      "default": "./dist/session-log/index.js"
+    },
+    "./session-log/d1": {
+      "types": "./dist/adapters/d1-session-log.d.ts",
+      "default": "./dist/adapters/d1-session-log.js"
+    },
+    "./session-log/client": {
+      "types": "./dist/client/session-log/index.d.ts",
+      "default": "./dist/client/session-log/index.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
+    },
+    "./react/session-log": {
+      "types": "./dist/react/session-log/index.d.ts",
+      "default": "./dist/react/session-log/index.js"
+    },
+    "./react/session-log.css": "./dist/react/session-log/session-log.css",
+    "./vue": {
+      "types": "./dist/vue/index.d.ts",
+      "default": "./dist/vue/index.js"
     },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
@@ -45,7 +70,8 @@
   "peerDependencies": {
     "@cloudflare/workers-types": "*",
     "@tanstack/react-query": "^5.0.0",
-    "react": "^18.0.0 || ^19.0.0"
+    "react": "^18.0.0 || ^19.0.0",
+    "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
     "@cloudflare/workers-types": {
@@ -55,6 +81,9 @@
       "optional": true
     },
     "react": {
+      "optional": true
+    },
+    "vue": {
       "optional": true
     }
   }

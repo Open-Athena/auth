@@ -18,6 +18,7 @@
  *   as the attacker.
  */
 import { b64uEncode } from '../core/base64.js';
+import { RetainedLoginError } from '../core/retained.js';
 import { verifyRs256Jwt } from '../core/jwt.js';
 import { clearCookie, isSecureRequest, readCookie, sessionCookie, signSession, verifySession } from '../core/session.js';
 import { generateToken } from '../core/tokens.js';
@@ -39,15 +40,67 @@ function readAccountHint(req, name) {
     if (!name)
         return null;
     const raw = readCookie(req, name);
-    if (!raw)
+    if (!raw || raw.length > 3000)
         return null;
     try {
-        const email = decodeURIComponent(raw);
-        return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
+        return normalizeAccountHint(decodeURIComponent(raw));
     }
     catch {
         return null;
     }
+}
+function normalizeAccountHint(value) {
+    if (typeof value !== 'string')
+        return null;
+    const email = value.trim().toLowerCase();
+    return email.length <= 254 && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(email) ? email : null;
+}
+function boundedAccountHints(values) {
+    const emails = [];
+    for (const value of values) {
+        const email = normalizeAccountHint(value);
+        if (!email || emails.includes(email))
+            continue;
+        if (encodeURIComponent(JSON.stringify([...emails, email])).length > 3000)
+            break;
+        emails.push(email);
+        if (emails.length === 5)
+            break;
+    }
+    return emails;
+}
+function readAccountHints(req, name) {
+    if (!name)
+        return [];
+    const hint = readAccountHint(req, name);
+    const raw = readCookie(req, `${name}_accounts`);
+    let values = [];
+    if (raw && raw.length <= 3000) {
+        try {
+            const parsed = JSON.parse(decodeURIComponent(raw));
+            if (Array.isArray(parsed))
+                values = parsed;
+        }
+        catch {
+            // Malformed client-controlled history is an absent hint, not an error.
+        }
+    }
+    return boundedAccountHints([hint, ...values]);
+}
+/** Remembered addresses are presentation hints, never retained sessions. */
+function writeAccountHints(headers, req, name, email, denied = false) {
+    if (!name)
+        return;
+    const normalized = normalizeAccountHint(email);
+    const previous = readAccountHints(req, name);
+    const accounts = denied
+        ? previous.filter(value => value !== normalized)
+        : boundedAccountHints([normalized, ...previous]);
+    const current = denied ? accounts[0] : normalized;
+    headers.append('set-cookie', current ? setAccountHint(req, name, current) : clearCookie({ name, secure: isSecureRequest(req) }));
+    headers.append('set-cookie', accounts.length
+        ? sessionCookie(encodeURIComponent(JSON.stringify(accounts)), { name: `${name}_accounts`, ttlS: ACCOUNT_HINT_TTL_S, secure: isSecureRequest(req) })
+        : clearCookie({ name: `${name}_accounts`, secure: isSecureRequest(req) }));
 }
 const setAccountHint = (req, name, email) => sessionCookie(encodeURIComponent(email), { name, ttlS: ACCOUNT_HINT_TTL_S, secure: isSecureRequest(req) });
 const STATE_PREFIX = 'oidc:';
@@ -70,8 +123,12 @@ export function oidcStart(opts) {
         const nonce = generateToken();
         const params = new URL(request.url).searchParams;
         const next = safeNext(params.get('next'));
-        const choose = params.get('account') === 'choose';
-        const hint = choose ? null : readAccountHint(request, hintCookie);
+        const account = params.get('account');
+        const choose = account === 'choose';
+        const selected = normalizeAccountHint(account);
+        const hint = choose ? null : account !== null
+            ? selected && readAccountHints(request, hintCookie).includes(selected) ? selected : null
+            : readAccountHint(request, hintCookie);
         const state = await signSession(`${STATE_PREFIX}${nonce}:${next}`, gate.secret, Date.now(), stateTtlS);
         const url = new URL(provider.authUrl);
         url.search = new URLSearchParams({
@@ -163,15 +220,29 @@ export function oidcCallback(opts) {
         // someone else's address on an account they haven't proved they own.
         if (claims.email_verified !== true || typeof claims.email !== 'string')
             return deny('no verified email');
-        const signedIn = await gate.signIn(claims.email, request);
+        // A browser already holding as many logins as its gate retains can't take
+        // another: back to the app, which can offer to remove one.
+        const full = (e) => {
+            if (!(e instanceof RetainedLoginError))
+                throw e;
+            const headers = new Headers({ location: `/?accounts=${e.code}`, 'cache-control': 'no-store' });
+            headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
+            return new Response(null, { status: 302, headers });
+        };
+        let signedIn;
+        try {
+            signedIn = await gate.signIn(claims.email, request);
+        }
+        catch (e) {
+            return full(e);
+        }
         // Authentication succeeded and authorization did not: the person is who
         // they say they are and still isn't allowed in. That distinction is what
         // lets an app pre-fill a request-access form with a *verified* address.
         if (!signedIn) {
             const headers = new Headers({ location: `/?denied=${encodeURIComponent(claims.email)}`, 'cache-control': 'no-store' });
             headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
-            if (hintCookie)
-                headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }));
+            writeAccountHints(headers, request, hintCookie, claims.email, true);
             return new Response(null, { status: 302, headers });
         }
         // Seed name + face before we redirect, so the seeded subject is already
@@ -181,10 +252,10 @@ export function oidcCallback(opts) {
         if (seedProfile)
             await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         const headers = new Headers({ location: next, 'cache-control': 'no-store' });
-        headers.append('set-cookie', signedIn.cookie);
+        for (const c of signedIn.cookies)
+            headers.append('set-cookie', c);
         headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
-        if (hintCookie)
-            headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email));
+        writeAccountHints(headers, request, hintCookie, claims.email);
         return new Response(null, { status: 302, headers });
     };
 }
@@ -202,12 +273,13 @@ function readCookieValue(req, name) {
 }
 const ONETAP_PREFIX = 'onetap:';
 /**
- * `GET` handler → `{ nonce, loginHint? }`. The page passes `nonce` to
+ * `GET` handler → `{ nonce, loginHint?, loginHints? }`. The page passes `nonce` to
  * `google.accounts.id.initialize({ nonce })` and echoes the same value back to
  * `googleOneTapVerify`. The value is opaque and single-window; it is not a
  * bearer credential (it authorizes nothing without a Google-signed id_token
  * that embeds it). `loginHint` is the remembered account (`AccountHintOptions`),
- * for the page to offer "not you?".
+ * for the page to offer "not you?". Nonempty `loginHints` lists remembered
+ * addresses for account rows; none of these hints authenticate a visitor.
  */
 export function googleOneTapNonce(opts) {
     const { gate, ttlS = 300 } = opts;
@@ -215,7 +287,8 @@ export function googleOneTapNonce(opts) {
     return async (ctx) => {
         const nonce = await signSession(`${ONETAP_PREFIX}${generateToken()}`, gate.secret, Date.now(), ttlS);
         const loginHint = ctx?.request ? readAccountHint(ctx.request, hintCookie) : null;
-        return new Response(JSON.stringify(loginHint ? { nonce, loginHint } : { nonce }) + '\n', {
+        const loginHints = ctx?.request ? readAccountHints(ctx.request, hintCookie) : [];
+        return new Response(JSON.stringify({ nonce, ...(loginHint ? { loginHint } : {}), ...(loginHints.length ? { loginHints } : {}) }) + '\n', {
             status: 200,
             headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
         });
@@ -268,11 +341,21 @@ export function googleOneTapVerify(opts) {
         }
         if (claims.email_verified !== true || typeof claims.email !== 'string')
             return deny('no verified email');
-        const signedIn = await gate.signIn(claims.email, request);
+        let signedIn;
+        try {
+            signedIn = await gate.signIn(claims.email, request);
+        }
+        catch (e) {
+            if (!(e instanceof RetainedLoginError))
+                throw e;
+            return new Response(JSON.stringify({ ok: false, error: e.code }) + '\n', {
+                status: 409,
+                headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+            });
+        }
         if (!signedIn) {
             const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-            if (hintCookie)
-                headers.append('set-cookie', clearCookie({ name: hintCookie, secure: isSecureRequest(request) }));
+            writeAccountHints(headers, request, hintCookie, claims.email, true);
             return new Response(JSON.stringify({ ok: false, denied: claims.email }) + '\n', { status: 401, headers });
         }
         // Seed before the 200: the FE re-fetches `/whoami` right after this resolves,
@@ -280,9 +363,9 @@ export function googleOneTapVerify(opts) {
         if (seedProfile)
             await gate.seedProfileFromClaims(claims.email, claims).catch(() => null);
         const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        headers.append('set-cookie', signedIn.cookie);
-        if (hintCookie)
-            headers.append('set-cookie', setAccountHint(request, hintCookie, claims.email));
+        for (const c of signedIn.cookies)
+            headers.append('set-cookie', c);
+        writeAccountHints(headers, request, hintCookie, claims.email);
         return new Response(JSON.stringify({ ok: true }) + '\n', { status: 200, headers });
     };
 }

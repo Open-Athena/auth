@@ -14,12 +14,13 @@ import { looksAutomated } from './bots.js';
 import { cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
-import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySessionClaims, } from './session.js';
+import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
 import { ALL_SCOPES } from './types.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
+import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
-const denyReason = (grant) => grant.revokedAt ? 'revoked' : grant.disabledAt ? 'disabled' : 'expired';
+const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
 const sec = (nowMs) => Math.floor(nowMs / 1000);
 /**
  * Wrap a fetch so each call aborts after `ms`. Used only on the profile-seed
@@ -83,6 +84,15 @@ export function createGate(opts) {
         return Object.keys(subject).length ? subject : null;
     }
     const notify = opts.notify ?? noopNotify;
+    const retained = opts.retained
+        ? retainedMode(opts.retained, {
+            secret,
+            gateCookie: cookieName,
+            sessionTtlS,
+            resolve: (req, claims, nowS, o) => resolveClaims(req, claims, nowS, o),
+            grantById: id => store.byId(id),
+        })
+        : null;
     const log = (event) => audit.log(event);
     async function logWithRequest(req, event, nowS) {
         const meta = await requestMeta(req, secret);
@@ -97,7 +107,7 @@ export function createGate(opts) {
      * exchange; they are request-scoped and never count as a redemption, since a
      * redemption means "a browser session was minted".
      */
-    async function authenticate(req, nowMs = Date.now(), 
+    async function authenticateResult(req, nowMs = Date.now(), 
     /**
      * `logView: false` suppresses the automatic view row for this call. The
      * auth endpoints themselves use it: `/whoami` and `/track` are plumbing,
@@ -106,54 +116,75 @@ export function createGate(opts) {
      */
     { logView: shouldLogView = true } = {}) {
         const nowS = sec(nowMs);
+        let credential = 'none';
+        const failed = (reason) => ({ auth: null, reason, credential });
         const afterAuth = async (auth) => {
             if (logViews && shouldLogView)
                 await logView(req, auth, nowS);
-            return auth;
+            return { auth, reason: null, credential };
         };
         const url = new URL(req.url);
-        const presented = req.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1] ?? url.searchParams.get('key');
-        if (presented) {
+        const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
+        const tokenPresented = !!bearer || url.searchParams.has('key');
+        const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '');
+        if (tokenPresented) {
+            credential = 'token';
             const grant = await store.byTokenHash(await hashToken(presented));
             if (!grant) {
                 await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
-                return null;
+                return failed('invalid');
             }
             // A presented token is the *link* being used, not a session being
             // resumed, so disabling blocks it: "stop letting new people in" has to
             // include the person still pasting the raw link into curl.
             if (!canRedeem(grant, nowS)) {
                 await logWithRequest(req, { event: 'deny', grantId: grant.id, reason: denyReason(grant) }, nowS);
-                return null;
+                return failed(grant.revokedAt !== null ? 'revoked' : isExpired(grant, nowS) ? 'expired' : 'invalid');
             }
             await store.touch(grant.id, nowS, touchIntervalS);
             return await afterAuth(grantAuth(grant));
         }
+        if (retained) {
+            const r = await retained.authenticate(req, nowMs, shouldLogView);
+            if (r !== 'absent') {
+                credential = 'cookie';
+                return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+            }
+        }
         const cookie = readCookie(req, cookieName);
-        if (!cookie)
-            return null;
-        const claims = await verifySessionClaims(cookie, secret, nowMs);
-        if (!claims)
-            return null;
+        if (cookie === null)
+            return failed(null);
+        credential = 'cookie';
+        const inspected = await inspectSessionClaims(cookie, secret, nowMs);
+        if (!inspected.ok)
+            return failed(inspected.reason);
+        const r = await resolveClaims(req, inspected.claims, nowS, { quiet: false });
+        return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+    }
+    /**
+     * A session's principal → its live identity, or why it has none. Shared by
+     * the single-session cookie and a retained login: an email re-derives its
+     * scopes from the policy, and a grant is re-joined every time, which is what
+     * makes revocation instant. `quiet` (listing a browser's logins) neither logs
+     * a deny nor touches the grant.
+     */
+    async function resolveClaims(req, claims, nowS, { quiet }) {
         const sub = claims.sub;
         const parsed = parseSub(sub);
-        if (!parsed)
-            return null;
+        if (!parsed || !parsed.value)
+            return { auth: null, reason: 'invalid' };
         if (parsed.kind === 'email') {
             const scopes = await policy(parsed.value);
             if (!scopes) {
-                await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS);
-                return null;
+                if (!quiet)
+                    await logWithRequest(req, { event: 'deny', sessionSub: sub, reason: 'not-allowed' }, nowS);
+                return { auth: null, reason: 'delisted' };
             }
-            return await afterAuth({
-                kind: 'sso',
-                email: parsed.value,
-                admin: isAdmin(parsed.value),
-                scopes,
-                subject: await subjectFor(parsed.value),
-            });
+            return {
+                auth: { kind: 'sso', email: parsed.value, admin: isAdmin(parsed.value), scopes, subject: await subjectFor(parsed.value) },
+                reason: null,
+            };
         }
-        // Re-join the grant every request: this is what makes revocation instant.
         // `sessionValid`, not `canRedeem` — a disabled link keeps its existing
         // sessions alive, and an expired one only ends them if it was minted to.
         const grant = await store.byId(parsed.value);
@@ -162,16 +193,39 @@ export function createGate(opts) {
         // same "re-join every request" hook that makes revoke instant.
         const rotatedOut = grant !== null && grant.sessionsInvalidBefore !== null && claims.iat < grant.sessionsInvalidBefore;
         if (!grant || !sessionValid(grant, nowS) || rotatedOut) {
-            await logWithRequest(req, {
-                event: 'deny',
-                grantId: parsed.value,
-                sessionSub: sub,
-                reason: !grant ? 'expired' : rotatedOut ? 'rotated' : denyReason(grant),
-            }, nowS);
-            return null;
+            const reason = !grant ? 'invalid' : grant.revokedAt !== null ? 'revoked' : rotatedOut ? 'rotated' : 'expired';
+            if (!quiet)
+                await logWithRequest(req, { event: 'deny', grantId: parsed.value, sessionSub: sub, reason }, nowS);
+            return { auth: null, reason };
         }
-        await store.touch(grant.id, nowS, touchIntervalS);
-        return await afterAuth(grantAuth(grant));
+        if (!quiet)
+            await store.touch(grant.id, nowS, touchIntervalS);
+        return { auth: grantAuth(grant), reason: null };
+    }
+    /** Existing callers keep their `Auth | null` contract. */
+    async function authenticate(req, nowMs = Date.now(), options = {}) {
+        return (await authenticateResult(req, nowMs, options)).auth;
+    }
+    /** Shared 401 for gated data routes as well as `/whoami`. */
+    async function unauthenticated(req, result) {
+        const failure = result ?? await authenticateResult(req, Date.now(), { logView: false });
+        const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        const explicit = /^Bearer(?:\s|$)/i.test(req.headers.get('Authorization') ?? '') || new URL(req.url).searchParams.has('key');
+        if (!failure.auth && failure.credential === 'cookie' && !explicit) {
+            if (readCookie(req, cookieName) !== null) {
+                headers.append('set-cookie', expireCookie(req));
+                headers.set('clear-site-data', '"cache"');
+            }
+            // Retained mode: the active login failed. The private cache goes, as
+            // above; the browser's handle goes only if no other login is left to
+            // switch to. A browser signed out on purpose (reason null) keeps both.
+            if (retained && failure.reason !== null && readCookie(req, retained.handleCookie) !== null) {
+                headers.set('clear-site-data', '"cache"');
+                if (!(await retained.accounts(req, Date.now()))?.accounts.length)
+                    headers.append('set-cookie', retained.clearHandle(req));
+            }
+        }
+        return new Response(JSON.stringify({ error: 'unauthenticated', reason: failure.auth ? null : failure.reason }) + '\n', { status: 401, headers });
     }
     async function logView(req, auth, nowS = sec(Date.now()), path) {
         if (filterBots && looksAutomated(req))
@@ -191,10 +245,42 @@ export function createGate(opts) {
     /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
     async function redeem(token, req, nowMs = Date.now()) {
         const nowS = sec(nowMs);
-        const existing = await store.byTokenHash(await hashToken(token));
+        const tokenHash = await hashToken(token);
+        const existing = await store.byTokenHash(tokenHash);
         if (!existing) {
             await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
             return { ok: false, reason: 'bad-token' };
+        }
+        if (retained) {
+            // A link this browser can't redeem leaves its logins as they are: a bad
+            // link never signs a member out.
+            if (!canRedeem(existing, nowS)) {
+                const reason = denyReason(existing);
+                await logWithRequest(req, { event: 'deny', grantId: existing.id, reason }, nowS);
+                return { ok: false, reason };
+            }
+            const r = await retained.incoming(req, existing, tokenHash, nowMs);
+            if (!r.ok) {
+                const now = await store.byId(existing.id);
+                const reason = now && canRedeem(now, nowS) ? 'exhausted' : now ? denyReason(now) : 'bad-token';
+                await logWithRequest(req, { event: 'deny', grantId: existing.id, reason }, nowS);
+                return { ok: false, reason };
+            }
+            if (!r.switched) {
+                return {
+                    ok: true,
+                    grant: existing,
+                    auth: r.active,
+                    cookie: r.cookies[0],
+                    cookies: r.cookies,
+                    selection: r.selection,
+                    ...(r.pendingId ? { incoming: r.pendingId } : {}),
+                };
+            }
+            const grant = (await store.byId(existing.id)) ?? existing;
+            if (r.minted)
+                await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS);
+            return { ok: true, grant, auth: grantAuth(grant), cookie: r.cookies[0], cookies: r.cookies, selection: r.selection };
         }
         const grant = await store.redeem(existing.id, nowS);
         if (!grant) {
@@ -208,7 +294,7 @@ export function createGate(opts) {
         const ttlS = grant.sessionTtlS ?? sessionTtlS;
         const cookie = cookieFor(req, await signSession(grantSub(grant.id), secret, nowMs, ttlS), ttlS);
         await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS);
-        return { ok: true, grant, auth: grantAuth(grant), cookie };
+        return { ok: true, grant, auth: grantAuth(grant), cookie, cookies: [cookie] };
     }
     /**
      * Would this address be admitted, and with what scopes? A pure policy check —
@@ -226,13 +312,27 @@ export function createGate(opts) {
             await logWithRequest(req, { event: 'deny', sessionSub: emailSub(email), reason: 'not-allowed' }, nowS);
             return null;
         }
-        const cookie = cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS);
+        // Retained mode adds the login to this browser and selects it, keeping its others.
+        const cookies = retained
+            ? await retained.signIn(req, email, nowMs)
+            : [cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)];
         await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS);
-        return { auth: { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) }, cookie };
+        const auth = { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) };
+        return { auth, cookie: cookies[0], cookies };
     }
     async function signOut(req, auth = null, nowMs = Date.now()) {
+        return (await signOutCookies(req, auth, nowMs))[0] ?? clearCookie({ name: cookieName, secure: isSecureRequest(req) });
+    }
+    /**
+     * Sign out, as every `Set-Cookie` to send. Retained mode removes only the
+     * active login from this browser (its others stay, and nothing else is
+     * selected in its place), and needs the request's `X-OA-Selection-Context`:
+     * a stale one throws `RetainedLoginError`.
+     */
+    async function signOutCookies(req, auth = null, nowMs = Date.now()) {
+        const cookies = retained ? await retained.signOut(req, nowMs) : [clearCookie({ name: cookieName, secure: isSecureRequest(req) })];
         await logWithRequest(req, { event: 'signout', sessionSub: auth?.kind === 'sso' ? emailSub(auth.email) : auth ? grantSub(auth.grant.id) : null }, sec(nowMs));
-        return clearCookie({ name: cookieName, secure: isSecureRequest(req) });
+        return cookies;
     }
     /**
      * The `Set-Cookie` that drops this gate's session cookie, with no sign-out
@@ -537,15 +637,27 @@ export function createGate(opts) {
      * `sessionTtlS` is the exception worth knowing about: it is baked into the
      * cookie at redeem time, so changing it only affects future redemptions.
      *
+     * Binding an `email` (or clearing it) likewise applies to the holder's
+     * existing session on its next request: no new link, nothing re-sent.
+     *
      * The holder's name and face apply on their next request: a grant session
      * re-reads its grant every time. A new `avatar` is copied first (throwing
      * `InvalidImageError` as `mint` does), and a replaced stored asset is
      * dropped only once the new subject is written.
      */
-    async function update(id, edit, nowMs = Date.now()) {
+    async function update(id, edit, nowMs = Date.now(), 
+    /** Further keys for the audit reason, for what the caller did alongside (the route's `allowlist`). */
+    alsoLogged = []) {
         const nowS = sec(nowMs);
         const { subjectName: name, avatar, ...patch } = edit;
         let prior = null;
+        let priorEmail = null;
+        if ('email' in edit) {
+            const existing = await store.byId(id);
+            if (!existing)
+                return null;
+            priorEmail = existing.email;
+        }
         if ('subjectName' in edit || 'avatar' in edit) {
             const existing = await store.byId(id);
             if (!existing)
@@ -571,8 +683,12 @@ export function createGate(opts) {
         const grant = await store.update(id, patch);
         // Logged because changing a link's terms is exactly the sort of thing the
         // ledger exists to show: "who extended this, and when".
+        // A rebind also names the address it replaced, so "whose link was this"
+        // stays answerable after the fact.
+        const keys = [...Object.keys(edit), ...alsoLogged].sort().join(',');
+        const rebound = priorEmail !== null && edit.email != null && edit.email !== priorEmail;
         if (grant)
-            await log({ ts: nowS, event: 'update', grantId: id, reason: Object.keys(edit).sort().join(',') || null });
+            await log({ ts: nowS, event: 'update', grantId: id, reason: (rebound ? `${keys}; was ${priorEmail}` : keys) || null });
         const priorAsset = assetId(prior?.avatar);
         if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
             await assets.del(priorAsset).catch(() => { });
@@ -742,11 +858,16 @@ export function createGate(opts) {
     }
     return {
         authenticate,
+        authenticateResult,
+        unauthenticated,
         redeem,
         signIn,
         admits,
         signOut,
+        signOutCookies,
         expireCookie,
+        /** Retained-login operations (accounts, switching, sign-out-all, `checkMutation`), or null when off. */
+        retained,
         mint,
         revoke,
         rotate,
@@ -775,6 +896,7 @@ export function createGate(opts) {
         denyRequest,
         decide,
         list: (o) => store.list(o),
+        byId: (id) => store.byId(id),
         listRequests: (o) => requestStore().list(o),
     };
 }
