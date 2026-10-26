@@ -264,6 +264,73 @@ describe('oidcCallback', () => {
   })
 })
 
+describe('PKCE and provider errors', () => {
+  it('sends an S256 challenge, and the callback proves it with the matching verifier', async () => {
+    const res = await oidcStart(opts(providerFetch(null)))({ request: new Request('https://app.test/auth/google?next=%2Freports') })
+    const p = new URL(res.headers.get('location')!).searchParams
+    const nonce = res.headers.get('set-cookie')!.split(';')[0]!.split('=')[1]!
+    expect(p.get('code_challenge_method')).toBe('S256')
+
+    let tokenForm: URLSearchParams | null = null
+    const token = await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce })
+    const capture = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === GOOGLE.tokenUrl) tokenForm = new URLSearchParams(String(init!.body))
+      return providerFetch(token)(input, init)
+    }) as typeof globalThis.fetch
+    const cb = await oidcCallback(opts(capture))({
+      request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(p.get('state')!)}`, { headers: { Cookie: `oa_oidc=${nonce}` } }),
+    })
+    expect(cb.headers.get('location')).toBe('/reports')
+    const verifier = tokenForm!.get('code_verifier')!
+    const digest = await crypto.subtle.digest('SHA-256', enc.encode(verifier))
+    expect([/^[A-Za-z0-9_-]{43}$/.test(verifier), b64u(digest)]).toEqual([true, p.get('code_challenge')])
+  })
+
+  it('`?prompt=none` asks for a silent attempt, and `?account=choose` still wins', async () => {
+    const prompt = async (q: string) =>
+      new URL((await oidcStart(opts(providerFetch(null)))({ request: new Request(`https://app.test/auth/google?${q}`) })).headers.get('location')!).searchParams.get('prompt')
+    expect([await prompt('prompt=none'), await prompt('account=choose&prompt=none'), await prompt('')]).toEqual(['none', 'select_account', null])
+  })
+
+  it('a provider error with our state goes back to `next` with the reason, and spends the nonce', async () => {
+    const { state, cookie } = await start('/reports?tab=2')
+    const cb = (error: string) =>
+      oidcCallback(opts(providerFetch(null)))({
+        request: new Request(`https://app.test/auth/google/callback?error=${error}&state=${encodeURIComponent(state)}`, { headers: { Cookie: cookie } }),
+      })
+    const res = await cb('login_required')
+    expect([res.status, res.headers.get('location')]).toEqual([302, '/reports?tab=2&sso=login_required'])
+    expect(setCookies(res).map(c => c.split(';')[0])).toEqual(['oa_oidc='])
+    expect((await cb('server_error')).headers.get('location')).toBe('/reports?tab=2&sso=error')
+  })
+
+  it('a provider error with a state from another browser is refused like any other', async () => {
+    const { state } = await start()
+    const res = await oidcCallback(opts(providerFetch(null)))({
+      request: new Request(`https://app.test/auth/google/callback?error=login_required&state=${encodeURIComponent(state)}`, { headers: { Cookie: 'oa_oidc=other' } }),
+    })
+    expect([res.status, res.headers.get('location')]).toEqual([400, null])
+  })
+})
+
+describe('hostedDomain', () => {
+  const hosted = async (hd: string | undefined) => {
+    const { state, cookie } = await start('/reports')
+    const nonce = cookie.split('=')[1]!
+    const token = await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce, ...(hd ? { hd } : {}) })
+    const res = await oidcCallback({ ...opts(providerFetch(token)), hostedDomain: 'openathena.ai' })({
+      request: new Request(`https://app.test/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`, { headers: { Cookie: cookie } }),
+    })
+    return [res.headers.get('location'), setCookies(res).some(c => c.startsWith('oa_auth='))]
+  }
+
+  it('admits a managed Workspace account, and denies a consumer account at the same address or another domain', async () => {
+    expect(await hosted('openathena.ai')).toEqual(['/reports', true])
+    expect(await hosted(undefined)).toEqual(['/?denied=staff%40openathena.ai', false])
+    expect(await hosted('example.com')).toEqual(['/?denied=staff%40openathena.ai', false])
+  })
+})
+
 describe('googleOneTap', () => {
   /** A fresh HMAC-signed nonce, as the page would fetch from `googleOneTapNonce`. */
   async function mintNonce(): Promise<string> {

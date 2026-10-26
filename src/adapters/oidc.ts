@@ -64,8 +64,21 @@ export interface OidcOptions extends AccountHintOptions {
    * Never overrides a self-set profile.
    */
   seedProfile?: boolean
+  /**
+   * Require the id_token's `hd` claim (Google Workspace) to be one of these.
+   * An address at the domain isn't enough: anyone can create a consumer
+   * Google account for an address they don't manage, and Google vouches for
+   * it with no `hd`. A miss is a denial (`/?denied=`), like the policy's.
+   * Pair it with `authParams: { hd }` so Google's chooser shows only those.
+   */
+  hostedDomain?: string | string[]
   fetch?: typeof globalThis.fetch
 }
+
+/** Does the id_token's `hd` satisfy `hostedDomain` (unset: anything does)? */
+const hostedOk = (claims: { hd?: unknown }, hostedDomain: string | string[] | undefined): boolean =>
+  hostedDomain === undefined ||
+  (typeof claims.hd === 'string' && (Array.isArray(hostedDomain) ? hostedDomain : [hostedDomain]).includes(claims.hd.toLowerCase()))
 
 const DEFAULT_NONCE_COOKIE = 'oa_oidc'
 
@@ -186,6 +199,8 @@ interface IdTokenClaims extends Record<string, unknown> {
   email?: string
   email_verified?: boolean
   nonce?: string
+  /** Google Workspace domain; absent for a consumer account. */
+  hd?: string
   // Present when `scope` includes `profile` (Google's default here): used only
   // to seed a self-serve profile when `seedProfile` is on. Never trusted for
   // authorization — that's `email` + `email_verified`.
@@ -269,7 +284,7 @@ export function oidcStart(opts: OidcOptions) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts: OidcOptions) {
-  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true } = opts
+  const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true, hostedDomain } = opts
   const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE
   const hintCookie = hintCookieName(opts.accountHintCookie)
   const doFetch = opts.fetch ?? globalThis.fetch
@@ -343,7 +358,7 @@ export function oidcCallback(opts: OidcOptions) {
     }
     let signedIn: Awaited<ReturnType<Gate['signIn']>>
     try {
-      signedIn = await gate.signIn(claims.email, request)
+      signedIn = hostedOk(claims, hostedDomain) ? await gate.signIn(claims.email, request) : null
     } catch (e) {
       return full(e)
     }
@@ -442,6 +457,8 @@ export interface OneTapVerifyOptions extends AccountHintOptions {
   debug?: boolean
   /** Seed a first-ever principal's profile from the credential's claims. See `OidcOptions.seedProfile`. */
   seedProfile?: boolean
+  /** See `OidcOptions.hostedDomain`. */
+  hostedDomain?: string | string[]
   fetch?: typeof globalThis.fetch
 }
 
@@ -466,7 +483,7 @@ async function nonceForms(nonce: string): Promise<Set<string>> {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts: OneTapVerifyOptions) {
-  const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true } = opts
+  const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true, hostedDomain } = opts
   const hintCookie = hintCookieName(opts.accountHintCookie)
   const doFetch = opts.fetch ?? globalThis.fetch
   const deny = (why: string): Response => oneTapDeny(why, debug)
@@ -495,7 +512,7 @@ export function googleOneTapVerify(opts: OneTapVerifyOptions) {
 
     let signedIn: Awaited<ReturnType<Gate['signIn']>>
     try {
-      signedIn = await gate.signIn(claims.email, request)
+      signedIn = hostedOk(claims, hostedDomain) ? await gate.signIn(claims.email, request) : null
     } catch (e) {
       if (!(e instanceof RetainedLoginError)) throw e
       return new Response(JSON.stringify({ ok: false, error: e.code }) + '\n', {

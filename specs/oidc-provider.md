@@ -84,9 +84,10 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
 - Logout signs out of the broker (`gate.signOutCookies`: the active retained account, or the single session). It redirects only with a valid `id_token_hint` (expired is fine) and a registered `post_logout_redirect_uri`; otherwise it answers `Signed out.` in place.
 - Demo: the dashboard's gate is the broker (issuer = request origin; a per-isolate key on localhost, `OIDC_SIGNING_KEY` required on auth.oa.dev), `/signin` honours `next` / `prompt`, with a chooser for `select_account`. App B (`/rp`) has its own gate and cookie, and its token and JWKS calls stay in-isolate.
 
+- `oidcCallback` / `googleOneTapVerify` take `hostedDomain`: the id_token's `hd` must match, or it's a denial (`/?denied=`). An address at the domain isn't enough, since a consumer Google account can carry it with no `hd`. The broker's own Google sign-in should set it, with `authParams: { hd }`.
+
 ## Follow-ups (not in the first cut)
 
 - `account_selection_required` for `prompt=none` when the browser holds accounts but none is active (now `login_required`).
 - `picture` for `asset://` / `data:` avatars (only `https:` URLs are passed through today).
 - Back-channel logout, and how revocation reaches downstream apps.
-- A Workspace `hd` check on the upstream Google callback (`oidcCallback({ requireHd })`).
