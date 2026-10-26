@@ -11,7 +11,7 @@
  *
  * Config (JSON; secrets stay in the file, not on the command line):
  *   { "issuer": "…", "cookie": "<Cookie header of a signed-in broker session>",
- *     "clients": [{ "id": "…", "secret": "…", "redirectUri": "…" }, …] }   // 1 or 2
+ *     "clients": [{ "id": "…", "secret": "…", "redirectUri": "…", "auth"?: "post" | "basic" }, …] }   // 1 or 2
  *
  * `--demo <origin>` builds that for this repo's demo: it signs a throwaway
  * address in by emailed code (the demo shows the code) and derives the demo
@@ -100,11 +100,17 @@ async function authorize(client, extra = {}, { cookie = cfg.cookie } = {}) {
   const params = { client_id: client.id, redirect_uri: client.redirectUri, response_type: 'code', scope: 'openid email profile', state: 'st-1', nonce: 'nonce-1', ...extra }
   for (const [k, v] of Object.entries(params)) if (v !== null) u.searchParams.set(k, v)
   const res = await fetch(u, { redirect: 'manual', headers: cookie ? { cookie } : {} })
-  const loc = res.headers.get('location')
+  let loc = res.headers.get('location')
+  // Some providers (Better Auth) answer a non-navigation fetch with
+  // `{redirect, url}` JSON where a browser navigation gets the 302.
+  if (!loc && res.headers.get('content-type')?.includes('application/json')) {
+    const j = await res.json().catch(() => null)
+    if (j?.redirect && j.url) return { status: 302, loc: new URL(j.url, u) }
+  }
   return { status: res.status, loc: loc ? new URL(loc, u) : null }
 }
 const atApp = (r, client) => r.loc && `${r.loc.origin}${r.loc.pathname}` === client.redirectUri
-async function token(client, form, { auth = 'post' } = {}) {
+async function token(client, form, { auth = client.auth ?? 'post' } = {}) {
   const body = new URLSearchParams({ grant_type: 'authorization_code', redirect_uri: client.redirectUri, ...form })
   const headers = { 'content-type': 'application/x-www-form-urlencoded' }
   if (auth === 'basic') headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(client.id)}:${encodeURIComponent(client.secret)}`).toString('base64')}`
