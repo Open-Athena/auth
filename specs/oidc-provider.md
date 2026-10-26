@@ -85,9 +85,9 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
 - Demo: the dashboard's gate is the broker (issuer = request origin; a per-isolate key on localhost, `OIDC_SIGNING_KEY` required on auth.oa.dev), `/signin` honours `next` / `prompt`, with a chooser for `select_account`. App B (`/rp`) has its own gate and cookie, and its token and JWKS calls stay in-isolate.
 
 - `oidcCallback` / `googleOneTapVerify` take `hostedDomain`: the id_token's `hd` must match, or it's a denial (`/?denied=`). An address at the domain isn't enough, since a consumer Google account can carry it with no `hd`. The broker's own Google sign-in should set it, with `authParams: { hd }`.
+- A retained-mode broker with verified accounts but none selected (or only a guest active) answers `prompt=none` with `account_selection_required`, and sends an interactive request to the chooser (`prompt=select_account`) rather than a sign-in.
 
 ## Follow-ups (not in the first cut)
 
-- `account_selection_required` for `prompt=none` when the browser holds accounts but none is active (now `login_required`).
 - `picture` for `asset://` / `data:` avatars (only `https:` URLs are passed through today).
 - Back-channel logout, and how revocation reaches downstream apps.

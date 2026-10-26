@@ -10,7 +10,10 @@ import { oidcCallback, oidcStart } from '../src/adapters/oidc.js'
 import { b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
 import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
+import { d1GrantStore } from '../src/adapters/d1.js'
 import { d1ProviderStore } from '../src/adapters/d1-provider.js'
+import { d1RetainedStore } from '../src/adapters/d1-retained.js'
+import { SELECTION_CONTEXT_HEADER } from '../src/core/selection-context.js'
 import { testDbRaw } from './d1-shim.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
@@ -80,14 +83,27 @@ class Browser {
 interface WorldOptions {
   policy?: (i: { email: string; client: ProviderClient }) => boolean
   allowB?: (email: string) => boolean
+  /** A broker in retained mode: several accounts per browser. */
+  retained?: boolean
 }
 
 async function world(o: WorldOptions = {}) {
+  const db = o.retained ? testDbRaw().db : null
   const broker = createGate({
-    store: memoryStore(),
+    store: db ? d1GrantStore(db) : memoryStore(),
     audit: memoryAudit(),
     secret: 'broker-secret-0123456789abcdef',
     policy: async (e: string) => (e.endsWith('@openathena.ai') ? ['member'] : null),
+    ...(db
+      ? {
+          retained: {
+            store: d1RetainedStore(db, {
+              sessions: 4, pending: 2, gateBrowserSets: 50, gatePending: 50,
+              browserTtlS: 30 * 86400, pendingTtlS: 600, retryTtlS: 86400, defaultSessionTtlS: 3600,
+            }),
+          },
+        }
+      : {}),
   })
   const store = memoryProviderStore()
   const client = async (id: string, host: string, allow?: (e: string) => boolean): Promise<ProviderClient> => ({
@@ -142,7 +158,8 @@ async function world(o: WorldOptions = {}) {
   const browser = () => new Browser(net)
   /** Sign in at the broker (what its sign-in page does after Google or a code). */
   const signInAtBroker = async (b: Browser, email: string) => {
-    const r = await broker.signIn(email, new Request(`${ISSUER}/signin`))
+    const cookie = [...b.jar('login.test')].map(([k, v]) => `${k}=${v}`).join('; ')
+    const r = await broker.signIn(email, new Request(`${ISSUER}/signin`, { headers: cookie ? { cookie } : {} }))
     if (!r) throw new Error(`broker refused ${email}`)
     b.take('login.test', r.cookies)
   }
@@ -303,6 +320,24 @@ describe('prompt and max_age', () => {
     expect([chooser.pathname, chooser.searchParams.get('prompt'), chooser.searchParams.get('login_hint')]).toEqual(['/signin', 'select_account', 'ada@openathena.ai'])
     const back = await b.request(new URL(chooser.searchParams.get('next')!, ISSUER).toString())
     expect(Object.keys(queryOf(back).params).sort()).toEqual(['code', 'iss', 'state'])
+  })
+})
+
+describe('a broker holding several accounts', () => {
+  it('none selected: a choice is missing, not a sign-in', async () => {
+    const w = await world({ retained: true })
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    await w.signInAtBroker(b, 'bea@openathena.ai')
+    const cookie = () => [...b.jar('login.test')].map(([k, v]) => `${k}=${v}`).join('; ')
+    const selection = await w.broker.retained!.selection(new Request(`${ISSUER}/x`, { headers: { cookie: cookie() } }), Date.now())
+    await w.broker.retained!.select(new Request(`${ISSUER}/x`, { headers: { cookie: cookie(), [SELECTION_CONTEXT_HEADER]: selection! } }), null, Date.now())
+    const { challenge } = await pkce()
+    const s256 = { code_challenge: challenge, code_challenge_method: 'S256' }
+
+    expect(queryOf(await b.request(authorizeUrl({ ...s256, prompt: 'none' }))).params.error).toBe('account_selection_required')
+    const chooser = new URL((await b.request(authorizeUrl(s256))).headers.get('location')!)
+    expect([chooser.pathname, chooser.searchParams.get('prompt')]).toEqual(['/signin', 'select_account'])
   })
 })
 

@@ -228,7 +228,13 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const wantChooser = prompts.has('select_account')
 
     if (!email || !freshEnough || wantLogin || wantChooser) {
-      if (prompts.has('none')) return fail('login_required')
+      // No one selected (or a guest), but the browser holds verified accounts
+      // here: a choice is what's missing, not a sign-in.
+      const choosable =
+        !email && gate.retained
+          ? ((await gate.retained.accounts(req, nowMs))?.accounts ?? []).some(a => a.kind === 'sso')
+          : false
+      if (prompts.has('none')) return fail(choosable ? 'account_selection_required' : 'login_required')
       // Back here afterwards, without the prompt that sent them (or this loops),
       // and with the time it sent them, so an older session can't satisfy it.
       const next = new URL(url)
@@ -236,7 +242,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
       if (wantLogin || (email && !freshEnough)) next.searchParams.set(LOGIN_AFTER, String(nowS))
       const to = new URL(loginUrl, origin)
       to.searchParams.set('next', `${next.pathname}${next.search}`)
-      if (wantChooser) to.searchParams.set('prompt', 'select_account')
+      if (wantChooser || (choosable && !wantLogin)) to.searchParams.set('prompt', 'select_account')
       else if (wantLogin || email) to.searchParams.set('prompt', 'login')
       const hint = q.get('login_hint')
       if (hint) to.searchParams.set('login_hint', hint)
