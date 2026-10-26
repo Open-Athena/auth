@@ -173,9 +173,9 @@ export function retainedMode(opts, deps) {
             const nowS = sec(nowMs);
             const h = await held(req, nowS);
             if (!h)
-                return { auth: null, reason: 'invalid' };
-            const { auth, reason } = await active(h, req, nowS, { quiet: false, logView });
-            return { auth, reason };
+                return { auth: null, reason: 'invalid', issuedAt: null };
+            const { auth, reason, session } = await active(h, req, nowS, { quiet: false, logView });
+            return { auth, reason, issuedAt: session?.issuedAt ?? null };
         },
         /** The serialized selection context for this request's set, or null without one. */
         async selection(req, nowMs) {

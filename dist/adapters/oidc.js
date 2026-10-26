@@ -104,6 +104,19 @@ function writeAccountHints(headers, req, name, email, denied = false) {
 }
 const setAccountHint = (req, name, email) => sessionCookie(encodeURIComponent(email), { name, ttlS: ACCOUNT_HINT_TTL_S, secure: isSecureRequest(req) });
 const STATE_PREFIX = 'oidc:';
+/**
+ * The PKCE verifier for a sign-in, derived rather than stored: an HMAC of its
+ * nonce under the gate secret. Whoever sees the authorization request (which
+ * carries only the S256 challenge) can't compute it; the callback, holding
+ * the same nonce and secret, can. Storage-free, like `state`.
+ */
+async function pkceVerifier(secret, nonce) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return b64uEncode(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`pkce:${nonce}`)));
+}
+const pkceChallenge = async (verifier) => b64uEncode(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+/** Errors an authorization response may carry that mean "sign in some other way", not "attack". */
+const SOFT_ERRORS = new Set(['login_required', 'interaction_required', 'account_selection_required', 'consent_required', 'access_denied']);
 /** Only same-origin paths, so `?next=` can't become an open redirect. */
 const safeNext = (raw) => (raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/');
 /**
@@ -130,6 +143,9 @@ export function oidcStart(opts) {
             ? selected && readAccountHints(request, hintCookie).includes(selected) ? selected : null
             : readAccountHint(request, hintCookie);
         const state = await signSession(`${STATE_PREFIX}${nonce}:${next}`, gate.secret, Date.now(), stateTtlS);
+        // `?prompt=none`: a silent attempt (a broker that already knows this
+        // browser answers with a code, or with `login_required`, never a page).
+        const silent = params.get('prompt') === 'none';
         const url = new URL(provider.authUrl);
         url.search = new URLSearchParams({
             client_id: clientId,
@@ -138,9 +154,11 @@ export function oidcStart(opts) {
             scope: provider.scope,
             state,
             nonce,
+            code_challenge: await pkceChallenge(await pkceVerifier(gate.secret, nonce)),
+            code_challenge_method: 'S256',
             ...(hint ? { login_hint: hint } : {}),
             ...authParams,
-            ...(choose ? { prompt: 'select_account' } : {}),
+            ...(choose ? { prompt: 'select_account' } : silent ? { prompt: 'none' } : {}),
         }).toString();
         return new Response(null, {
             status: 302,
@@ -175,7 +193,8 @@ export function oidcCallback(opts) {
         const url = new URL(request.url);
         const code = url.searchParams.get('code');
         const state = url.searchParams.get('state');
-        if (!code || !state)
+        const error = url.searchParams.get('error');
+        if ((!code && !error) || !state)
             return deny('missing code or state');
         const sub = await verifySession(state, gate.secret, Date.now());
         if (!sub?.startsWith(STATE_PREFIX))
@@ -191,6 +210,16 @@ export function oidcCallback(opts) {
         const cookieNonce = readCookieValue(request, nonceCookie);
         if (!cookieNonce || cookieNonce !== nonce)
             return deny('state was not issued to this browser');
+        // The provider declined (a silent attempt with no session there, say):
+        // back to where the visitor was, told why, so the app offers a sign-in
+        // button instead of trying again. Never a retry from here: that's a loop.
+        if (error || !code) {
+            const to = new URL(next, url.origin);
+            to.searchParams.set('sso', error && SOFT_ERRORS.has(error) ? error : 'error');
+            const headers = new Headers({ location: `${to.pathname}${to.search}`, 'cache-control': 'no-store' });
+            headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
+            return new Response(null, { status: 302, headers });
+        }
         const token = await doFetch(provider.tokenUrl, {
             method: 'POST',
             headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -200,6 +229,7 @@ export function oidcCallback(opts) {
                 client_secret: clientSecret,
                 redirect_uri: redirectUri,
                 grant_type: 'authorization_code',
+                code_verifier: await pkceVerifier(gate.secret, nonce),
             }).toString(),
         })
             .then(r => (r.ok ? r.json() : null))

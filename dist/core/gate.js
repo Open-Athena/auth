@@ -117,11 +117,11 @@ export function createGate(opts) {
     { logView: shouldLogView = true } = {}) {
         const nowS = sec(nowMs);
         let credential = 'none';
-        const failed = (reason) => ({ auth: null, reason, credential });
-        const afterAuth = async (auth) => {
+        const failed = (reason) => ({ auth: null, reason, credential, issuedAt: null });
+        const afterAuth = async (auth, issuedAt) => {
             if (logViews && shouldLogView)
                 await logView(req, auth, nowS);
-            return { auth, reason: null, credential };
+            return { auth, reason: null, credential, issuedAt };
         };
         const url = new URL(req.url);
         const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
@@ -142,13 +142,13 @@ export function createGate(opts) {
                 return failed(grant.revokedAt !== null ? 'revoked' : isExpired(grant, nowS) ? 'expired' : 'invalid');
             }
             await store.touch(grant.id, nowS, touchIntervalS);
-            return await afterAuth(grantAuth(grant));
+            return await afterAuth(grantAuth(grant), null);
         }
         if (retained) {
             const r = await retained.authenticate(req, nowMs, shouldLogView);
             if (r !== 'absent') {
                 credential = 'cookie';
-                return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+                return r.auth ? await afterAuth(r.auth, r.issuedAt) : failed(r.reason);
             }
         }
         const cookie = readCookie(req, cookieName);
@@ -159,7 +159,7 @@ export function createGate(opts) {
         if (!inspected.ok)
             return failed(inspected.reason);
         const r = await resolveClaims(req, inspected.claims, nowS, { quiet: false });
-        return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+        return r.auth ? await afterAuth(r.auth, inspected.claims.iat) : failed(r.reason);
     }
     /**
      * A session's principal → its live identity, or why it has none. Shared by
@@ -877,6 +877,8 @@ export function createGate(opts) {
         logView,
         whoami,
         getProfile,
+        /** An address's name and face from its profile, or null: what an identity provider puts in `name`/`picture`. */
+        subjectFor,
         putProfile,
         seedProfileFromClaims,
         copyAvatar,
