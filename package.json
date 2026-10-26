@@ -32,6 +32,14 @@
       "types": "./dist/adapters/oidc.d.ts",
       "default": "./dist/adapters/oidc.js"
     },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "default": "./dist/provider/index.js"
+    },
+    "./provider/d1": {
+      "types": "./dist/adapters/d1-provider.d.ts",
+      "default": "./dist/adapters/d1-provider.js"
+    },
     "./r2": {
       "types": "./dist/adapters/r2.d.ts",
       "default": "./dist/adapters/r2.js"

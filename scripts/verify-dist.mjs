@@ -61,6 +61,8 @@ import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/
 import { fromGate, sessionLogRoutes, validateBatch } from '@open-athena/auth/session-log'
 import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
 import { bootSessionLog, slog } from '@open-athena/auth/session-log/client'
+import { brokerProvider, generateSigningKey, memoryProviderStore, oidcProviderRoutes } from '@open-athena/auth/provider'
+import { d1ProviderStore } from '@open-athena/auth/provider/d1'
 import { createRequire } from 'node:module'
 import { readdirSync, readFileSync } from 'node:fs'
 
@@ -118,6 +120,7 @@ const checks = {
   'testing stores exported':      [memoryGrantStore, memoryRequestStore, memoryAudit].every(f => typeof f === 'function'),
   'framework-free client exported': [createAuthClient, shareUrl, exchangeKeyParam, downscaleImage].every(f => typeof f === 'function'),
   'session log entrypoints':      [fromGate, sessionLogRoutes, validateBatch, d1SessionLogStore, bootSessionLog, slog].every(f => typeof f === 'function'),
+  'provider entrypoints':         [brokerProvider, generateSigningKey, memoryProviderStore, oidcProviderRoutes, d1ProviderStore].every(f => typeof f === 'function'),
   'session log stylesheet':       readFileSync(createRequire(import.meta.url).resolve('@open-athena/auth/react/session-log.css'), 'utf8').includes('.oa-slog'),
   'client preserves target view': shareUrl('test-token', 'https://x.test/slide/3?q=1#notes') === 'https://x.test/slide/3?q=1&key=test-token#notes',
 }

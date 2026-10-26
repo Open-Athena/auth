@@ -242,9 +242,9 @@ export function retainedMode(opts: RetainedOptions, deps: Deps) {
       if (readCookie(req, handleCookie) === null) return 'absent' as const
       const nowS = sec(nowMs)
       const h = await held(req, nowS)
-      if (!h) return { auth: null, reason: 'invalid' as const }
-      const { auth, reason } = await active(h, req, nowS, { quiet: false, logView })
-      return { auth, reason }
+      if (!h) return { auth: null, reason: 'invalid' as const, issuedAt: null }
+      const { auth, reason, session } = await active(h, req, nowS, { quiet: false, logView })
+      return { auth, reason, issuedAt: session?.issuedAt ?? null }
     },
 
     /** The serialized selection context for this request's set, or null without one. */

@@ -160,6 +160,12 @@ export interface AuthenticationResult {
   auth: Auth | null
   reason: SessionLossReason | null
   credential: 'cookie' | 'token' | 'none'
+  /**
+   * When the session behind `auth` was minted (epoch s): its sign-in time, for
+   * an identity provider's `auth_time`. Null for a token (no session) or a
+   * failure; 0 for a cookie minted before sessions carried `iat`.
+   */
+  issuedAt: number | null
 }
 
 /** Why a grant was refused — checked in the order an admin would explain it. */
@@ -360,10 +366,10 @@ export function createGate(opts: GateOptions) {
   ): Promise<AuthenticationResult> {
     const nowS = sec(nowMs)
     let credential: AuthenticationResult['credential'] = 'none'
-    const failed = (reason: SessionLossReason | null): AuthenticationResult => ({ auth: null, reason, credential })
-    const afterAuth = async (auth: Auth): Promise<AuthenticationResult> => {
+    const failed = (reason: SessionLossReason | null): AuthenticationResult => ({ auth: null, reason, credential, issuedAt: null })
+    const afterAuth = async (auth: Auth, issuedAt: number | null): Promise<AuthenticationResult> => {
       if (logViews && shouldLogView) await logView(req, auth, nowS)
-      return { auth, reason: null, credential }
+      return { auth, reason: null, credential, issuedAt }
     }
     const url = new URL(req.url)
     const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i)
@@ -385,14 +391,14 @@ export function createGate(opts: GateOptions) {
         return failed(grant.revokedAt !== null ? 'revoked' : isExpired(grant, nowS) ? 'expired' : 'invalid')
       }
       await store.touch(grant.id, nowS, touchIntervalS)
-      return await afterAuth(grantAuth(grant))
+      return await afterAuth(grantAuth(grant), null)
     }
 
     if (retained) {
       const r = await retained.authenticate(req, nowMs, shouldLogView)
       if (r !== 'absent') {
         credential = 'cookie'
-        return r.auth ? await afterAuth(r.auth) : failed(r.reason)
+        return r.auth ? await afterAuth(r.auth, r.issuedAt) : failed(r.reason)
       }
     }
 
@@ -402,7 +408,7 @@ export function createGate(opts: GateOptions) {
     const inspected = await inspectSessionClaims(cookie, secret, nowMs)
     if (!inspected.ok) return failed(inspected.reason)
     const r = await resolveClaims(req, inspected.claims, nowS, { quiet: false })
-    return r.auth ? await afterAuth(r.auth) : failed(r.reason)
+    return r.auth ? await afterAuth(r.auth, inspected.claims.iat) : failed(r.reason)
   }
 
   /**
@@ -1176,6 +1182,8 @@ export function createGate(opts: GateOptions) {
     logView,
     whoami,
     getProfile,
+    /** An address's name and face from its profile, or null: what an identity provider puts in `name`/`picture`. */
+    subjectFor,
     putProfile,
     seedProfileFromClaims,
     copyAvatar,

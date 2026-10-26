@@ -49,7 +49,7 @@ describe.each(['D1', 'memory'] as const)('%s session loss', backend => {
     }
     const check = async (cookie: string, reason: string) => {
       const expired = 'oa_auth=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
-      expect(await gate.authenticateResult(request(cookie))).toEqual({ auth: null, reason, credential: 'cookie' })
+      expect(await gate.authenticateResult(request(cookie))).toEqual({ auth: null, reason, credential: 'cookie', issuedAt: null })
       expect(await gate.authenticate(request(cookie))).toBeNull()
       await denial(await protectedRoute(request(cookie)), reason, expired)
       for (const path of ['/whoami', '/grants', '/profile']) {
@@ -87,7 +87,7 @@ describe.each(['D1', 'memory'] as const)('%s session loss', backend => {
     else {
       const auth = await gate.authenticate(request(cookie))
       expect(auth?.kind).toBe('grant')
-      expect(await gate.authenticateResult(request(cookie))).toEqual({ auth, reason: null, credential: 'cookie' })
+      expect(await gate.authenticateResult(request(cookie))).toEqual({ auth, reason: null, credential: 'cookie', issuedAt: NOW / 1000 })
     }
   })
 
@@ -127,7 +127,7 @@ describe.each(['D1', 'memory'] as const)('%s session loss', backend => {
     const { gate, protectedRoute } = setup()
     for (const cookie of [undefined, 'unrelated=keep']) {
       const req = request(cookie)
-      expect(await gate.authenticateResult(req)).toEqual({ auth: null, reason: null, credential: 'none' })
+      expect(await gate.authenticateResult(req)).toEqual({ auth: null, reason: null, credential: 'none', issuedAt: null })
       await denial(await protectedRoute(req), null)
       await denial(await gate.unauthenticated(req), null)
     }
@@ -145,7 +145,7 @@ describe.each(['D1', 'memory'] as const)('%s session loss', backend => {
     const { cookie } = await mint()
     for (const suppliedCookie of [undefined, cookie]) {
       const req = request(suppliedCookie, path, headers)
-      expect(await gate.authenticateResult(req)).toEqual({ auth: null, reason: 'invalid', credential: 'token' })
+      expect(await gate.authenticateResult(req)).toEqual({ auth: null, reason: 'invalid', credential: 'token', issuedAt: null })
       await denial(await protectedRoute(req), 'invalid')
       await denial(await gate.unauthenticated(req), 'invalid')
       await denial((await routes(request(suppliedCookie, path.replace('/data', '/api/auth/whoami'), headers)))!, 'invalid')
