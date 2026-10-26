@@ -31,6 +31,9 @@ export const GOOGLE = {
     issuer: ['https://accounts.google.com', 'accounts.google.com'],
     scope: 'openid email profile',
 };
+/** Does the id_token's `hd` satisfy `hostedDomain` (unset: anything does)? */
+const hostedOk = (claims, hostedDomain) => hostedDomain === undefined ||
+    (typeof claims.hd === 'string' && (Array.isArray(hostedDomain) ? hostedDomain : [hostedDomain]).includes(claims.hd.toLowerCase()));
 const DEFAULT_NONCE_COOKIE = 'oa_oidc';
 export const DEFAULT_ACCOUNT_HINT_COOKIE = 'oa_google_hint';
 /** Chrome caps cookie lifetimes at 400 days. */
@@ -185,7 +188,7 @@ export function oidcStart(opts) {
  * are only useful to whoever is probing.
  */
 export function oidcCallback(opts) {
-    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true } = opts;
+    const { gate, clientId, clientSecret, redirectUri, provider = GOOGLE, seedProfile = true, hostedDomain } = opts;
     const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE;
     const hintCookie = hintCookieName(opts.accountHintCookie);
     const doFetch = opts.fetch ?? globalThis.fetch;
@@ -261,7 +264,7 @@ export function oidcCallback(opts) {
         };
         let signedIn;
         try {
-            signedIn = await gate.signIn(claims.email, request);
+            signedIn = hostedOk(claims, hostedDomain) ? await gate.signIn(claims.email, request) : null;
         }
         catch (e) {
             return full(e);
@@ -344,7 +347,7 @@ async function nonceForms(nonce) {
  * with the Google-verified address.
  */
 export function googleOneTapVerify(opts) {
-    const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true } = opts;
+    const { gate, clientId, provider = GOOGLE, debug = false, seedProfile = true, hostedDomain } = opts;
     const hintCookie = hintCookieName(opts.accountHintCookie);
     const doFetch = opts.fetch ?? globalThis.fetch;
     const deny = (why) => oneTapDeny(why, debug);
@@ -373,7 +376,7 @@ export function googleOneTapVerify(opts) {
             return deny('no verified email');
         let signedIn;
         try {
-            signedIn = await gate.signIn(claims.email, request);
+            signedIn = hostedOk(claims, hostedDomain) ? await gate.signIn(claims.email, request) : null;
         }
         catch (e) {
             if (!(e instanceof RetainedLoginError))

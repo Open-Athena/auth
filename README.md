@@ -203,7 +203,7 @@ oidcStart(rp)     // `?prompt=none` tries silently; `?account=choose` asks for t
 oidcCallback(rp)  // a refusal comes back as `?sso=login_required` (or `access_denied`), never a loop
 ```
 
-Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
+Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. For an organization-only broker, give its own Google sign-in `hostedDomain: 'example.org'` (and `authParams: { hd: 'example.org' }`): an address at the domain isn't proof of a managed account, `hd` is. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
 
 ## Minimal Demo Routes
 

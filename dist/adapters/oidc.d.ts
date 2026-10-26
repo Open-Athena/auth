@@ -29,6 +29,14 @@ export interface OidcOptions extends AccountHintOptions {
      * Never overrides a self-set profile.
      */
     seedProfile?: boolean;
+    /**
+     * Require the id_token's `hd` claim (Google Workspace) to be one of these.
+     * An address at the domain isn't enough: anyone can create a consumer
+     * Google account for an address they don't manage, and Google vouches for
+     * it with no `hd`. A miss is a denial (`/?denied=`), like the policy's.
+     * Pair it with `authParams: { hd }` so Google's chooser shows only those.
+     */
+    hostedDomain?: string | string[];
     fetch?: typeof globalThis.fetch;
 }
 /**
@@ -124,6 +132,8 @@ export interface OneTapVerifyOptions extends AccountHintOptions {
     debug?: boolean;
     /** Seed a first-ever principal's profile from the credential's claims. See `OidcOptions.seedProfile`. */
     seedProfile?: boolean;
+    /** See `OidcOptions.hostedDomain`. */
+    hostedDomain?: string | string[];
     fetch?: typeof globalThis.fetch;
 }
 /**
