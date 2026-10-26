@@ -109,6 +109,9 @@ export const onRequest = async ({ request, env, waitUntil }: Ctx): Promise<Respo
     linkFor: token => `${url.origin}/auth/email/verify?token=${encodeURIComponent(token)}&next=%2Fdashboard`,
     appName: 'the @open-athena/auth demo',
     defaultNext: '/dashboard',
+    // On a loopback dev server every request is one address, so the per-IP
+    // cap (10 per 15 minutes) is soon spent by tests alone. Deployed, it stands.
+    ...(url.hostname === 'localhost' || url.hostname === '127.0.0.1' ? { rateLimit: { maxPerIp: 1000 } } : {}),
   })
 
   switch (route) {
