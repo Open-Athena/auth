@@ -12,7 +12,7 @@ const FORM = { form: 'stack', field: 'field', input: 'input', button: 'btn', mes
  * everyone else. All three end in the same `gate.signIn`, so the
  * dashboard can't tell them apart, which is the point.
  */
-export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: ReactNode }) {
+export function SignIn({ onSignedIn, title, next = '/dashboard' }: { onSignedIn: () => void; title?: ReactNode; next?: string }) {
   const google = useQuery({ queryKey: ['google-client'], queryFn: api.googleClient, staleTime: Infinity })
   const clientId = google.data?.clientId ?? null
 
@@ -36,7 +36,7 @@ export function SignIn({ onSignedIn, title }: { onSignedIn: () => void; title?: 
             <span className="account-arrow" aria-hidden="true">&#8594;</span>
           </span>
         )}
-        googleUrl={clientId ? '/auth/google/start?next=%2Fdashboard' : undefined}
+        googleUrl={clientId ? `/auth/google/start?next=${encodeURIComponent(next)}` : undefined}
         oneTap={
           clientId
             ? {

@@ -1,6 +1,6 @@
 # A small first-party OIDC provider (`@open-athena/auth/provider`)
 
-Status: in progress, 2026-10-25. This is the build-it-ourselves option for the broker in `specs/cross-service-sso.md`. It's being built in parallel with a trial of Better Auth's OAuth 2.1 provider plugin (report at `tmp/oidc-trial/better-auth/REPORT.md`, untracked). Whichever wins, nothing is provisioned (`login.oa.dev` DNS, Google client, D1) without an explicit go-ahead.
+Status: first cut implemented, 2026-10-25 (`src/provider/`, `test/provider.test.ts`, demo `/oidc` + `/rp`, `test-browser/live/broker.spec.ts`). This is the build-it-ourselves option for the broker in `specs/cross-service-sso.md`. It's being built in parallel with a trial of Better Auth's OAuth 2.1 provider plugin (report at `tmp/oidc-trial/better-auth/REPORT.md`, untracked). Whichever wins, nothing is provisioned (`login.oa.dev` DNS, Google client, D1) without an explicit go-ahead.
 
 ## Why this can be small
 
@@ -76,9 +76,17 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
   - A share-link session at the broker.
 - A **black-box probe** (`scripts/oidc-probe.mjs <issuer>`) runs the same checks over HTTP against any provider, ours or the Better Auth trial, for a like-for-like comparison. Later, run the OpenID Foundation conformance suite's Basic OP plan, which needs Docker.
 
+## As built
+
+- `AuthenticationResult.issuedAt` (the session's `iat`, or a retained login's `issuedAt`) gives `auth_time`, `max_age` and an honest `prompt=login`: `/authorize` sends the browser to sign in with `oa_login_after=<now>` added to `next`, and only a session minted at or after that satisfies it, so neither an older session nor a dropped `prompt` loops or slips through.
+- Any token-endpoint attempt spends the code (taken before the checks), so a stolen code is worth one guess, and the right client can't use it afterwards either.
+- The access token is a short-lived `at+jwt` whose `aud` is the userinfo endpoint; `/userinfo` re-checks the provider and client policy.
+- Logout signs out of the broker (`gate.signOutCookies`: the active retained account, or the single session). It redirects only with a valid `id_token_hint` (expired is fine) and a registered `post_logout_redirect_uri`; otherwise it answers `Signed out.` in place.
+- Demo: the dashboard's gate is the broker (issuer = request origin; a per-isolate key on localhost, `OIDC_SIGNING_KEY` required on auth.oa.dev), `/signin` honours `next` / `prompt`, with a chooser for `select_account`. App B (`/rp`) has its own gate and cookie, and its token and JWKS calls stay in-isolate.
+
 ## Follow-ups (not in the first cut)
 
-- `max_age` and `auth_time` need the session's `iat` exposed on `AuthenticationResult`. Until then, `max_age` is treated like `prompt=login`.
+- `account_selection_required` for `prompt=none` when the browser holds accounts but none is active (now `login_required`).
+- `picture` for `asset://` / `data:` avatars (only `https:` URLs are passed through today).
 - Back-channel logout, and how revocation reaches downstream apps.
 - A Workspace `hd` check on the upstream Google callback (`oidcCallback({ requireHd })`).
-- The demo: a local two-app setup for CIC.

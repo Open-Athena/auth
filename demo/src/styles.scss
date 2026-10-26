@@ -843,6 +843,10 @@ a.card {
     border-radius: var(--radius);
     box-shadow: 0 8px 28px rgb(0 0 0 / 0.25);
   }
+}
+
+// The account list itself: in the nav's menu, and on the broker's chooser (`/signin?prompt=select_account`).
+.accounts {
   .accounts-list {
     list-style: none;
     margin: 0;

@@ -36,6 +36,7 @@ src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / Avata
 src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
 src/session-log/  optional, time-boxed user-action logging (routes; D1 store in adapters/,
                 logger in client/session-log/, admin UI in react/session-log/)
+src/provider/   optional OIDC provider over a gate, for a sign-in broker (D1 store in adapters/)
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -178,6 +179,31 @@ slog('movie.queued', { query, format })
 The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
 
 The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
+
+## Signing In Through a Broker (OIDC Provider)
+
+Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: sign in once at the broker (Google, an emailed code, any of its retained accounts), and every other app gets you with no page in between. It's deliberately narrow: authorization code with PKCE S256 only, confidential clients from a static registry, exact redirect URIs, no consent screen, no refresh tokens. What it leaves out it refuses.
+
+```ts
+// the broker: discovery at /.well-known/openid-configuration, endpoints under /oidc
+const provider = oidcProviderRoutes({
+  gate,                                   // its sessions are who is signed in at the broker
+  issuer: 'https://login.example.org',
+  clients: [{ id: 'app-b', secretHash: await hashClientSecret(env.APP_B_SECRET), redirectUris: ['https://b.example.org/auth/cb'] }],
+  keys: [JSON.parse(env.OIDC_SIGNING_KEY)],   // from generateSigningKey(); the first signs, all are published
+  store: d1ProviderStore(env.DB),         // @open-athena/auth/provider/d1; migrations/provider/
+  subjectSecret: env.OIDC_SUBJECT_SECRET, // keys `sub`: keep it stable
+  loginUrl: '/signin',                    // gets `next`, and `prompt` / `login_hint` when an app sent them
+  claims: ({ email }) => ({ groups: groupsOf(email) }),   // optional extras
+})
+
+// each app: the ordinary relying party, pointed at the broker
+const rp = { gate, clientId: 'app-b', clientSecret: env.BROKER_SECRET, redirectUri: 'https://b.example.org/auth/cb', provider: brokerProvider('https://login.example.org') }
+oidcStart(rp)     // `?prompt=none` tries silently; `?account=choose` asks for the chooser
+oidcCallback(rp)  // a refusal comes back as `?sso=login_required` (or `access_denied`), never a loop
+```
+
+Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
 
 ## Minimal Demo Routes
 
