@@ -79,6 +79,7 @@ describe('command + URL builders', () => {
   it('builds the exact gcloud/wrangler argv', () => {
     expect(enableServiceArgs('iap.googleapis.com', 'p')).toEqual(['services', 'enable', 'iap.googleapis.com', '--project', 'p'])
     expect(secretPutArgs(ID_VAR, 'myapp')).toEqual(['pages', 'secret', 'put', 'GOOGLE_CLIENT_ID', '--project-name', 'myapp'])
+    expect(secretPutArgs(ID_VAR, { worker: 'oa-login' })).toEqual(['secret', 'put', 'GOOGLE_CLIENT_ID', '--name', 'oa-login'])
   })
 
   it('renders a command, quoting only args that need it', () => {
@@ -109,6 +110,7 @@ describe('parseArgs', () => {
       appOrigins: ['https://x.pages.dev', 'http://localhost:4187'],
       redirectUris: ['https://x.pages.dev/auth/google/callback'],
       pagesProject: 'myapp',
+      worker: null,
       wrangler: 'scripts/oa-wrangler.sh',
       fromJson: 'client.json',
       devVars: '.dev.vars',
@@ -136,6 +138,11 @@ describe('parseArgs', () => {
 
   it('needs neither --project nor --app-origin with --from-json (the client knows both)', () => {
     expect(parseArgs(['--from-json', 'c.json']).fromJson).toBe('c.json')
+  })
+
+  it('stores into a Worker with --worker, never both a Worker and a Pages project', () => {
+    expect(parseArgs(['--from-json', 'c.json', '--worker', 'oa-login']).worker).toBe('oa-login')
+    expect(caught(() => parseArgs(['--from-json', 'c.json', '--worker', 'w', '--pages-project', 'p'])).message).toBe('--pages-project and --worker are exclusive')
   })
 
   it('skips required-flag checks under --help', () => {

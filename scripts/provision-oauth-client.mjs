@@ -94,11 +94,14 @@ export function enableServiceArgs(service, project) {
 }
 
 /**
- * `wrangler` argv to store one secret for a Pages project. The value is NOT here —
- * it is fed on stdin, so the secret never lands in argv, `ps`, or shell history.
+ * `wrangler` argv to store one secret for a Pages project, or a Worker with
+ * `{ worker: name }`. The value is NOT here — it is fed on stdin, so the secret
+ * never lands in argv, `ps`, or shell history.
  */
-export function secretPutArgs(varName, pagesProject) {
-  return ['pages', 'secret', 'put', varName, '--project-name', pagesProject]
+export function secretPutArgs(varName, target) {
+  return typeof target === 'string'
+    ? ['pages', 'secret', 'put', varName, '--project-name', target]
+    : ['secret', 'put', varName, '--name', target.worker]
 }
 
 /**
@@ -154,6 +157,7 @@ export function parseArgs(argv) {
     appOrigins: [],
     redirectUris: [],
     pagesProject: null,
+    worker: null,
     wrangler: 'npx wrangler',
     fromJson: null,
     devVars: null,
@@ -191,6 +195,9 @@ export function parseArgs(argv) {
       case '--pages-project':
         opts.pagesProject = need(a)
         break
+      case '--worker':
+        opts.worker = need(a)
+        break
       case '--wrangler':
         opts.wrangler = need(a)
         break
@@ -213,6 +220,7 @@ export function parseArgs(argv) {
         throw new UsageError(`unknown argument ${JSON.stringify(a)}`)
     }
   }
+  if (opts.pagesProject && opts.worker) throw new UsageError('--pages-project and --worker are exclusive')
   // With --from-json, the created client already knows its project and origins.
   if (!opts.help && !opts.fromJson) {
     if (!opts.project) throw new UsageError('--project is required')
@@ -232,6 +240,7 @@ Optional:
   --from-json <path>        the client JSON from the Console's "Download JSON" (else prompt for id/secret);
                             the origins/redirect URIs above are checked against it
   --pages-project <name>    Cloudflare Pages project to store the secrets in (else the wrangler step is printed only)
+  --worker <name>           Cloudflare Worker to store them in instead
   --wrangler <cmd>          how to invoke wrangler (default "npx wrangler"; e.g. an account-pinning wrapper)
   --dev-vars <path>         also set both vars in this local .dev.vars (git-ignored!)
   --enable-service <api>    a Google API to enable (repeatable; basic sign-in needs none)
@@ -350,14 +359,15 @@ async function main(argv) {
     err(`captured ${opts.idVar}=${clientId} (secret hidden, ${clientSecret.length} chars)`)
   }
 
-  // 5. Store the secrets. Without a Pages project we can only show the commands.
+  // 5. Store the secrets. Without a Pages project or Worker we can only show the commands.
   err('')
   const [wcmd, ...wargs] = opts.wrangler.split(/\s+/)
-  if (opts.pagesProject) {
-    runOrShow(wcmd, [...wargs, ...secretPutArgs(opts.idVar, opts.pagesProject)], clientId)
-    runOrShow(wcmd, [...wargs, ...secretPutArgs(opts.secretVar, opts.pagesProject)], clientSecret)
+  const target = opts.pagesProject ?? (opts.worker ? { worker: opts.worker } : null)
+  if (target) {
+    runOrShow(wcmd, [...wargs, ...secretPutArgs(opts.idVar, target)], clientId)
+    runOrShow(wcmd, [...wargs, ...secretPutArgs(opts.secretVar, target)], clientSecret)
   } else {
-    err('no --pages-project given; store the pair yourself, e.g.:')
+    err('no --pages-project or --worker given; store the pair yourself, e.g.:')
     err(`  printf %s <id>     | ${formatCommand(wcmd, [...wargs, ...secretPutArgs(opts.idVar, '<pages-project>')])}`)
     err(`  printf %s <secret> | ${formatCommand(wcmd, [...wargs, ...secretPutArgs(opts.secretVar, '<pages-project>')])}`)
   }
