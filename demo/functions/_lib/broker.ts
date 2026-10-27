@@ -21,10 +21,19 @@ import { type Env, gates } from './gates.js'
 export interface BrokerEnv extends Env {
   /** A private RS256 JWK (JSON). Required off localhost. */
   OIDC_SIGNING_KEY?: string
+  /**
+   * Set only while running the OpenID Foundation's hosted conformance suite
+   * (www.certification.openid.net) against this broker: the secret of its two
+   * test clients, which may skip PKCE as that suite's Basic OP plan does.
+   */
+  OIDC_CONFORMANCE_SECRET?: string
 }
 
 export const RP_CLIENT_ID = 'demo-rp'
 export const RP_COOKIE = 'oa_demo_rp'
+/** The test-plan alias on the hosted suite, which fixes its callback URL. */
+export const CONFORMANCE_ALIAS = 'oa-auth-demo'
+export const CONFORMANCE_CLIENT_IDS = ['oidf-conformance', 'oidf-conformance-2']
 
 let devKey: Promise<SigningJwk> | null = null
 
@@ -56,6 +65,16 @@ export async function broker(env: BrokerEnv, req: Request) {
         redirectUris: [`${origin}/rp/callback`],
         postLogoutRedirectUris: [`${origin}/rp`],
       },
+      ...(env.OIDC_CONFORMANCE_SECRET
+        ? await Promise.all(
+            CONFORMANCE_CLIENT_IDS.map(async id => ({
+              id,
+              secretHash: await hashClientSecret(env.OIDC_CONFORMANCE_SECRET!),
+              redirectUris: [`https://www.certification.openid.net/test/a/${CONFORMANCE_ALIAS}/callback`],
+              requirePkce: false,
+            })),
+          )
+        : []),
     ],
     keys: [await signingKey(env, req)],
     store: d1ProviderStore(env.DB),

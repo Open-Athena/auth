@@ -85,6 +85,8 @@ interface WorldOptions {
   allowB?: (email: string) => boolean
   /** A broker in retained mode: several accounts per browser. */
   retained?: boolean
+  /** app-a may skip PKCE (`requirePkce: false`). */
+  pkceOptionalA?: boolean
 }
 
 async function world(o: WorldOptions = {}) {
@@ -116,7 +118,10 @@ async function world(o: WorldOptions = {}) {
   const provider = oidcProviderRoutes({
     gate: broker,
     issuer: ISSUER,
-    clients: [await client('app-a', 'a.test'), await client('app-b', 'b.test', o.allowB)],
+    clients: [
+      { ...(await client('app-a', 'a.test')), ...(o.pkceOptionalA ? { requirePkce: false } : {}) },
+      await client('app-b', 'b.test', o.allowB),
+    ],
     keys: [KEY],
     store,
     subjectSecret: 'subject-secret',
@@ -491,6 +496,30 @@ describe('refusals', () => {
     const c3 = await issue()
     at(60)
     expect(await exchange({ code: c3.code, code_verifier: c3.verifier })).toEqual([400, 'invalid_grant'])
+  })
+
+  it('a client allowed to skip PKCE: without it, no verifier may follow; with it, the usual rules', async () => {
+    const w = await world({ pkceOptionalA: true })
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const issue = async (p: Record<string, string>) => queryOf(await b.request(authorizeUrl(p))).params
+    const exchange = async (form: Record<string, string>) => {
+      const res = await w.provider(tokenRequest({ grant_type: 'authorization_code', redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret', ...form }))
+      return [res!.status, ((await res!.json()) as { error?: string }).error ?? 'ok']
+    }
+    const { verifier, challenge } = await pkce()
+
+    expect(await exchange({ code: (await issue({})).code! })).toEqual([200, 'ok'])
+    // No challenge was sent, so a verifier can't be bolted on afterwards.
+    expect(await exchange({ code: (await issue({})).code!, code_verifier: verifier })).toEqual([400, 'invalid_grant'])
+    expect(await exchange({ code: (await issue({ code_challenge: challenge, code_challenge_method: 'S256' })).code! })).toEqual([400, 'invalid_grant'])
+    expect(await exchange({ code: (await issue({ code_challenge: challenge, code_challenge_method: 'S256' })).code!, code_verifier: verifier })).toEqual([200, 'ok'])
+    expect((await issue({ code_challenge: challenge, code_challenge_method: 'plain' })).error).toBe('invalid_request')
+    expect((await issue({ code_challenge_method: 'S256' })).error).toBe('invalid_request')
+
+    // Everyone else still must.
+    const other = queryOf(await b.request(authorizeUrl({ client_id: 'app-b', redirect_uri: 'https://b.test/auth/cb' }))).params
+    expect(other).toEqual({ error: 'invalid_request', error_description: 'PKCE with code_challenge_method=S256 is required', state: 's1', iss: ISSUER })
   })
 
   it('client authentication: a wrong secret, two methods at once, or none', async () => {
