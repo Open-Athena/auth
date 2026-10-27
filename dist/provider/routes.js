@@ -146,7 +146,8 @@ export function oidcProviderRoutes(opts) {
             return fail('invalid_scope', 'openid is required');
         const granted = scopes.filter(s => scopesSupported.includes(s));
         const challenge = q.get('code_challenge');
-        if (!challenge || q.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(challenge)) {
+        const pkceOptional = client.requirePkce === false && challenge === null && !q.has('code_challenge_method');
+        if (!pkceOptional && (!challenge || q.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(challenge))) {
             return fail('invalid_request', 'PKCE with code_challenge_method=S256 is required');
         }
         const prompts = new Set((q.get('prompt') ?? '').split(' ').filter(Boolean));
@@ -200,7 +201,8 @@ export function oidcProviderRoutes(opts) {
             codeHash: await hashToken(code),
             clientId: client.id,
             redirectUri,
-            challenge,
+            // '' for a client allowed to skip PKCE that did: its exchange must then send no verifier.
+            challenge: challenge ?? '',
             nonce: q.get('nonce'),
             email,
             scope: granted.join(' '),
@@ -268,7 +270,7 @@ export function oidcProviderRoutes(opts) {
             return json({ error: 'unsupported_grant_type' }, 400);
         const code = form.get('code');
         const verifier = form.get('code_verifier');
-        if (!code || !verifier)
+        if (!code)
             return json({ error: 'invalid_request' }, 400);
         const nowS = sec(Date.now());
         // Taken before any check: a code is spent by any attempt to use it, so a
@@ -277,8 +279,9 @@ export function oidcProviderRoutes(opts) {
         if (!rec ||
             rec.clientId !== client.id ||
             rec.redirectUri !== form.get('redirect_uri') ||
-            !VERIFIER.test(verifier) ||
-            !same(await s256(verifier), rec.challenge)) {
+            (rec.challenge === ''
+                ? verifier !== null
+                : verifier === null || !VERIFIER.test(verifier) || !same(await s256(verifier), rec.challenge))) {
             return json({ error: 'invalid_grant' }, 400);
         }
         // Re-checked at exchange: someone delisted in the last minute is refused.

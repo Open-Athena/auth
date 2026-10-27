@@ -10,7 +10,7 @@ export interface CodeRecord {
     clientId: string;
     /** The exact `redirect_uri` of the authorization request; `/token` must repeat it. */
     redirectUri: string;
-    /** The PKCE S256 challenge. */
+    /** The PKCE S256 challenge, or `''` when a client with `requirePkce: false` sent none. */
     challenge: string;
     nonce: string | null;
     /** The verified address the code vouches for. */

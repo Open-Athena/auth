@@ -12,6 +12,12 @@ export interface ProviderClient {
     postLogoutRedirectUris?: string[];
     /** A per-app admission rule on top of the provider's `policy`. */
     allow?: (email: string) => boolean | Promise<boolean>;
+    /**
+     * `false` admits requests without PKCE from this client (OIDC Core RPs that
+     * rely on `nonce`, e.g. the OpenID conformance suite). A challenge, when sent,
+     * is still S256 only and its verifier still required. Default `true`.
+     */
+    requirePkce?: boolean;
 }
 export interface ClaimsInput {
     email: string;
