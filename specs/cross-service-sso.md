@@ -10,7 +10,7 @@ Google OIDC also supports `prompt=none` with a `login_hint` for existing authent
 
 ## Recommended trust boundary
 
-Use a dedicated broker deployment, provisionally `login.oa.dev`, **not** the public `auth.oa.dev` demo's gate. The demo intentionally accepts arbitrary emails and has public sandbox identities; it must never become OA's production identity authority. Google Workspace remains the upstream authenticator; the broker enforces OA's verified-identity policy and handles account selection. Prefer an established OIDC provider/broker implementation over implementing an authorization server inside this package. Provider/product selection and hosting remain open.
+Use a dedicated broker deployment, provisionally `login.oa.dev`, **not** the public `auth.oa.dev` demo's gate. The demo intentionally accepts arbitrary emails and has public sandbox identities; it must never become OA's production identity authority. Google Workspace remains the upstream authenticator; the broker enforces OA's verified-identity policy and handles account selection. The provider is this package's own `@open-athena/auth/provider` (decided 2026-10-27; see "Provider decision" below), hosted as a Worker plus D1.
 
 The broker keeps an HttpOnly, Secure, host-only `__Host-` cookie (`Path=/`, no `Domain`). Each app keeps its own host-only cookie and session secret/store. Neither a common HMAC signing key nor an `oa.dev` parent-domain session cookie is distributed to every app. Parent-domain cookies expose the shared credential to sibling servers and permit sibling cookie interference; one neglected service should not compromise every OA login. Separate registrable domains such as `openathena.ai` cannot share that cookie anyway, whereas top-level OIDC redirects can serve them.
 
@@ -34,16 +34,28 @@ Local sign-out removes the app's selected login and suppresses automatic bootstr
 
 ### Worker/D1 and Google Groups direction (2026-10-21)
 
-Target a dedicated Worker plus D1 for OA's broker and directory state; that is a hosting choice, not a claim that `oa/auth` already implements an OIDC authorization server. Select/review an existing server implementation for that runtime before provisioning. Register one upstream Google OAuth client for the broker callback. Downstream apps each register their own broker client, exact callbacks and audience; they never receive the Google client secret. Keep Google's stable issuer/`sub` identity at the broker and validate the Workspace `hd` claim where OA-only membership is required, rather than treating an email suffix as proof of managed membership.
+Target a dedicated Worker plus D1 for OA's broker and directory state, serving `@open-athena/auth/provider`. Register one upstream Google OAuth client for the broker callback. Downstream apps each register their own broker client, exact callbacks and audience; they never receive the Google client secret. Keep Google's stable issuer/`sub` identity at the broker and validate the Workspace `hd` claim where OA-only membership is required, rather than treating an email suffix as proof of managed membership.
 
 Centralize the existing `/google-directory` adapter instead of copying a Workspace credential to every app. Google Groups remain the membership source of truth; D1 holds successful, timestamped per-group snapshots; apps declare which group IDs map to their scopes. Disclose only app-relevant membership or entitlements. Directory reads use a separate narrowly authorized service principal, not elevated scopes requested from every signing-in user. Prefer read-only Workspace authorization where available; the existing group-owner Cloud Identity path is limited to selected groups but grants that principal ownership, not just read privileges. Domain-wide delegation is an available fallback, not a mandatory default.
 
 Before rollout, define direct versus nested membership, external members, group renames/deletion, suspended users, and source reconciliation. The current adapter's default Cloud Identity path reads direct members; its Directory path supports derived membership and needs different authorization. Preserve snapshots on transient listing failures but do not refresh their success timestamp. Configure a hard freshness bound: protected authorization fails closed when the relevant evidence is too old. A token's issuance must not make an old membership snapshot fresh again; use the original observation time and cap downstream cache/claim validity accordingly. Group removal and account suspension need explicit, tested revocation bounds for already-established app sessions, not only login-time checks. Local app session revocation remains separate from broker logout.
 
-- **Library:** retain cloud-neutral OIDC relying-party support, robust noninteractive error handling, app-local sessions/authorization and the client/React split. Add broker-facing interoperability tests only against a selected provider contract; keep OA policy/config outside the generic library.
-- **Broker service:** choose an existing implementation/provider, register OA's upstream Google client, enforce Workspace identity requirements, manage a distinct session store and register downstream apps. This service issues identity, not application access scopes by default.
+- **Library:** retain cloud-neutral OIDC relying-party support, robust noninteractive error handling, app-local sessions/authorization and the client/React split. Keep OA policy/config outside the generic library.
+- **Broker service:** serve `@open-athena/auth/provider`, register OA's upstream Google client, enforce Workspace identity requirements, manage a distinct session store and register downstream apps. This service issues identity, not application access scopes by default.
 - **App adoption:** registered callback/client configuration, an opt-in automatic bootstrap guard, local policy, and explicit local/global logout actions. Package helper defaults should handle loop prevention and typed error outcomes rather than every consumer writing their own redirect machinery.
 - **Infrastructure:** reusable provider-specific Pulumi components can provision the selected hosting/store/secrets/callback configuration. Keep those libraries independent of OA's ops repository; do not hide manual provider setup behind a stub claiming full automation. No broad multi-cloud abstraction until the chosen stack supplies real inputs/outputs.
+
+## Provider decision (2026-10-27)
+
+Build our own: `@open-athena/auth/provider` (`specs/oidc-provider.md`), over a gate. It was built alongside a time-boxed trial of Better Auth's OAuth 2.1 provider plugin (1.7.13) on Workers + D1, and both were run through the same black-box probe (`scripts/oidc-probe.mjs`). Better Auth passed the protocol checks once wired up, but:
+
+- Per-app refusal has no hook (better-auth#10407) and needs code in front of `/authorize`; remembering an intentional account choice and `login_hint` are glue too.
+- Back-channel logout fails silently on Workers (better-auth#11328) without patching the dependency.
+- An instance reused across requests hangs, so it is built per request; EdDSA is the default and RS256 must be chosen before the first key exists.
+- About 2.9 MiB raw / 488 KiB gzip and 12 tables, a fast-moving release line, and about 60 open provider issues (including refresh-token replay), for features this fleet doesn't use (refresh tokens, consent, dynamic registration, device flow).
+- It still needed 300–500 lines of OA glue plus sign-in, chooser and error pages. Ours is about 450 lines covering the whole broker scope, reusing the gate's sessions, retained accounts and chooser.
+
+Revisit if the broker must serve clients outside OA (third-party consent, refresh tokens, dynamic registration). Conformance: run the OpenID Foundation's Basic OP plan against it before rollout.
 
 ## Acceptance before rollout
 

@@ -1,6 +1,6 @@
 # A small first-party OIDC provider (`@open-athena/auth/provider`)
 
-Status: first cut implemented, 2026-10-25 (`src/provider/`, `test/provider.test.ts`, demo `/oidc` + `/rp`, `test-browser/live/broker.spec.ts`). This is the build-it-ourselves option for the broker in `specs/cross-service-sso.md`. It's being built in parallel with a trial of Better Auth's OAuth 2.1 provider plugin (report at `tmp/oidc-trial/better-auth/REPORT.md`, untracked). Whichever wins, nothing is provisioned (`login.oa.dev` DNS, Google client, D1) without an explicit go-ahead.
+Status: first cut implemented, 2026-10-25 (`src/provider/`, `test/provider.test.ts`, demo `/oidc` + `/rp`, `test-browser/live/broker.spec.ts`). This is the build-it-ourselves option for the broker in `specs/cross-service-sso.md`. It was built in parallel with a trial of Better Auth's OAuth 2.1 provider plugin; this one was chosen (2026-10-27, reasons in `cross-service-sso.md`, "Provider decision").
 
 ## Why this can be small
 
