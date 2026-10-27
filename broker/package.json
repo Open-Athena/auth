@@ -1,0 +1,20 @@
+{
+  "name": "oa-login",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -w run build && pnpm db:local && wrangler dev --ip 0.0.0.0 --port 4191 --local-upstream localhost:4191",
+    "typecheck": "tsc --noEmit",
+    "db:local": "wrangler d1 migrations apply oa-login --local && wrangler d1 execute oa-login --local --file ../migrations/provider/0001_provider.sql",
+    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-login --remote && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0001_provider.sql",
+    "deploy": "pnpm -w run build && scripts/oa-wrangler.sh deploy"
+  },
+  "dependencies": {
+    "@open-athena/auth": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.0.0"
+  }
+}

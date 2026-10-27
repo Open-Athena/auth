@@ -1,0 +1,27 @@
+# OA's sign-in broker: an OIDC provider (`@open-athena/auth/provider`) over a
+# Google-only gate restricted to the openathena.ai Workspace. See README.md.
+name = "oa-login"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+workers_dev = false
+
+# Creates the DNS record and certificate on deploy.
+routes = [{ pattern = "login.oa.dev", custom_domain = true }]
+
+# `database_id` is filled in by `scripts/oa-wrangler.sh d1 create oa-login`.
+# Local dev doesn't need it: `wrangler dev` uses a local SQLite file.
+[[d1_databases]]
+binding = "DB"
+database_name = "oa-login"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../migrations"
+
+[vars]
+# Who may sign in: Google accounts whose id_token carries this Workspace `hd`.
+WORKSPACE_DOMAIN = "openathena.ai"
+
+# Secrets (`scripts/oa-wrangler.sh secret put <NAME>`):
+#   SESSION_SECRET        - HMAC key for the broker's session cookie, state and subject ids
+#   OIDC_SIGNING_KEY      - private RS256 JWK (`../scripts/oidc-signing-key.mjs | scripts/oa-wrangler.sh secret put OIDC_SIGNING_KEY`)
+#   GOOGLE_CLIENT_ID      - Google OAuth "Web application" client, callback https://login.oa.dev/auth/google/callback
+#   GOOGLE_CLIENT_SECRET

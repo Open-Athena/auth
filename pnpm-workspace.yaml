@@ -1,6 +1,7 @@
 packages:
   - '.'
   - 'demo'
+  - 'broker'
 
 # pnpm 10 reads this here as well as from package.json. Keeping it out of
 # package.json matters for distribution: `npm-dist` merges the source manifest
