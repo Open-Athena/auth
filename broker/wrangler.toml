@@ -8,12 +8,12 @@ workers_dev = false
 # Creates the DNS record and certificate on deploy.
 routes = [{ pattern = "login.oa.dev", custom_domain = true }]
 
-# `database_id` is filled in by `scripts/oa-wrangler.sh d1 create oa-login`.
+# From `scripts/oa-wrangler.sh d1 create oa-login`.
 # Local dev doesn't need it: `wrangler dev` uses a local SQLite file.
 [[d1_databases]]
 binding = "DB"
 database_name = "oa-login"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "90240ead-6119-4f86-967d-f2526baf7908"
 migrations_dir = "../migrations"
 
 [vars]
