@@ -1,6 +1,8 @@
 export { AuthClientError, createAuthClient, shareUrl } from './api.js';
 export type { AuthClient, AuthClientOptions } from './api.js';
 export type * from '../core/http.js';
+export { createGrantsController } from './grants.js';
+export type { GrantAction, GrantsController, GrantsControllerOptions, GrantsFailure, GrantsSnapshot, OneTimeToken } from './grants.js';
 export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from './identity.js';
 export type { WhoamiSource, SsoWhoami, GrantWhoami } from './identity.js';
 export { exchangeKeyParam, hasKeyParam } from './exchange.js';

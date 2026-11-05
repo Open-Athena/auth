@@ -9,9 +9,17 @@ export declare class AuthClientError extends Error {
     constructor(status: number, body: unknown);
 }
 export declare function createAuthClient({ basePath, fetch }?: AuthClientOptions): {
+    /** Where these routes are mounted, without a trailing slash. */
+    basePath: string;
     whoami: () => Promise<import("./identity.js").Whoami>;
-    /** In retained-login mode, signs out of the account this client last saw (a stale one is refused with 409). */
-    logout: () => Promise<import("../core/http.js").OkResponse>;
+    /**
+     * In retained-login mode, signs out of one account: the selection passed
+     * here, for a page whose identity came from elsewhere (`useWhoami`), else the
+     * one this client last saw. A stale one is refused with 409.
+     */
+    logout: (input?: {
+        selection?: string | null;
+    }) => Promise<import("../core/http.js").OkResponse>;
     grants: {
         mint: (input: MintInput) => Promise<import("../core/http.js").MintResponse>;
         list: ({ active }?: GrantListInput) => Promise<import("../core/http.js").GrantsResponse>;

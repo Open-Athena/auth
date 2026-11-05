@@ -1,0 +1,19 @@
+import type { AuthClient } from '../client/api.js';
+import { type GrantsController, type GrantsSnapshot } from '../client/grants.js';
+export type UseGrantsOptions = ({
+    client: AuthClient;
+    controller?: undefined;
+} | {
+    controller: GrantsController;
+    client?: undefined;
+}) & {
+    /** Re-read the list this often while the tab is visible. Off by default. */
+    pollMs?: number;
+};
+export type UseGrantsResult = GrantsSnapshot & Omit<GrantsController, 'subscribe' | 'getSnapshot'>;
+/**
+ * `createGrantsController` as a hook, loading the list on mount. `client` must be
+ * stable (a new one is a new controller, losing any one-time token). Pass your
+ * own `controller` to keep a token across this component unmounting.
+ */
+export declare function useGrants({ client, controller: given, pollMs }: UseGrantsOptions): UseGrantsResult;
