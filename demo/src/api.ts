@@ -1,4 +1,4 @@
-import type { AccessRequest, Grant, GrantActivity, StoredEvent } from '@open-athena/auth'
+import type { AccessRequest, Grant, StoredEvent } from '@open-athena/auth'
 import { isSessionLossReason, reportUnauthenticated } from '@open-athena/auth/client'
 
 export class ApiError extends Error {
@@ -41,21 +41,6 @@ export const startSandbox = (id: string | null) => post<SandboxIdentity>('/api/s
 /** The recipient-side identity. One object, shared, so Home and Dashboard share one whoami cache entry. */
 export const VIEW_SOURCE = { endpoint: '/api/view/whoami' } as const
 
-export interface MintInput {
-  /** The memo: a note to whoever reads the admin table later, not the recipient's name. */
-  name: string | null
-  /** Optional recipient name — becomes the grant's `subject.name`. */
-  subjectName?: string
-  /** Who the link is for; with `allowlist`, also lets that address sign in by Google or an emailed code. */
-  email?: string | null
-  allowlist?: boolean
-  /** A `data:` URI from `<AvatarField>`'s preview, or null for none. The server re-validates and copies it. */
-  avatar?: string | null
-  scopes: string[]
-  maxRedeems: number | null
-  expiresInS: number | null
-}
-
 /** What `/auth/google/client` says about this deployment. */
 export interface GoogleClient {
   clientId: string | null
@@ -71,16 +56,6 @@ export interface Outbox {
 }
 
 export const api = {
-  grants: () => call<{ grants: Grant[] }>('/api/admin/grants').then(r => r.grants),
-  mint: (input: MintInput) => post<{ grant: Grant; token: string; allowed?: { email: string; status: 'added' | 'widened' | 'already' } }>('/api/admin/grants', input),
-  revoke: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/revoke`),
-  disable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/disable`),
-  enable: (id: string) => post<{ ok: boolean }>(`/api/admin/grants/${id}/enable`),
-  /** The holder's name and face: `avatar` is a ref copied server-side; omit it to keep the face, `null` to clear it. */
-  editHolder: (id: string, edit: { subjectName: string; avatar?: string | null; email?: string; allowlist?: boolean }) =>
-    call<{ grant: Grant }>(`/api/admin/grants/${id}`, { method: 'PATCH', body: JSON.stringify(edit) }),
-  rotate: (id: string) => post<{ id: string; token: string }>(`/api/admin/grants/${id}/rotate`, { endSessions: false }),
-  activity: (id: string) => call<GrantActivity>(`/api/admin/grants/${id}/activity`),
   log: (limit = 60) => call<{ events: StoredEvent[] }>(`/api/admin/log?limit=${limit}`).then(r => r.events),
   requests: () => call<{ requests: AccessRequest[] }>('/api/admin/requests?status=pending').then(r => r.requests),
   approve: (id: string) => post<{ token: string; grant: Grant }>(`/api/admin/requests/${id}/approve`),

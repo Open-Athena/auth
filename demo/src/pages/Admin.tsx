@@ -1,14 +1,49 @@
 import { type Grant, subjectName } from '@open-athena/auth'
-import { AllowlistPanel, type Whoami, Avatar, AvatarField, useWhoami } from '@open-athena/auth/react'
+import { createAuthClient, createGrantsController, shareUrl } from '@open-athena/auth/client'
+import { AllowlistPanel, Avatar, GrantsPanel, type GrantsClassNames, type Whoami, useWhoami } from '@open-athena/auth/react'
+import { UserMenu } from '@open-athena/auth/react/user-menu'
 import { SessionLogSwitch } from '@open-athena/auth/react/session-log'
 import { slog } from '@open-athena/auth/session-log/client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type FormEvent, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ago, api, startSandbox } from '../api.js'
 import { Link } from '../router.js'
 
 const SOURCE = { endpoint: '/api/admin/whoami' } as const
 const SANDBOX_KEY = 'oa-auth-demo:sandbox'
+const client = createAuthClient({ basePath: '/api/admin' })
+const SCOPES = [{ id: 'reports', label: 'The dashboard' }]
+
+/** The package's parts wearing this site's stylesheet. */
+const GRANT_CLASSES: GrantsClassNames & { section: string } = {
+  panel: 'grants-panel',
+  section: 'panel',
+  form: 'mint',
+  check: 'check',
+  input: '',
+  muted: 'muted small',
+  error: 'err',
+  button: 'btn small',
+  primary: 'btn primary',
+  danger: 'btn small danger',
+  linkish: 'linkish',
+  list: 'grants',
+  card: 'grant',
+  cardRevoked: 'grant revoked',
+  cardHead: '',
+  row: 'row',
+  tag: 'tag soft',
+  tagDead: 'tag dead',
+  facts: 'facts',
+  holder: 'muted small for',
+  holderForm: 'holder-edit',
+  token: 'tokenbox',
+  copyRow: 'copyrow',
+  avatarField: 'avatar-field',
+  avatar: { row: 'avatar-row', input: 'input', button: 'btn small', hint: 'muted small' },
+}
+
+const buildLink = (_: Grant, token: string) => shareUrl(token, `${window.location.origin}/dashboard`)
 
 export function Admin() {
   const { whoami, refresh } = useWhoami<Whoami>(SOURCE)
@@ -73,52 +108,20 @@ const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute:
 
 function Console({ whoami }: { whoami: Whoami }) {
   const qc = useQueryClient()
-  const [tokens, setTokens] = useState<Record<string, string>>({})
   // Minting or binding with "also let this email sign in" adds an allowlist
   // row; the panel loads its own rows, so a link change remounts it.
   const [allowlistKey, setAllowlistKey] = useState(0)
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['grants'] })
+  const controller = useMemo(() => createGrantsController({ client }), [])
+  const refreshLog = () => {
     void qc.invalidateQueries({ queryKey: ['log'] })
     setAllowlistKey(k => k + 1)
   }
-
-  const grants = useQuery({ queryKey: ['grants'], queryFn: api.grants, refetchInterval: 5000 })
-  const log = useQuery({ queryKey: ['log'], queryFn: () => api.log(60), refetchInterval: 5000 })
-
-  // The only moment a raw token exists outside the recipient's browser is the
-  // response that minted (or rotated) it.
-  const showToken = (id: string, token: string) => setTokens(t => ({ ...t, [id]: token }))
-  const [recipientEmail, setRecipientEmail] = useState('')
-  const [recipientName, setRecipientName] = useState('')
-  const [avatar, setAvatar] = useState<string | null>(null)
-  const mint = useMutation({
-    mutationFn: api.mint,
-    onSuccess: ({ grant, token }) => {
-      // An app event (declared on the server's `appEvents`): a no-op while the session log is off.
-      slog('demo.mint', { scopes: grant.scopes.join(','), expires: grant.expiresAt !== null })
-      showToken(grant.id, token)
-      invalidate()
-    },
-  })
-
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const f = new FormData(e.currentTarget)
-    const days = Number(f.get('days'))
-    const max = Number(f.get('max'))
-    const email = recipientEmail.trim()
-    mint.mutate({
-      name: String(f.get('memo') || '').trim() || null,
-      subjectName: recipientName.trim(),
-      email: email || null,
-      avatar,
-      allowlist: Boolean(email) && f.get('allowlist') === 'on',
-      scopes: ['reports'],
-      maxRedeems: max > 0 ? max : null,
-      expiresInS: days > 0 ? days * 86400 : null,
-    })
+  const invalidate = () => {
+    void controller.refresh()
+    refreshLog()
   }
+
+  const log = useQuery({ queryKey: ['log'], queryFn: () => api.log(60), refetchInterval: 5000 })
 
   const email = whoami.kind === 'sso' ? whoami.email : 'unknown'
   const sandbox = sandboxName(email)
@@ -140,106 +143,59 @@ function Console({ whoami }: { whoami: Whoami }) {
             )}
           </p>
         </div>
+        <UserMenu whoami={whoami} client={client} profile={false} items={[{ key: 'dashboard', label: 'Dashboard', href: '/dashboard' }]} />
       </header>
 
-      <section className="panel">
-        <h2>Mint a share link</h2>
-        <p className="muted small">
-          A link minted here is real: it opens the dashboard for anyone in the world, until you disable, rotate or
-          revoke it.
-        </p>
-        <form className="mint" onSubmit={submit}>
-          <label>
-            Memo <span className="muted">(what is this link for?)</span>
-            {/* Pre-filled and optional: minting should cost one click. It's a
-                note to whoever reads this table later, not a recipient's name —
-                the recipient's identity is the field below, when you want it. */}
-            <input name="memo" defaultValue={`${sandbox ?? 'test'} · ${clock()}`} />
-          </label>
-          <label>
-            Recipient <span className="muted">(optional — puts a name on the page)</span>
-            <input
-              name="recipient"
-              placeholder="Ada Lovelace"
-              autoComplete="off"
-              value={recipientName}
-              onChange={e => setRecipientName(e.target.value)}
-            />
-          </label>
-          <label>
-            Email <span className="muted">(optional — who the link is for)</span>
-            <input
-              name="email"
-              type="email"
-              placeholder="ada@example.org"
-              autoComplete="off"
-              value={recipientEmail}
-              onChange={e => setRecipientEmail(e.target.value)}
-            />
-          </label>
-          <label className="check">
-            <input name="allowlist" type="checkbox" defaultChecked /> Also let this email sign in with Google or an
-            emailed code (adds it to the allowlist below)
-          </label>
-          <div className="avatar-field">
-            <label htmlFor="mint-avatar">
-              Face <span className="muted">(optional — their Gravatar if they have one; or paste a profile, or upload)</span>
-            </label>
-            <AvatarField
-              id="mint-avatar"
-              endpoint="/api/admin/avatar"
-              value={avatar}
-              onChange={setAvatar}
-              email={recipientEmail}
-              name={recipientName.trim() || null}
-              size={36}
-              classNames={{ row: 'avatar-row', input: 'input', button: 'btn small', hint: 'muted small' }}
-            />
-          </div>
-          <label>
-            Expires in
-            <select name="days" defaultValue="30">
-              <option value="0">never</option>
-              <option value="1">1 day</option>
-              <option value="7">7 days</option>
-              <option value="30">30 days</option>
-            </select>
-          </label>
-          <label>
-            Max redemptions
-            <select name="max" defaultValue="0">
-              <option value="0">unlimited</option>
-              <option value="1">1 (see note)</option>
-              <option value="3">3</option>
-            </select>
-          </label>
-          <button className="btn primary" type="submit" disabled={mint.isPending}>
-            {mint.isPending ? 'Minting…' : 'Mint link'}
-          </button>
-        </form>
-        <p className="muted small">
-          Redemptions count <em>sessions minted</em> — roughly distinct browsers — not requests, which is what makes
-          "one-use link" mean what you'd predict. In practice <code>1</code> is hostile UX: the recipient opens it on
-          their phone, then their laptop, and is locked out. Prefer unlimited, named, logged and revocable.
-        </p>
-        {mint.error && <p className="err">{(mint.error as Error).message}</p>}
-      </section>
-
-      <section className="panel">
-        <h2>Your links</h2>
-        <p className="muted small">
-          Three verbs, because "stop handing this out" and "throw everyone out" are different actions:{' '}
-          <strong>disable</strong> stops new redemptions and is reversible; <strong>rotate</strong> re-keys a leaked
-          link and keeps its terms; <strong>revoke</strong> ends every session it ever minted, permanently.
-        </p>
-        {grants.isPending && <p className="muted">Loading…</p>}
-        {grants.data?.length === 0 && <p className="muted">None yet — mint one above.</p>}
-        <div className="grants">
-          {grants.data?.map(g => (
-            <GrantCard key={g.id} grant={g} token={tokens[g.id]} onChanged={invalidate} onToken={showToken} />
-          ))}
-        </div>
-      </section>
+      <GrantsPanel
+        controller={controller}
+        scopes={SCOPES}
+        buildLink={buildLink}
+        pollMs={5000}
+        allowlist
+        avatarEndpoint="/api/admin/avatar"
+        // Pre-filled and optional: minting should cost one click. It's a note to
+        // whoever reads this table later, not a recipient's name: that's the field below.
+        defaultMemo={() => `${sandbox ?? 'test'} · ${clock()}`}
+        onMinted={grant => {
+          // An app event (declared on the server's `appEvents`): a no-op while the session log is off.
+          slog('demo.mint', { scopes: grant.scopes.join(','), expires: grant.expiresAt !== null })
+        }}
+        onChanged={refreshLog}
+        classNames={GRANT_CLASSES}
+        listHeading="Your links"
+        emptyLabel="None yet — mint one above."
+        mintIntro={
+          <p className="muted small">
+            A link minted here is real: it opens the dashboard for anyone in the world, until you disable, rotate or
+            revoke it.
+          </p>
+        }
+        listIntro={
+          <>
+            <p className="muted small">
+              Three verbs, because "stop handing this out" and "throw everyone out" are different actions:{' '}
+              <strong>disable</strong> stops new redemptions and is reversible; <strong>rotate</strong> re-keys a leaked
+              link and keeps its terms; <strong>revoke</strong> ends every session it ever minted, permanently.
+            </p>
+            <p className="muted small">
+              Redemptions count <em>sessions minted</em> — roughly distinct browsers — not requests, which is what makes
+              "one-use link" mean what you'd predict. In practice <code>1</code> is hostile UX: the recipient opens it on
+              their phone, then their laptop, and is locked out. Prefer unlimited, named, logged and revocable.
+            </p>
+          </>
+        }
+        labels={{
+          memo: <>Memo <span className="muted">(what is this link for?)</span></>,
+          holder: <>Recipient <span className="muted">(optional — puts a name on the page)</span></>,
+          email: <>Email <span className="muted">(optional — who the link is for)</span></>,
+          allowlist: 'Also let this email sign in with Google or an emailed code (adds it to the allowlist below)',
+          avatar: <>Face <span className="muted">(optional — their Gravatar if they have one; or paste a profile, or upload)</span></>,
+        }}
+        cardLabels={{
+          warning: "Copy this now — only its hash is stored, so it can't be shown again. Open it in a private window to see the recipient's view.",
+          allowlist: 'Also let this email sign in with Google or an emailed code',
+        }}
+      />
 
       <section className="panel">
         <h2>Access log</h2>
@@ -297,157 +253,6 @@ function Console({ whoami }: { whoami: Whoami }) {
         />
       )}
     </div>
-  )
-}
-
-function GrantCard({
-  grant,
-  token,
-  onChanged,
-  onToken,
-}: {
-  grant: Grant
-  token?: string
-  onChanged: () => void
-  onToken: (id: string, token: string) => void
-}) {
-  const [copied, setCopied] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const activity = useQuery({
-    queryKey: ['activity', grant.id],
-    queryFn: () => api.activity(grant.id),
-    refetchInterval: 5000,
-  })
-  const revoke = useMutation({ mutationFn: api.revoke, onSuccess: onChanged })
-  const disable = useMutation({ mutationFn: api.disable, onSuccess: onChanged })
-  const enable = useMutation({ mutationFn: api.enable, onSuccess: onChanged })
-  const rotate = useMutation({
-    mutationFn: api.rotate,
-    onSuccess: r => {
-      onToken(r.id, r.token)
-      onChanged()
-    },
-  })
-  const busy = revoke.isPending || disable.isPending || enable.isPending || rotate.isPending
-
-  const revoked = grant.revokedAt !== null
-  const disabled = grant.disabledAt !== null
-  const expired = grant.expiresAt !== null && grant.expiresAt * 1000 < Date.now()
-  const url = token ? `${window.location.origin}/dashboard?key=${token}` : null
-  // 1–3 redemptions is one person on their phone, laptop and work machine.
-  // Many more, especially across countries, is the forwarding signal — a soft
-  // badge, deliberately not an alarm.
-  const spread = (activity.data?.distinctIps ?? 0) > 3 || (activity.data?.countries.length ?? 0) > 2
-
-  return (
-    <article className={`grant${revoked ? ' revoked' : ''}`}>
-      <header>
-        <h3>{grant.name ?? 'No memo'}</h3>
-        {revoked ? (
-          <span className="tag dead">revoked</span>
-        ) : expired ? (
-          <span className="tag dead">expired</span>
-        ) : (
-          <div className="row">
-            {disabled ? (
-              <button className="btn small" type="button" disabled={busy} onClick={() => enable.mutate(grant.id)}>
-                Enable
-              </button>
-            ) : (
-              <button className="btn small" type="button" disabled={busy} onClick={() => disable.mutate(grant.id)}>
-                Disable
-              </button>
-            )}
-            <button className="btn small" type="button" disabled={busy} onClick={() => rotate.mutate(grant.id)}>
-              Rotate
-            </button>
-            <button className="btn small danger" type="button" disabled={busy} onClick={() => revoke.mutate(grant.id)}>
-              Revoke
-            </button>
-          </div>
-        )}
-      </header>
-      {disabled && !revoked && (
-        <p className="muted small">
-          <span className="tag soft">disabled</span> No new redemptions; anyone already in stays in.
-        </p>
-      )}
-      {editing ? (
-        <HolderEditor grant={grant} onDone={() => setEditing(false)} onChanged={onChanged} />
-      ) : (
-        (grant.subject || !revoked) && (
-          <p className="muted small for">
-            {grant.subject?.avatar && <Avatar src={grant.subject.avatar} name={subjectName(grant.subject)} size={20} />}
-            for {subjectName(grant.subject) ?? grant.email ?? 'someone'}
-            {!revoked && (
-              <button className="linkish" type="button" onClick={() => setEditing(true)}>
-                edit
-              </button>
-            )}
-          </p>
-        )
-      )}
-
-      <dl className="facts">
-        <div>
-          <dt>redemptions</dt>
-          <dd>
-            {grant.redeems}
-            {grant.maxRedeems !== null && ` / ${grant.maxRedeems}`}
-          </dd>
-        </div>
-        <div>
-          <dt>views</dt>
-          <dd>{activity.data?.views ?? 0}</dd>
-        </div>
-        <div>
-          <dt>distinct clients</dt>
-          <dd>
-            {activity.data?.distinctIps ?? 0} {spread && <span className="tag soft">widely opened</span>}
-          </dd>
-        </div>
-        <div>
-          <dt>last seen</dt>
-          <dd>{ago(grant.lastUsedAt)}</dd>
-        </div>
-        <div>
-          <dt>expires</dt>
-          <dd>{grant.expiresAt === null ? 'never' : new Date(grant.expiresAt * 1000).toLocaleDateString()}</dd>
-        </div>
-      </dl>
-
-      {activity.data && activity.data.topPaths.length > 0 && (
-        <p className="muted small">
-          mostly {activity.data.topPaths.map(p => `${p.path} (${p.views})`).join(', ')}
-          {activity.data.countries.length > 0 && ` · from ${activity.data.countries.join(', ')}`}
-        </p>
-      )}
-
-      {url ? (
-        <div className="tokenbox">
-          <p className="muted small">
-            Copy this now — only its hash is stored, so it can't be shown again. Open it in a private window to see the
-            recipient's view.
-          </p>
-          <div className="copyrow">
-            <input readOnly value={url} onFocus={e => e.currentTarget.select()} />
-            <button
-              className="btn small"
-              type="button"
-              onClick={async () => {
-                await navigator.clipboard.writeText(url).catch(() => {})
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
-              }}
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        !revoked && <p className="muted small">Link shown once at mint. Rotate it for a fresh one if you lost it.</p>
-      )}
-    </article>
   )
 }
 
@@ -551,83 +356,5 @@ function RequestQueue({ onChange }: { onChange: () => void }) {
         </p>
       ))}
     </section>
-  )
-}
-
-/**
- * Rename the link's holder or change their face after minting. The face is
- * copied server-side, as at mint; leaving the field untouched keeps the
- * current one. A link minted without an email can be given one here: the
- * holder's existing session becomes theirs, with no new link to send.
- */
-function HolderEditor({ grant, onDone, onChanged }: { grant: Grant; onDone: () => void; onChanged: () => void }) {
-  const [name, setName] = useState(subjectName(grant.subject) ?? '')
-  // `undefined` = keep the current face; `null` = clear it; a `data:` URI = replace.
-  const [avatar, setAvatar] = useState<string | null | undefined>(undefined)
-  const [email, setEmail] = useState('')
-  const [allowlist, setAllowlist] = useState(true)
-  const bind = grant.email === null && email.trim() !== ''
-  const save = useMutation({
-    mutationFn: () =>
-      api.editHolder(grant.id, {
-        subjectName: name,
-        ...(avatar === undefined ? {} : { avatar }),
-        ...(bind ? { email: email.trim(), allowlist } : {}),
-      }),
-    onSuccess: () => {
-      onChanged()
-      onDone()
-    },
-  })
-  return (
-    <form
-      className="holder-edit"
-      onSubmit={e => {
-        e.preventDefault()
-        save.mutate()
-      }}
-    >
-      <label>
-        <span>Holder's name</span>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} autoFocus />
-      </label>
-      {grant.email === null && (
-        <>
-          <label>
-            <span>Their email</span>
-            <input type="email" value={email} placeholder="optional" onChange={e => setEmail(e.target.value)} />
-          </label>
-          {bind && (
-            <label className="check">
-              <input type="checkbox" checked={allowlist} onChange={e => setAllowlist(e.target.checked)} /> Also let this
-              email sign in with Google or an emailed code
-            </label>
-          )}
-        </>
-      )}
-      <div className="avatar-field">
-        <span>Face</span>
-        <AvatarField
-          id={`holder-avatar-${grant.id}`}
-          endpoint="/api/admin/avatar"
-          value={avatar === undefined ? (grant.subject?.avatar ?? null) : avatar}
-          onChange={setAvatar}
-          email={grant.email}
-          autoGravatar={false}
-          name={name.trim() || null}
-          size={36}
-          classNames={{ row: 'avatar-row', input: 'input', button: 'btn small', hint: 'muted small' }}
-        />
-      </div>
-      {save.error && <p className="err">{save.error.message}</p>}
-      <div className="row">
-        <button className="btn small" type="submit" disabled={save.isPending}>
-          {save.isPending ? 'Saving…' : 'Save'}
-        </button>
-        <button className="btn small" type="button" onClick={onDone}>
-          Cancel
-        </button>
-      </div>
-    </form>
   )
 }

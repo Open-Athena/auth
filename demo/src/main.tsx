@@ -3,6 +3,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { bootSessionLog } from '@open-athena/auth/session-log/client'
 import '@open-athena/auth/react/session-log.css'
+import '@open-athena/auth/react/ui.css'
 import { App } from './App.js'
 import './styles.scss'
 

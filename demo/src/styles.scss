@@ -927,3 +927,32 @@ a.card {
     margin-top: 0.5rem;
   }
 }
+
+// `<GrantsPanel>`'s sections sit directly in the console's rhythm.
+.grants-panel {
+  display: contents;
+}
+
+.mint fieldset {
+  border: 0;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  label.check {
+    display: flex;
+    gap: 0.4rem;
+  }
+}
+
+// The user menu (`@open-athena/auth/react/ui.css`) on this page's palette.
+.oa-ui {
+  --oa-ui-surface: var(--panel);
+  --oa-ui-ink: var(--ink);
+  --oa-ui-muted: var(--muted);
+  --oa-ui-line: var(--line);
+  --oa-ui-panel: var(--soft);
+  --oa-ui-accent: var(--accent);
+  --oa-ui-on-accent: var(--accent-ink);
+  --oa-ui-danger: var(--danger);
+}

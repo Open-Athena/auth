@@ -1,5 +1,17 @@
 # Headless share-link admin and user menu, with reference components
 
+Status: done, 2026-11-05. Tests: `test/client-grants.test.ts`, `test/react/grants.test.tsx`, `test/react/user-menu.test.tsx`, `test-browser/grants.spec.ts`.
+
+**How the result differs from the request below:**
+- `<UserMenu>` is at `/react/user-menu` and the mount helpers at `/react/mount`, not `/react`. Importing `@floating-ui/react` or `react-dom` from the `/react` index would break every app without them on its next pin bump.
+- For the same reason `useUserMenu` returns ARIA and keyboard props but not floating props. `<UserMenu>` adds positioning and outside-click dismissal.
+- The popover is `role="dialog"` holding `role="menu"` groups, since the identity header and account list aren't menu items.
+- `client.logout({ selection })` and `client.basePath` are new: the menu's identity comes from `useWhoami`, so the client hadn't seen its selection.
+- Added beyond the request: rotate and revoke take a second click; revoking a link clears its showing token; `identity` and an item's `content`, which disky's registry names and `Display` submenu need; `hideSignOut` on `<AccountSwitcher>`; `pollMs`.
+- The token slot holds one token, as requested, so minting again replaces a link not yet copied.
+- No Vue binding (optional). The browser test runs the real routes and a memory store inside Playwright, not wrangler and D1, so `d1` isn't exercised by it.
+- The demo's `/admin` adopted `<GrantsPanel>` and `<UserMenu>`. Its site-wide nav chip is unchanged.
+
 Requested for `transcripts.oa.dev` (`~/c/oa/transcripts`), which needs a link-admin page and an upper-right user chip. Disky has its own versions of both, and other OA apps will want them too. This repo's only implementations of the admin UI are `demo/src/pages/Admin.tsx` (633 lines, tied to the demo's sandbox, not exported) and the small `<WhoamiChip>`.
 
 ## Wanted
