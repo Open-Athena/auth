@@ -32,7 +32,8 @@ src/core/       sessions, tokens, grants, policy, requests, email codes, audit, 
 src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
                 r2 (avatar bytes), google-directory (group → allowlist sync)
 src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
-src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled;
+                GrantsPanel / UserMenu — optional ui.css
 src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
 src/session-log/  optional, time-boxed user-action logging (routes; D1 store in adapters/,
                 logger in client/session-log/, admin UI in react/session-log/)
@@ -64,6 +65,58 @@ await auth.grants.revoke(grant.id)
 `displayName`, `hasScope`, `hasKeyParam`, `exchangeKeyParam` and `downscaleImage` are available from `/client`, along with the shared wire types. Existing `/react` helper imports still work. Importing `/client` is SSR-safe; browser-only helpers need browser APIs when called, and `shareUrl` needs an explicit absolute target outside the browser. It preserves the target's other query parameters and hash, replacing an existing `key`. The emitted module graph is checked during `pnpm build` for external dependencies, including React/Vue.
 
 The backend root import and platform adapters remain separate from `/client`. React hooks/components live under `/react`; Vue wrappers live under `/vue`. Vanilla apps need neither framework.
+
+## Share-Link Admin and User Menu
+
+Each has headless logic that owns state and API calls, and reference components built only on it, so an app can use them as they are, restyle them, or replace them.
+
+**Share links.** `createGrantsController({ client })` in `/client` holds the list, loading and failure state, per-link pending state, and the one-time token. It has `mint`, `update`, `disable`, `enable`, `revoke`, `rotate`, `activity`, `refresh` and `dismissToken`, and binds to any framework through `subscribe`/`getSnapshot`. A list response that left before a change finished is dropped, so it can't bring back old state. The raw token lives only in the controller's memory, until it's dismissed, replaced by a newer one, or its link is revoked: actions don't return it, and a reload loses it.
+
+```tsx
+import { createAuthClient, shareUrl } from '@open-athena/auth/client'
+import { GrantsPanel } from '@open-athena/auth/react'
+import '@open-athena/auth/react/ui.css'
+
+const client = createAuthClient()
+
+<GrantsPanel
+  client={client}
+  scopes={[{ id: 'reports', label: 'Reports', hint: 'Everything under /reports' }]}
+  buildLink={(grant, token) => shareUrl(token, `${location.origin}/${grant.scopes[0]}/`)}
+/>
+```
+
+`<GrantsPanel>` composes `<GrantMintForm>`, `<GrantCard>` and `<GrantLink>`, all exported. `useGrants({ client })` is the hook. At least one scope must be chosen, and a lone scope starts checked. Rotate and revoke take a second click, because neither can be undone.
+
+**User menu.** `useUserMenu({ whoami, client, items })` in `/react` returns the identity, the exact items for this person, `signOut()` (sending the selection in retained mode), and ARIA and keyboard props. It doesn't position anything, which keeps `/react` free of `@floating-ui/react`. `<UserMenu>` adds positioning and outside-click dismissal, from its own subpath, and needs that optional peer:
+
+```tsx
+import { UserMenu } from '@open-athena/auth/react/user-menu'
+
+<UserMenu
+  whoami={whoami}
+  client={client}
+  items={[
+    { key: 'links', label: 'Share links', href: '/admin', when: 'admin' },
+    { key: 'drafts', label: 'Your drafts', href: '/drafts', when: 'sso' },
+  ]}
+/>
+```
+
+It lists who you are, Profile (`sso` only; `onOpenProfile` for your own page, `profile={false}` for a gate with no profile store), your `items`, accounts (when whoami carries a selection, meaning the gate retains logins), and sign out. A share-link guest is always labelled as one, and an anonymous link still gets a face and a sign-out. `identity` overrides the name and face with what the app knows better, and an item's `content` renders as is, for an app's own submenu.
+
+**Outside React.** `@open-athena/auth/react/mount` needs `react-dom` and `@floating-ui/react`, and fetches identity itself:
+
+```ts
+import { mountUserMenu, mountGrantsPanel } from '@open-athena/auth/react/mount'
+import '@open-athena/auth/react/ui.css'
+
+const menu = mountUserMenu(document.querySelector('#user')!, { basePath: '/api/auth' })
+menu.update({ items: [] })
+menu.unmount()
+```
+
+**Theming.** `ui.css` is optional. Set `--oa-ui-surface`, `--oa-ui-ink` and friends on `.oa-ui`, not an ancestor, because the menu's popover is portaled to `<body>`. Its defaults have no specificity, so your rule wins whichever stylesheet loads first. They follow the OS color scheme; a page with its own theme should set at least those two, plus `color-scheme`. Components also take `classNames`, replacing the defaults one by one.
 
 ## Session Loss
 

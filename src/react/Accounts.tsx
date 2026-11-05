@@ -87,6 +87,8 @@ export interface AccountSwitcherProps {
   addAccountHref?: string
   /** Called after any successful change (close a popover, say). */
   onChanged?: () => void
+  /** Leave out "Sign out" (of the active account), for a host with its own, as `<UserMenu>` has. "Sign out of all" stays. */
+  hideSignOut?: boolean
   labels?: Partial<
     Record<'heading' | 'add' | 'signOut' | 'signOutAll' | 'remove' | 'link' | 'verified' | 'incoming' | 'useLink' | 'current', ReactNode>
   >
@@ -105,7 +107,7 @@ const who = (a: { kind?: AccountView['kind']; email: string | null; name: string
  * account and no incoming link it is just that account and the sign-out
  * actions: no picker to step through.
  */
-export function AccountSwitcher({ basePath, addAccountHref, onChanged, labels = {}, classNames = {} }: AccountSwitcherProps) {
+export function AccountSwitcher({ basePath, addAccountHref, onChanged, hideSignOut = false, labels = {}, classNames = {} }: AccountSwitcherProps) {
   const a = useAccounts({ basePath })
   const l = {
     heading: 'Accounts',
@@ -176,7 +178,7 @@ export function AccountSwitcher({ basePath, addAccountHref, onChanged, labels = 
             {l.add}
           </a>
         )}
-        {accounts.some(x => x.active) && (
+        {!hideSignOut && accounts.some(x => x.active) && (
           <button type="button" className={classNames.button} disabled={a.busy} onClick={() => done(a.signOut())}>
             {l.signOut}
           </button>

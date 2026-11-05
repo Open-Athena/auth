@@ -14,6 +14,7 @@
     "deploy:dev": "pnpm build && scripts/oa-wrangler.sh pages deploy dist --project-name oa-auth-demo-dev --branch main"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.20",
     "@open-athena/auth": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
     "react": "^19.2.8",

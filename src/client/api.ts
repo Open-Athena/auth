@@ -60,9 +60,18 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
   }
   const grantPath = (id: string) => `/grants/${segment(id)}`
   return {
+    /** Where these routes are mounted, without a trailing slash. */
+    basePath: base,
     whoami: () => request<'whoami'>('/whoami'),
-    /** In retained-login mode, signs out of the account this client last saw (a stale one is refused with 409). */
-    logout: () => request<'logout'>('/logout', 'POST', undefined, selection ? { [SELECTION_HEADER]: selection } : {}),
+    /**
+     * In retained-login mode, signs out of one account: the selection passed
+     * here, for a page whose identity came from elsewhere (`useWhoami`), else the
+     * one this client last saw. A stale one is refused with 409.
+     */
+    logout: (input: { selection?: string | null } = {}) => {
+      const sent = input.selection ?? selection
+      return request<'logout'>('/logout', 'POST', undefined, sent ? { [SELECTION_HEADER]: sent } : {})
+    },
     grants: {
       mint: (input: MintInput) => request<'mint'>('/grants', 'POST', input),
       list: ({ active }: GrantListInput = {}) => request<'list'>(`/grants${active ? '?active=1' : ''}`),

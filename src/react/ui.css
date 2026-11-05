@@ -1,0 +1,118 @@
+/*
+ * Optional styles for `<GrantsPanel>` and `<UserMenu>`. Set the variables on
+ * `.oa-ui` to theme them; the user menu's popover is portaled to `<body>`, so set
+ * them there rather than on an ancestor. The defaults follow the OS color scheme;
+ * a page with its own theme sets at least the surface and ink:
+ *
+ *   .oa-ui { --oa-ui-surface: #14161a; --oa-ui-ink: #e8e8e8; color-scheme: dark; }
+ *
+ * The defaults have no specificity (`:where`), so a host's rule wins whichever
+ * stylesheet loads first.
+ */
+:where(.oa-ui) {
+  color-scheme: light dark;
+  --oa-ui-surface: Canvas;
+  --oa-ui-ink: CanvasText;
+  --oa-ui-muted: color-mix(in srgb, var(--oa-ui-ink) 65%, transparent);
+  --oa-ui-line: color-mix(in srgb, var(--oa-ui-ink) 20%, transparent);
+  --oa-ui-panel: color-mix(in srgb, var(--oa-ui-ink) 6%, transparent);
+  --oa-ui-accent: #2563eb;
+  --oa-ui-on-accent: #fff;
+  --oa-ui-danger: #d14343;
+  color: var(--oa-ui-ink);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.oa-ui *,
+.oa-ui-um-trigger { box-sizing: border-box; }
+.oa-ui-muted { color: var(--oa-ui-muted); font-size: 13px; }
+.oa-ui-error { color: var(--oa-ui-danger); margin: 8px 0 0; }
+
+.oa-ui-btn {
+  background: var(--oa-ui-panel);
+  border: 1px solid var(--oa-ui-line);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 10px;
+}
+.oa-ui-btn:disabled { cursor: default; opacity: 0.6; }
+.oa-ui-btn-primary { background: var(--oa-ui-accent); border-color: var(--oa-ui-accent); color: var(--oa-ui-on-accent); }
+.oa-ui-btn-danger { border-color: var(--oa-ui-danger); color: var(--oa-ui-danger); }
+.oa-ui-linkish { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.oa-ui-tag { border: 1px solid var(--oa-ui-line); border-radius: 999px; color: var(--oa-ui-muted); display: inline-block; font-size: 12px; padding: 0 8px; }
+.oa-ui-tag-dead { border-color: var(--oa-ui-danger); color: var(--oa-ui-danger); }
+
+/* Share links */
+.oa-ui-grants { display: grid; gap: 16px; }
+.oa-ui-form { display: grid; gap: 10px; max-width: 480px; }
+.oa-ui-form label,
+.oa-ui-form fieldset { display: grid; gap: 4px; }
+.oa-ui-form fieldset { border: 0; margin: 0; padding: 0; }
+.oa-ui-form legend { padding: 0 0 4px; }
+.oa-ui-form label.oa-ui-check { align-items: baseline; display: flex; gap: 6px; }
+.oa-ui-input {
+  background: transparent;
+  border: 1px solid var(--oa-ui-line);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  max-width: 100%;
+  padding: 4px 8px;
+}
+.oa-ui-list { display: grid; gap: 10px; }
+.oa-ui-card { background: var(--oa-ui-panel); border: 1px solid var(--oa-ui-line); border-radius: 8px; padding: 12px; }
+.oa-ui-card-revoked { opacity: 0.65; }
+.oa-ui-card-head { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.oa-ui-card-head h3 { font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+.oa-ui-row { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
+.oa-ui-facts { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 10px 0; }
+.oa-ui-facts dt { color: var(--oa-ui-muted); font-size: 12px; }
+.oa-ui-facts dd { margin: 0; }
+.oa-ui-token { border: 1px solid var(--oa-ui-accent); border-radius: 6px; margin-top: 10px; padding: 8px; }
+.oa-ui-token p { margin: 0 0 6px; }
+.oa-ui-copyrow { display: flex; gap: 6px; }
+.oa-ui-copyrow input { flex: 1; min-width: 0; }
+
+/* User menu */
+.oa-ui-um-trigger {
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+.oa-ui-um-trigger span,
+.oa-ui-um-identity > span { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; }
+.oa-ui-um-pop {
+  background: var(--oa-ui-surface);
+  border: 1px solid var(--oa-ui-line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 25%);
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  width: 280px;
+  z-index: 1000;
+}
+.oa-ui-um-identity { align-items: center; display: flex; gap: 10px; padding: 6px 8px 10px; }
+.oa-ui-um-name { font-weight: 600; overflow-wrap: anywhere; }
+.oa-ui-um-email { color: var(--oa-ui-muted); font-size: 13px; overflow-wrap: anywhere; }
+.oa-ui-um-menu { border-top: 1px solid var(--oa-ui-line); padding: 4px 0; }
+.oa-ui-um-item {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: 6px 8px;
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
+}
+.oa-ui-um-item:hover,
+.oa-ui-um-item:focus-visible { background: var(--oa-ui-panel); }
