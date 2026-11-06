@@ -755,6 +755,32 @@ describe('profile seed', () => {
         expect(await profiles!.get(EMAIL)).toEqual(row(o))
       })
 
+      it('a first save of only a name leaves the photo to the next sign-in, keeping the name', async () => {
+        const { g, profiles } = seedGate()
+        const { auth } = (await g.signIn(EMAIL, new Request('https://app.test/')))!
+        await g.putProfile(auth, { name: 'Ada Typed' })
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(norm(await profiles!.get(EMAIL))).toEqual({ email: EMAIL, name: 'Ada Typed', avatar: dataUri, avatarSrc: 'url', updatedAt: '<ts>' })
+      })
+
+      it('a first save that removes the photo stays removed', async () => {
+        const { g, profiles } = seedGate()
+        const { auth } = (await g.signIn(EMAIL, new Request('https://app.test/')))!
+        await g.putProfile(auth, { name: 'Ada Typed', avatar: null })
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(norm(await profiles!.get(EMAIL))).toEqual({ email: EMAIL, name: 'Ada Typed', avatar: null, avatarSrc: null, updatedAt: '<ts>' })
+      })
+
+      it('a photo set through `putProfile` is not replaced', async () => {
+        const { g, profiles } = seedGate()
+        const { auth } = (await g.signIn(EMAIL, new Request('https://app.test/')))!
+        const chosen = 'data:image/png;base64,Y2hvc2Vu'
+        await profiles!.put(row({ avatar: chosen, avatarSrc: 'upload' }))
+        await g.putProfile(auth, { name: 'Ada Typed' })
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(norm(await profiles!.get(EMAIL))).toEqual({ email: EMAIL, name: 'Ada Typed', avatar: chosen, avatarSrc: 'upload', updatedAt: '<ts>' })
+      })
+
       it('clearing the avatar through `putProfile` ends the retries', async () => {
         const { g, profiles } = seedGate()
         await profiles!.put(row({}))

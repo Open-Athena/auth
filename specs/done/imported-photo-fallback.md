@@ -32,3 +32,14 @@ Rows already saved with `avatar: null, avatarSrc: null` can't be told apart: the
 ## Downstream
 
 `jobs` is on `0.1.0-dist.2ea9c4f` (commit `1b2b3bb`, not deployed yet, waiting on the user). When a dist build has this, tell the `jobs` session the SHA.
+
+## Final state
+
+Implemented as specced, with `AVATAR_SEED_PENDING` as the "never set" marker and `avatarSrc: null` staying the removal. No new marker was needed.
+
+`<ProfilePanel>`'s name-only save already sent no `avatar`, but two other things in it broke the rule, so both changed:
+
+- **A failed lookup counted as a removal.** `<AvatarField>` reports null for a failed lookup, a lookup that found nothing, and emptied text, as well as for Clear. Saving after any of those removed a saved photo and blocked the imported one. `onChange` now takes a second `cleared` argument, true only for Clear, and the panel treats every other null as "keep". Once Clear has been pressed, a later empty lookup doesn't undo it.
+- **A saved photo couldn't be removed.** The panel's Clear button appeared only for a new draft, so someone with an imported photo had no way to clear it. The new `clearable` prop shows it for a saved photo.
+
+Existing rows with `avatar: null, avatarSrc: null` stay as they are. Nothing tells a removal from a name-only save on those rows, including the failed-lookup saves above.

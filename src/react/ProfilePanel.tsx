@@ -109,7 +109,12 @@ export function ProfilePanel({
           id="oa-profile-avatar"
           endpoint={avatarEndpoint}
           value={avatar ?? null}
-          onChange={setAvatar}
+          onChange={(next, cleared) =>
+            // Only Clear removes a face. A lookup with no result changes nothing,
+            // and doesn't undo a Clear.
+            setAvatar(current => (next === null && !cleared && current !== null ? undefined : next))
+          }
+          clearable={avatar === undefined && !!seed.avatar}
           email={whoami?.email ?? null}
           autoGravatar={false}
           preview={false}

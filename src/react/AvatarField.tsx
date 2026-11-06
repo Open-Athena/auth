@@ -23,7 +23,13 @@ export interface AvatarFieldProps {
    * null for none (initials). Controlled.
    */
   value: string | null
-  onChange: (value: string | null) => void
+  /**
+   * `cleared` is true only for the Clear button. Any other null means "no face
+   * here": a failed lookup, a lookup that found none, or emptied text.
+   */
+  onChange: (value: string | null, cleared?: boolean) => void
+  /** Offer Clear with nothing in the field, for a face held elsewhere (`ProfilePanel`'s saved one). */
+  clearable?: boolean
   /** Whose face: with nothing typed, their Gravatar is previewed (see `autoGravatar`). */
   email?: string | null
   /** Default true. False offers a "Use Gravatar" button instead of looking it up unprompted. */
@@ -72,6 +78,7 @@ export function AvatarField({
   endpoint = '/api/auth/avatar',
   value,
   onChange,
+  clearable = false,
   email,
   autoGravatar = true,
   name,
@@ -93,9 +100,9 @@ export function AvatarField({
   // Whether this field has reported anything yet: until it has, an empty field
   // is "untouched", not "cleared" — `ProfilePanel` reads that as "keep".
   const emitted = useRef(false)
-  const emit = (v: string | null) => {
+  const emit = (v: string | null, cleared = false) => {
     emitted.current = true
-    onChangeRef.current(v)
+    onChangeRef.current(v, cleared)
   }
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -171,7 +178,7 @@ export function AvatarField({
     setText('')
     setGravatarAsked(false)
     setStatus({ kind: 'idle' })
-    emit(null)
+    emit(null, true)
   }
 
   const hint =
@@ -225,7 +232,7 @@ export function AvatarField({
             {labels.gravatar ?? 'Use Gravatar'}
           </button>
         )}
-        {(value || text) && (
+        {(value || text || clearable) && (
           <button className={classNames.button} type="button" onClick={clear}>
             {labels.clear ?? 'Clear'}
           </button>

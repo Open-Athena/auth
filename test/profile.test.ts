@@ -59,7 +59,7 @@ describe('putProfile / getProfile', () => {
     const res = await gate.putProfile(auth, { name: 'Staff Member' })
     expect(res).toEqual({
       ok: true,
-      profile: { email: EMAIL, name: 'Staff Member', avatar: null, avatarSrc: null, updatedAt: NOW / 1000 },
+      profile: { email: EMAIL, name: 'Staff Member', avatar: null, avatarSrc: 'seed-pending', updatedAt: NOW / 1000 },
     })
     expect(await gate.getProfile(auth)).toEqual(res.ok && res.profile)
 

@@ -1081,7 +1081,9 @@ export function createGate(opts: GateOptions) {
     const name = 'name' in input ? cleanName(input.name) : (existing?.name ?? null)
 
     let avatar = existing?.avatar ?? null
-    let avatarSrc = existing?.avatarSrc ?? null
+    // No word on the avatar is no decision about it: a first save stays open to
+    // the sign-in seed, and only `avatar: null` below is a removal.
+    let avatarSrc = existing ? existing.avatarSrc : AVATAR_SEED_PENDING
     if (input.avatar !== undefined) {
       if (input.avatar === null) {
         avatar = null
@@ -1120,8 +1122,9 @@ export function createGate(opts: GateOptions) {
    *
    * See specs/done/oidc-profile-seed.md §1 for the "seed only when no row
    * exists" provenance rule and the optional refresh-on-login extension, and
-   * specs/done/broker-picture-claim.md for the one exception: a seed that got no
-   * photo (`AVATAR_SEED_PENDING`) is retried, for the avatar alone.
+   * specs/done/broker-picture-claim.md and specs/done/imported-photo-fallback.md
+   * for the one exception: a row nobody has set a photo on (`AVATAR_SEED_PENDING`)
+   * is still filled, for the avatar alone.
    */
   async function seedProfileFromClaims(
     email: string,
