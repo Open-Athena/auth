@@ -19,6 +19,10 @@ migrations_dir = "../migrations"
 [vars]
 # Who may sign in: Google accounts whose id_token carries this Workspace `hd`.
 WORKSPACE_DOMAIN = "openathena.ai"
+# Who may use /admin (comma-separated).
+ADMIN_EMAILS = "ryan.williams@openathena.ai"
+# Callbacks /admin and scripts/oa-client.mjs accept must be https under this (or loopback).
+CLIENT_REDIRECT_DOMAIN = "oa.dev"
 
 # Secrets (`scripts/oa-wrangler.sh secret put <NAME>`):
 #   SESSION_SECRET        - HMAC key for the broker's session cookie, state and subject ids

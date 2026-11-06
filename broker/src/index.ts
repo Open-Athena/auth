@@ -10,19 +10,26 @@
  *   /signin?next=/oidc/authorize?…               where the provider sends someone to sign in
  *   /signin/return?next=…                        back from Google: on to `next`, or why not
  *   /auth/google/{start,callback}                the Google flow
+ *   /admin                                       the apps registered here (`ADMIN_EMAILS` only)
  *   /                                            who's signed in here; sign out
  *   /dev/signin                                  local dev only (`DEV_SIGNIN=1` and a loopback host)
  */
 import { createGate, domainPolicy } from '@open-athena/auth'
 import { d1AuditSink, d1GrantStore, d1ProfileStore } from '@open-athena/auth/d1'
 import { oidcCallback, oidcStart } from '@open-athena/auth/oidc'
-import { generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
-import { d1ProviderStore } from '@open-athena/auth/provider/d1'
+import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
+import { d1ClientRegistry, d1ProviderStore } from '@open-athena/auth/provider/d1'
+import { adminRoutes, parseAdmins } from './admin.js'
 import { clients } from './clients.js'
+import { esc, page, redirect } from './page.js'
 
 export interface Env {
   DB: D1Database
   WORKSPACE_DOMAIN: string
+  /** Comma-separated: who may use `/admin`. */
+  ADMIN_EMAILS?: string
+  /** Callbacks `/admin` accepts must be https under this (or loopback). */
+  CLIENT_REDIRECT_DOMAIN: string
   SESSION_SECRET?: string
   /** A private RS256 JWK (JSON). */
   OIDC_SIGNING_KEY?: string
@@ -62,44 +69,6 @@ function config(env: Env, req: Request) {
   return { url, local, secret, key, gate }
 }
 
-const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
-
-function page(title: string, body: string, status = 200): Response {
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · OA sign-in</title>
-<style>
-:root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafafa; --muted: #666; --accent: #2563eb; --card: #fff; --border: #ddd }
-@media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --accent: #60a5fa; --card: #1e1e1e; --border: #333 } }
-body { font: 16px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0; display: grid; place-items: center; min-height: 100vh }
-main { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; max-width: 26rem; margin: 1rem }
-h1 { font-size: 1.25rem; margin: 0 0 1rem }
-p { margin: 0.5rem 0 }
-.muted { color: var(--muted) }
-a, button.link { color: var(--accent) }
-.actions { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.25rem; align-items: center }
-.button, button { font: inherit; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--accent); color: #fff; text-decoration: none; cursor: pointer }
-button.link { background: none; border: none; padding: 0; text-decoration: underline }
-input { font: inherit; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg) }
-</style>
-</head>
-<body><main><h1>${esc(title)}</h1>
-${body}
-</main></body>
-</html>
-`
-  return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
-}
-
-const redirect = (to: string, cookies: string[] = []) => {
-  const headers = new Headers({ location: to, 'cache-control': 'no-store' })
-  for (const c of cookies) headers.append('set-cookie', c)
-  return new Response(null, { status: 302, headers })
-}
-
 /** Only the provider's own authorize URL: `/signin` is not a general-purpose redirector. */
 const authorizeNext = (raw: string | null): string | null => (raw?.startsWith(`${AUTHORIZE}?`) ? raw : null)
 
@@ -116,6 +85,8 @@ export default {
     const { url, local, secret, key, gate } = config(env, req)
     const issuer = url.origin
     const devSignin = local && env.DEV_SIGNIN === '1'
+    const registry = d1ClientRegistry(env.DB)
+    const admins = parseAdmins(env.ADMIN_EMAILS)
     const provider = oidcProviderRoutes({
       gate,
       issuer,
@@ -124,6 +95,7 @@ export default {
       clients: devSignin
         ? [...clients, { id: 'dev-rp', secretHash: await hashClientSecret('dev-rp-secret'), redirectUris: [`${issuer}/dev/callback`] }]
         : clients,
+      lookupClient: clientLookup(registry),
       keys: [await key],
       store: d1ProviderStore(env.DB),
       subjectSecret: secret,
@@ -131,6 +103,16 @@ export default {
     })
     const fromProvider = await provider(req)
     if (fromProvider) return fromProvider
+
+    const fromAdmin = await adminRoutes({
+      gate,
+      registry,
+      staticClients: clients,
+      admins,
+      redirectDomains: [env.CLIENT_REDIRECT_DOMAIN],
+      signInPath: devSignin ? '/dev/signin?next=/admin' : '/auth/google/start?next=/admin',
+    })(req)
+    if (fromAdmin) return fromAdmin
 
     const google = (authParams: Record<string, string> = {}) => {
       if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null
@@ -214,7 +196,7 @@ export default {
           return page(
             'OA sign-in',
             `${deniedNote}<p>Signed in as <strong>${esc(auth.email)}</strong>.</p>
-<p class="muted">OA apps sign you in through here.</p>
+<p class="muted">OA apps sign you in through here.</p>${admins.has(auth.email.toLowerCase()) ? '\n<p><a href="/admin">Registered apps</a></p>' : ''}
 <form method="post" action="/signout" class="actions"><button>Sign out</button></form>`,
           )
         }

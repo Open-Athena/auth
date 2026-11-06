@@ -1,0 +1,109 @@
+/**
+ * Apps registered at runtime rather than in a provider's static `clients`
+ * list: the store behind a broker's admin, handed to the provider as
+ * `lookupClient: clientLookup(registry)`. D1 implementation:
+ * `d1ClientRegistry` in `@open-athena/auth/provider/d1`.
+ */
+import { b64uEncode } from '../core/base64.js'
+import type { ProviderClient } from './routes.js'
+
+export interface RegisteredClient {
+  id: string
+  /** For people: what this app is. */
+  name: string
+  secretHash: string
+  redirectUris: string[]
+  postLogoutRedirectUris: string[]
+  /** Epoch s, or null while active. */
+  disabledAt: number | null
+  createdAt: number
+  createdBy: string
+  updatedAt: number
+  updatedBy: string
+}
+
+export type ClientAction = 'create' | 'update' | 'rotate' | 'disable' | 'enable'
+
+/** One logged change. `detail` holds what changed, never a secret. */
+export interface ClientEvent {
+  clientId: string
+  action: ClientAction
+  actor: string
+  /** Epoch s. */
+  at: number
+  detail: string | null
+}
+
+export interface NewClient {
+  id: string
+  name: string
+  secretHash: string
+  redirectUris: string[]
+  postLogoutRedirectUris?: string[]
+}
+
+export interface ClientChanges {
+  name: string
+  redirectUris: string[]
+  postLogoutRedirectUris: string[]
+}
+
+export interface ClientRegistry {
+  get(id: string): Promise<RegisteredClient | null>
+  list(): Promise<RegisteredClient[]>
+  /** False if the id is taken, by a disabled client too. */
+  create(client: NewClient, actor: string): Promise<boolean>
+  /** This and the rest return false if there's no such client. */
+  update(id: string, changes: ClientChanges, actor: string): Promise<boolean>
+  rotate(id: string, secretHash: string, actor: string): Promise<boolean>
+  setDisabled(id: string, disabled: boolean, actor: string): Promise<boolean>
+  /** Newest first. */
+  events(limit?: number): Promise<ClientEvent[]>
+}
+
+/** For `ProviderOptions.lookupClient`: active clients only, so disabling cuts off the next request. */
+export const clientLookup =
+  (registry: Pick<ClientRegistry, 'get'>) =>
+  async (id: string): Promise<ProviderClient | null> => {
+    const c = await registry.get(id)
+    return c && c.disabledAt === null
+      ? { id: c.id, secretHash: c.secretHash, redirectUris: c.redirectUris, postLogoutRedirectUris: c.postLogoutRedirectUris }
+      : null
+  }
+
+/** A new client secret: 256 random bits. Show it once; store `hashClientSecret(secret)`. */
+export const mintClientSecret = (): string => b64uEncode(crypto.getRandomValues(new Uint8Array(32)))
+
+const CLIENT_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+
+/** What's wrong with this client id, or null. */
+export const clientIdProblem = (id: string): string | null =>
+  CLIENT_ID.test(id) ? null : 'Use lower-case letters, digits and hyphens, starting and ending with a letter or digit.'
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1'])
+
+/**
+ * What's wrong with this callback URL for a client registered at runtime, or
+ * null. Stricter than the provider, which only needs an exact match: https
+ * under one of `domains`, or loopback for local development. This is the limit
+ * on what a stolen admin session can do. Must already be in normal form,
+ * because the provider compares it exactly with what the app sends.
+ */
+export function redirectUriProblem(raw: string, domains: string[]): string | null {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return `${raw}: not a URL`
+  }
+  if (u.username || u.password) return `${raw}: no credentials in the URL`
+  if (u.hash || raw.includes('#')) return `${raw}: no fragment`
+  if (!LOOPBACK.has(u.hostname)) {
+    if (u.protocol !== 'https:') return `${raw}: must be https`
+    if (!domains.some(d => u.hostname === d || u.hostname.endsWith(`.${d}`))) return `${raw}: must be under ${domains.join(', ')}`
+  } else if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return `${raw}: must be http or https`
+  }
+  if (u.toString() !== raw) return `${raw}: write it as ${u.toString()}`
+  return null
+}

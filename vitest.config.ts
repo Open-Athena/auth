@@ -1,6 +1,9 @@
+import { fileURLToPath } from 'node:url'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // `broker/`'s tests run from source, before CI's build makes `dist/`.
+  resolve: { alias: { '@open-athena/auth/provider': fileURLToPath(new URL('./src/provider/index.ts', import.meta.url)) } },
   test: {
     // Subagent worktrees live under `.claude/worktrees/`; without this vitest's
     // default glob descends into each one and re-runs its whole suite, so a
