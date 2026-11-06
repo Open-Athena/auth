@@ -35,7 +35,7 @@ The broker serves a fixed list of OA's own apps. It needs no dynamic client regi
 **Identity**:
 - Only an SSO login at the broker (`auth.kind === 'sso'`, a verified email) can sign in to an app. A share-link session at the broker never can.
 - `sub` is a stable, opaque value derived from the principal (`HMAC(subjectKey, "e:" + email)`), the same for every client. Make it pairwise later if ever needed.
-- Claims are `email`, `email_verified: true`, plus `name` / `picture` from the gate's profile when `profile` is requested, plus whatever an optional `claims({ email, client, scopes })` hook returns (e.g. `groups` from the directory snapshots). `policy({ email, client })` can refuse a person for one app (`access_denied`).
+- Claims are `email`, `email_verified: true`, plus `name` / `picture` from the gate's profile when `profile` is requested (`picture` for a stored `data:` / `asset://` face is a short-lived `/oidc/picture/<ticket>` URL; see [`broker-picture-claim.md`](done/broker-picture-claim.md)), plus whatever an optional `claims({ email, client, scopes })` hook returns (e.g. `groups` from the directory snapshots). `policy({ email, client })` can refuse a person for one app (`access_denied`).
 
 **Clients** are a static registry in config (`id`, a hash of the secret, exact `redirectUris`, `postLogoutRedirectUris`, an optional per-client policy). This deliberately has no admin UI or database table: adding an app is a reviewed config change.
 
@@ -89,5 +89,4 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
 
 ## Follow-ups (not in the first cut)
 
-- `picture` for `asset://` / `data:` avatars (only `https:` URLs are passed through today).
 - Back-channel logout, and how revocation reaches downstream apps.

@@ -11,6 +11,7 @@ import { b64uEncode } from '../core/base64.js'
 import type { Gate } from '../core/gate.js'
 import { generateToken, hashToken } from '../core/tokens.js'
 import { type KeySet, keySet, type SigningJwk } from './keys.js'
+import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js'
 import type { ProviderStore } from './store.js'
 
 /** One app allowed to sign people in here. */
@@ -90,6 +91,7 @@ const VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/
 const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/
 /** The marker `/authorize` adds when it sends someone to sign in afresh. */
 const LOGIN_AFTER = 'oa_login_after'
+const PICTURE_PATH = '/picture/'
 
 const enc = new TextEncoder()
 const sec = (ms: number) => Math.floor(ms / 1000)
@@ -139,6 +141,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
   let keys: KeySet | null = null
   const ks = () => (keys ??= keySet(opts.keys))
   const scopesSupported = [...STANDARD_SCOPES, ...(opts.scopes ?? [])]
+  const tickets = pictureTickets(subjectSecret)
 
   const discovery = () => ({
     issuer,
@@ -175,8 +178,12 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     if (scopes.includes('profile')) {
       const subject = await gate.subjectFor(email)
       if (subject?.name) out.name = subject.name
-      // Only a fetchable URL: an inline `data:` face would bloat every token.
+      // Always a URL: an inline `data:` face would bloat every token.
       if (subject?.avatar && /^https:\/\//.test(subject.avatar)) out.picture = subject.avatar
+      else if (subject?.avatar && isHostedAvatar(subject.avatar)) {
+        const ticket = await tickets.seal({ email, clientId: client.id, expiresAt: sec(Date.now()) + tokenTtlS })
+        out.picture = endpoint(`${PICTURE_PATH}${ticket}`)
+      }
     }
     return out
   }
@@ -401,6 +408,23 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     return json({ ...(await claimsFor(at.email, client, at.scope.split(' '))), sub: at.sub })
   }
 
+  // ---- /picture/<ticket> ---------------------------------------------------
+
+  /**
+   * The face a `picture` claim points at (`picture.ts`). No session: an app's
+   * server fetches this. One answer for every refusal, so it says nothing about
+   * whether a ticket was once good or who it's for.
+   */
+  async function picture(ticket: string): Promise<Response> {
+    const missing = () => page(404, 'not found')
+    const t = await tickets.open(ticket)
+    if (!t || t.expiresAt <= sec(Date.now())) return missing()
+    const client = await clientOf(t.clientId)
+    if (!client || !(await admitted(t.email, client))) return missing()
+    const avatar = (await gate.subjectFor(t.email))?.avatar
+    return (avatar && (await pictureResponse(avatar, id => gate.getAsset(id)))) || missing()
+  }
+
   // ---- /logout -------------------------------------------------------------
 
   async function logout(req: Request): Promise<Response> {
@@ -431,6 +455,9 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const path = new URL(req.url).pathname
     if (path === discoveryPath && req.method === 'GET') return json(discovery(), 200, { 'cache-control': 'public, max-age=300' })
     if (!path.startsWith(`${base}/`)) return null
+    if (path.startsWith(`${base}${PICTURE_PATH}`)) {
+      return req.method === 'GET' ? picture(path.slice(`${base}${PICTURE_PATH}`.length)) : page(405, 'GET only')
+    }
     switch (path.slice(base.length)) {
       case '/jwks':
         return json(ks().jwks, 200, { 'cache-control': 'public, max-age=300' })

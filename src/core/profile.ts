@@ -8,8 +8,16 @@
  * more. No bios, no preferences, no social graph.
  */
 
-/** How a stored avatar was sourced — provenance for re-resolve/debug. */
-export type AvatarSourceKind = 'upload' | 'url' | 'site' | 'github' | 'gravatar' | 'bluesky' | 'mastodon'
+/**
+ * On a row with no avatar: a sign-in seed wrote it and got no photo, and nobody
+ * has chosen otherwise, so a later sign-in may still fill the avatar in. Any
+ * other row without one (`avatarSrc: null`) is left alone, because that's also
+ * what someone clearing their photo looks like.
+ */
+export const AVATAR_SEED_PENDING = 'seed-pending'
+
+/** How a stored avatar was sourced — provenance for re-resolve/debug — or `AVATAR_SEED_PENDING`. */
+export type AvatarSourceKind = 'upload' | 'url' | 'site' | 'github' | 'gravatar' | 'bluesky' | 'mastodon' | typeof AVATAR_SEED_PENDING
 
 export interface Profile {
   /** The verified principal (SSO email, or a magic-link-verified grant email). */

@@ -12,6 +12,7 @@ OA's sign-in broker: an OIDC provider ([`@open-athena/auth/provider`]) for OA's 
 | Path | |
 |---|---|
 | `/.well-known/openid-configuration`, `/oidc/{authorize,token,userinfo,jwks,logout}` | The provider |
+| `/oidc/picture/<ticket>` | The photo behind a token's `picture` claim, for the app's server to copy. No session; expires with the token ([details](#photos)) |
 | `/signin?next=/oidc/authorize?…` | Where the provider sends someone to sign in: straight on to Google |
 | `/signin/return?next=…` | Back from Google: on to `next`, or a page saying why not, with "Back to the app" (a `login_required` for it) |
 | `/auth/google/{start,callback}` | The Google flow |
@@ -33,6 +34,23 @@ direnv exec . scripts/oa-client.mjs create my-app --name 'My app' --callback htt
 - `/admin` is for `ADMIN_EMAILS`. The CLI is for whoever holds the Cloudflare token.
 - Disabling takes effect on the app's next request. Rotating breaks sign-in until the app has the new secret.
 - Every change is logged and shown at `/admin`. Clients are disabled rather than deleted.
+
+## Photos
+
+The broker keeps its own copy of each person's Google photo, taken at sign-in. An app asking for `profile` gets a `picture` claim pointing at that copy, which `seedProfileFromClaims` copies in turn on the app's side. The app never sees a Google URL, and a browser never loads the photo from here.
+
+- The URL holds an encrypted ticket (who, which app, when it expires), so it needs no table and doesn't show the email. It's good for as long as the token carrying it (`tokenTtlS`, 300 s) and for anyone holding it during that time.
+- A refused request gets the same 404 whatever the reason: bad or expired ticket, person or app no longer admitted, no photo now, or stored bytes that aren't a raster image.
+- Once copied, the photo is the app's. Removing it here doesn't remove it there.
+- An `http:` issuer (`pnpm dev`) still issues the claim, but apps only copy `https:` URLs, so local sign-ins get no photo.
+
+Rows written before `seed-pending` existed can't tell "the seed found no photo" from "the person cleared it", so nothing fills them automatically. On the broker nothing can clear a photo (it mounts no profile routes), so this is safe to run once; the row fills at that person's next Google sign-in here:
+
+```bash
+scripts/oa-wrangler.sh d1 execute oa-login --remote --command "UPDATE profiles SET avatar_src = 'seed-pending' WHERE avatar IS NULL AND avatar_src IS NULL"
+```
+
+An app can run the same statement on its own database, if nobody there has cleared a photo they'd want kept off (it would come back). See [`specs/done/broker-picture-claim.md`].
 
 ## Local dev
 
@@ -61,5 +79,6 @@ The Google client is a "Web application" OAuth client in an OA GCP project, with
 
 [`@open-athena/auth/provider`]: ../specs/oidc-provider.md
 [`specs/cross-service-sso.md`]: ../specs/cross-service-sso.md
+[`specs/done/broker-picture-claim.md`]: ../specs/done/broker-picture-claim.md
 [`src/clients.ts`]: src/clients.ts
 [`scripts/oa-client.mjs`]: scripts/oa-client.mjs

@@ -7,13 +7,15 @@
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { oidcCallback, oidcStart } from '../src/adapters/oidc.js'
-import { b64uDecodeString, b64uEncode } from '../src/core/base64.js'
+import { b64uDecodeBytes, b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
 import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
 import { d1GrantStore } from '../src/adapters/d1.js'
 import { d1ProviderStore } from '../src/adapters/d1-provider.js'
 import { d1RetainedStore } from '../src/adapters/d1-retained.js'
 import { SELECTION_CONTEXT_HEADER } from '../src/core/selection-context.js'
+import { pictureTickets } from '../src/provider/picture.js'
+import { memoryAssetStore, memoryProfileStore } from '../src/testing/index.js'
 import { testDbRaw } from './d1-shim.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
@@ -87,11 +89,19 @@ interface WorldOptions {
   retained?: boolean
   /** app-a may skip PKCE (`requirePkce: false`). */
   pkceOptionalA?: boolean
+  /** Profile stores on the broker and both apps. */
+  profiles?: boolean
+  /** An `AssetStore` on the broker. */
+  assets?: boolean
 }
 
 async function world(o: WorldOptions = {}) {
   const db = o.retained ? testDbRaw().db : null
+  const brokerProfiles = memoryProfileStore()
+  const brokerAssets = memoryAssetStore()
   const broker = createGate({
+    ...(o.profiles ? { profiles: brokerProfiles } : {}),
+    ...(o.assets ? { assets: brokerAssets } : {}),
     store: db ? d1GrantStore(db) : memoryStore(),
     audit: memoryAudit(),
     secret: 'broker-secret-0123456789abcdef',
@@ -131,10 +141,17 @@ async function world(o: WorldOptions = {}) {
     ...(o.policy ? { policy: o.policy } : {}),
   })
   const apps = new Map<string, { gate: Gate; start: ReturnType<typeof oidcStart>; callback: ReturnType<typeof oidcCallback> }>()
+  const appProfiles = new Map([['a.test', memoryProfileStore()], ['b.test', memoryProfileStore()]])
   // Server-to-server calls (token, JWKS) carry no browser cookies.
   const serverFetch = (async (input: RequestInfo | URL, init?: RequestInit) => net(new Request(input, init))) as typeof fetch
   for (const [host, id] of [['a.test', 'app-a'], ['b.test', 'app-b']] as const) {
-    const gate = createGate({ store: memoryStore(), audit: memoryAudit(), secret: `${id}-gate-secret-0123456789`, policy: async () => ['view'] })
+    const gate = createGate({
+      store: memoryStore(),
+      audit: memoryAudit(),
+      secret: `${id}-gate-secret-0123456789`,
+      policy: async () => ['view'],
+      ...(o.profiles ? { profiles: appProfiles.get(host)!, fetch: serverFetch } : {}),
+    })
     const rp = {
       gate,
       clientId: id,
@@ -173,7 +190,7 @@ async function world(o: WorldOptions = {}) {
     const auth = await apps.get(host)!.gate.authenticate(new Request(`https://${host}/x`, { headers: { cookie } }))
     return auth?.kind === 'sso' ? auth.email : auth ? 'grant' : null
   }
-  return { broker, provider, store, net, browser, signInAtBroker, whoAt }
+  return { broker, brokerProfiles, brokerAssets, appProfiles, provider, store, net, browser, signInAtBroker, whoAt }
 }
 
 /** A PKCE pair, for driving `/authorize` and `/token` by hand. */
@@ -601,6 +618,206 @@ describe('logout', () => {
     const out = await b.request(`${ISSUER}/oidc/logout?post_logout_redirect_uri=${encodeURIComponent('https://evil.test/')}`)
     expect([out.status, out.headers.get('location'), await out.text()]).toEqual([200, null, 'Signed out.\n'])
     expect([...b.jar('login.test').keys()]).toEqual([])
+  })
+})
+
+describe('the picture claim', () => {
+  const EMAIL = 'ada@openathena.ai'
+  const PNG = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='),
+    c => c.charCodeAt(0),
+  )
+  const PNG_B64 = btoa(String.fromCharCode(...PNG))
+  const DATA_URI = `data:image/png;base64,${PNG_B64}`
+  const URL_SHAPE = /^https:\/\/login\.test\/oidc\/picture\/[A-Za-z0-9_-]+$/
+  const NOT_FOUND = { status: 404, body: 'not found\n' }
+  const brokerRow = (avatar: string | null) => ({ email: EMAIL, name: 'Ada Lovelace', avatar, avatarSrc: avatar ? ('url' as const) : null, updatedAt: 1 })
+
+  /** The tokens an app gets for this person, driving `/authorize` and `/token` by hand. */
+  async function tokens(w: Awaited<ReturnType<typeof world>>, scope = 'openid email profile') {
+    const b = w.browser()
+    await w.signInAtBroker(b, EMAIL)
+    const { verifier, challenge } = await pkce()
+    const res = await b.request(authorizeUrl({ scope, code_challenge: challenge, code_challenge_method: 'S256' }))
+    const { code } = queryOf(res).params
+    const form = { grant_type: 'authorization_code', code: code!, redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret', code_verifier: verifier }
+    const body = (await (await w.provider(tokenRequest(form)))!.json()) as { id_token: string; access_token: string }
+    return { idToken: claimsOf(body.id_token), accessToken: body.access_token }
+  }
+
+  const pictureOf = async (w: Awaited<ReturnType<typeof world>>) => (await tokens(w)).idToken.picture as string
+
+  /** What a request with no cookies gets. */
+  const fetched = async (w: Awaited<ReturnType<typeof world>>, url: string, init: RequestInit = {}) => {
+    const res = await w.net(new Request(url, init))
+    return { status: res.status, headers: Object.fromEntries(res.headers), bytes: new Uint8Array(await res.arrayBuffer()) }
+  }
+  const refusal = async (w: Awaited<ReturnType<typeof world>>, url: string) => {
+    const { status, bytes } = await fetched(w, url)
+    return { status, body: new TextDecoder().decode(bytes) }
+  }
+
+  const IMAGE_HEADERS = {
+    'content-type': 'image/png',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+    'cross-origin-resource-policy': 'same-origin',
+  }
+
+  it('an inline face becomes a short URL that serves its bytes, with no session', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const { idToken, accessToken } = await tokens(w)
+
+    expect(Object.keys(idToken).sort()).toEqual(['aud', 'email', 'email_verified', 'exp', 'iat', 'iss', 'name', 'picture', 'sub', 'auth_time'].sort())
+    expect(idToken.name).toBe('Ada Lovelace')
+    expect(idToken.picture).toMatch(URL_SHAPE)
+    expect(await fetched(w, idToken.picture as string)).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })
+
+    const info = (await (await w.provider(new Request(`${ISSUER}/oidc/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } })))!.json()) as { picture: string }
+    expect(info.picture).toMatch(URL_SHAPE)
+    expect(await fetched(w, info.picture)).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })
+  })
+
+  it("doesn't show the email in the URL", async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const ticket = (await pictureOf(w)).split('/').at(-1)!
+    expect(ticket).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(String.fromCharCode(...b64uDecodeBytes(ticket)).includes(EMAIL)).toBe(false)
+  })
+
+  it('an asset:// face works too, typed from its bytes rather than its record', async () => {
+    const w = await world({ profiles: true, assets: true })
+    const id = await w.brokerAssets.put(PNG, 'text/html')
+    await w.brokerProfiles.put(brokerRow(`asset://${id}`))
+    const url = await pictureOf(w)
+    expect(url).toMatch(URL_SHAPE)
+    expect(await fetched(w, url)).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })
+
+    await w.brokerAssets.del(id)
+    expect(await refusal(w, url)).toEqual(NOT_FOUND)
+  })
+
+  it('a mislabelled `data:` image is served as what it is', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(`data:text/html;base64,${PNG_B64}`))
+    expect(await fetched(w, await pictureOf(w))).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })
+  })
+
+  it.each([
+    ['html', `data:text/html;base64,${btoa('<script>alert(1)</script>')}`],
+    ['html labelled as an image', `data:image/png;base64,${btoa('<script>alert(1)</script>')}`],
+    ['svg', `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')}`],
+    ['not base64', 'data:image/png,%89PNG'],
+    ['empty', 'data:image/png;base64,'],
+  ])('refuses a stored face that is not an image: %s', async (_, avatar) => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(avatar))
+    expect(await refusal(w, await pictureOf(w))).toEqual(NOT_FOUND)
+  })
+
+  it('claims nothing without a face or the profile scope, and passes an https row through', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(null))
+    expect((await tokens(w)).idToken.picture).toBeUndefined()
+
+    await w.brokerProfiles.put(brokerRow('http://cdn.test/a.png'))
+    expect((await tokens(w)).idToken.picture).toBeUndefined()
+
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    expect((await tokens(w, 'openid email')).idToken.picture).toBeUndefined()
+
+    await w.brokerProfiles.put(brokerRow('https://cdn.test/a.png'))
+    expect((await tokens(w)).idToken.picture).toBe('https://cdn.test/a.png')
+  })
+
+  it('the URL lasts as long as the token carrying it', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const url = await pictureOf(w)
+    at(299)
+    expect((await fetched(w, url)).status).toBe(200)
+    at(300)
+    expect(await refusal(w, url)).toEqual(NOT_FOUND)
+  })
+
+  it('reads the row when asked: a photo removed since the token is gone', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const url = await pictureOf(w)
+    await w.brokerProfiles.put(brokerRow(null))
+    expect(await refusal(w, url)).toEqual(NOT_FOUND)
+  })
+
+  it('refuses once the person is no longer admitted, or the app is gone', async () => {
+    let admitted = true
+    const w = await world({ profiles: true, policy: () => admitted })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const url = await pictureOf(w)
+    admitted = false
+    expect(await refusal(w, url)).toEqual(NOT_FOUND)
+    admitted = true
+
+    const gone = await pictureTickets('subject-secret').seal({ email: EMAIL, clientId: 'no-such-app', expiresAt: T0 / 1000 + 60 })
+    expect(await refusal(w, `${ISSUER}/oidc/picture/${gone}`)).toEqual(NOT_FOUND)
+  })
+
+  it('anything else at that path gets the same 404, and only GET is served', async () => {
+    const w = await world({ profiles: true })
+    await w.brokerProfiles.put(brokerRow(DATA_URI))
+    const url = await pictureOf(w)
+    const ticket = url.split('/').at(-1)!
+    const mid = ticket.length >> 1
+    const flipped = `${ticket.slice(0, mid)}${ticket[mid] === 'A' ? 'B' : 'A'}${ticket.slice(mid + 1)}`
+    const foreign = await pictureTickets('another-secret').seal({ email: EMAIL, clientId: 'app-a', expiresAt: T0 / 1000 + 60 })
+    for (const bad of [flipped, foreign, '', 'x', 'AAAA', '!!!', ticket.slice(0, 20), 'A'.repeat(2000), `${ticket}/more`]) {
+      expect(await refusal(w, `${ISSUER}/oidc/picture/${bad}`)).toEqual(NOT_FOUND)
+    }
+    expect((await fetched(w, url, { method: 'POST' })).status).toBe(405)
+  })
+
+  describe('an app signing in through the broker', () => {
+    const signIn = async (w: Awaited<ReturnType<typeof world>>) => {
+      const b = w.browser()
+      await w.signInAtBroker(b, EMAIL)
+      const { res } = await b.follow('https://a.test/auth/start?next=/home')
+      expect(await res.text()).toBe('a.test page')
+    }
+    const appRow = async (w: Awaited<ReturnType<typeof world>>) => {
+      const p = await w.appProfiles.get('a.test')!.get(EMAIL)
+      return p ? { ...p, updatedAt: '<ts>' } : null
+    }
+
+    it('a first sign-in copies the face from a broker row that predates this, with no re-consent', async () => {
+      const w = await world({ profiles: true })
+      await w.brokerProfiles.put(brokerRow(DATA_URI))
+      await signIn(w)
+      expect(await appRow(w)).toEqual({ email: EMAIL, name: 'Ada Lovelace', avatar: DATA_URI, avatarSrc: 'url', updatedAt: '<ts>' })
+    })
+
+    it('a name-only seed fills in on the next sign-in once the broker has a face to give', async () => {
+      const w = await world({ profiles: true })
+      await w.brokerProfiles.put(brokerRow(null))
+      await signIn(w)
+      expect(await appRow(w)).toEqual({ email: EMAIL, name: 'Ada Lovelace', avatar: null, avatarSrc: 'seed-pending', updatedAt: '<ts>' })
+
+      await w.brokerProfiles.put(brokerRow(DATA_URI))
+      await signIn(w)
+      expect(await appRow(w)).toEqual({ email: EMAIL, name: 'Ada Lovelace', avatar: DATA_URI, avatarSrc: 'url', updatedAt: '<ts>' })
+    })
+
+    it('leaves alone a row with no marker, and a photo the person chose', async () => {
+      for (const o of [{ avatar: null, avatarSrc: null }, { avatar: 'data:image/png;base64,Y2hvc2Vu', avatarSrc: 'upload' as const }]) {
+        const w = await world({ profiles: true })
+        await w.brokerProfiles.put(brokerRow(DATA_URI))
+        const row = { email: EMAIL, name: 'Their Choice', updatedAt: 1, ...o }
+        await w.appProfiles.get('a.test')!.put(row)
+        await signIn(w)
+        expect(await w.appProfiles.get('a.test')!.get(EMAIL)).toEqual(row)
+      }
+    })
   })
 })
 

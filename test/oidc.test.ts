@@ -11,6 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { GOOGLE, googleOneTapNonce, googleOneTapVerify, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
+import type { Profile } from '../src/core/profile.js'
 import { type MemoryProfileStore, memoryProfileStore } from '../src/testing/index.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
@@ -672,7 +673,7 @@ describe('profile seed', () => {
         email: 'ada@openathena.ai',
         name: 'Lovelace Ada',
         avatar: null,
-        avatarSrc: null,
+        avatarSrc: 'seed-pending',
         updatedAt: '<ts>',
       })
     })
@@ -702,8 +703,88 @@ describe('profile seed', () => {
         email: 'ada@openathena.ai',
         name: 'Ada Lovelace',
         avatar: null,
-        avatarSrc: null,
+        avatarSrc: 'seed-pending',
         updatedAt: '<ts>',
+      })
+    })
+
+    describe('a row that already exists', () => {
+      const EMAIL = 'ada@openathena.ai'
+      const row = (o: Partial<Profile>): Profile => ({ email: EMAIL, name: 'Ada Chosen', avatar: null, avatarSrc: 'seed-pending', updatedAt: 5, ...o })
+
+      it('fills the avatar of a seed that got no photo, keeping the name and updatedAt', async () => {
+        const { g, profiles } = seedGate()
+        await profiles!.put(row({}))
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(await profiles!.get(EMAIL)).toEqual(row({ avatar: dataUri, avatarSrc: 'url' }))
+      })
+
+      it('fills in a later sign-in after the first seed fails, then leaves the row alone', async () => {
+        const profiles = memoryProfileStore()
+        const failing = seedGate({ profiles, fetch: pictureFetch(500) }).g
+        await failing.seedProfileFromClaims(EMAIL, { name: 'Ada Lovelace', picture: PICTURE })
+        expect((await profiles.get(EMAIL))!.avatar).toBeNull()
+
+        const working = seedGate({ profiles }).g
+        await working.seedProfileFromClaims(EMAIL, { name: 'Ada Lovelace', picture: PICTURE })
+        const filled = await profiles.get(EMAIL)
+        expect(norm(filled)).toEqual({ email: EMAIL, name: 'Ada Lovelace', avatar: dataUri, avatarSrc: 'url', updatedAt: '<ts>' })
+
+        const other = new Uint8Array([...PNG, 0])
+        const again = seedGate({ profiles, fetch: pictureFetch(200, 'image/png', other) }).g
+        await again.seedProfileFromClaims(EMAIL, { name: 'New Name', picture: PICTURE })
+        expect(await profiles.get(EMAIL)).toEqual(filled)
+      })
+
+      it('stays pending when the retry fails, or the claims carry no picture', async () => {
+        const { g, profiles } = seedGate({ fetch: pictureFetch(500) })
+        await profiles!.put(row({}))
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name' })
+        expect(await profiles!.get(EMAIL)).toEqual(row({}))
+      })
+
+      it.each<[string, Partial<Profile>]>([
+        ['a cleared photo, or a row from before the marker', { avatarSrc: null }],
+        ['a chosen photo', { avatar: 'data:image/png;base64,Y2hvc2Vu', avatarSrc: 'upload' }],
+        ['an earlier seed with a photo', { avatar: 'data:image/png;base64,c2VlZGVk', avatarSrc: 'url' }],
+      ])('never touches %s', async (_, o) => {
+        const { g, profiles } = seedGate()
+        await profiles!.put(row(o))
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(await profiles!.get(EMAIL)).toEqual(row(o))
+      })
+
+      it('clearing the avatar through `putProfile` ends the retries', async () => {
+        const { g, profiles } = seedGate()
+        await profiles!.put(row({}))
+        const { auth } = (await g.signIn(EMAIL, new Request('https://app.test/')))!
+        const cleared = await g.putProfile(auth, { avatar: null })
+        expect(cleared.ok).toBe(true)
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(norm(await profiles!.get(EMAIL))).toEqual({ email: EMAIL, name: 'Ada Chosen', avatar: null, avatarSrc: null, updatedAt: '<ts>' })
+      })
+
+      it('an edit to the name alone leaves the row pending, and the fill keeps the edit', async () => {
+        const { g, profiles } = seedGate()
+        await profiles!.put(row({}))
+        const { auth } = (await g.signIn(EMAIL, new Request('https://app.test/')))!
+        await g.putProfile(auth, { name: 'Edited' })
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(norm(await profiles!.get(EMAIL))).toEqual({ email: EMAIL, name: 'Edited', avatar: dataUri, avatarSrc: 'url', updatedAt: '<ts>' })
+      })
+
+      it('a photo chosen while the copy is in flight wins', async () => {
+        const profiles = memoryProfileStore()
+        const chosen = row({ avatar: 'data:image/png;base64,Y2hvc2Vu', avatarSrc: 'upload' })
+        const slow = (async (input: RequestInfo | URL) => {
+          await profiles.put(chosen)
+          return pictureFetch()(input)
+        }) as typeof globalThis.fetch
+        const { g } = seedGate({ profiles, fetch: slow })
+        await profiles.put(row({}))
+        await g.seedProfileFromClaims(EMAIL, { name: 'Google Name', picture: PICTURE })
+        expect(await profiles.get(EMAIL)).toEqual(chosen)
       })
     })
 
