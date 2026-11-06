@@ -18,6 +18,7 @@ export {
 export type { AvatarRef, AvatarRefKind, FetchAvatarOptions, ValidatedImage } from './core/avatar.js'
 export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js'
 export type { AssetStore, StoredAsset } from './core/assets.js'
+export { safeNext } from './core/next.js'
 export { MAX_PROFILE_NAME, cleanName } from './core/profile.js'
 export type { AvatarSourceKind, Profile } from './core/profile.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'

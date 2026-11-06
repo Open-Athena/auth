@@ -165,9 +165,9 @@ describe('/track beacon', () => {
   })
 
   it('rejects paths that are not same-origin, since they land in an admin table', async () => {
-    const bad = ['https://evil.test/x', '//evil.test/x', 'javascript:alert(1)', '', '/'.repeat(513)]
+    const bad = ['https://evil.test/x', '//evil.test/x', '/\\evil.test/x', 'javascript:alert(1)', '', '/'.repeat(513)]
     const statuses = await Promise.all(bad.map(async p => (await track(p))!.status))
-    expect(statuses).toEqual([400, 400, 400, 400, 400])
+    expect(statuses).toEqual([400, 400, 400, 400, 400, 400])
     expect(await paths()).toEqual([])
   })
 

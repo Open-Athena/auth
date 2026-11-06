@@ -17,6 +17,7 @@ import { cleanSubject, isEmailish } from './requests.js'
 import { hashToken } from './tokens.js'
 import { hasScope } from './types.js'
 import type { AccountsResponse, AllowedForLink, AuthResponses, GrantUpdateInput, MintInput, RotateInput } from './http.js'
+import { safeNext } from './next.js'
 import { RetainedLoginError, selectionConflict } from './retained.js'
 
 export interface RouteOptions {
@@ -312,12 +313,11 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
      */
     if (rest === '/track' && method === 'POST') {
       if (!auth) return json({ ok: true }) // anonymous beacons are simply dropped
-      const { path } = await body<{ path: string }>(req)
+      const { path: raw } = await body<{ path: unknown }>(req)
       // A client-supplied path is untrusted input that lands in an admin's
       // table: take same-origin paths only, and cap the length.
-      if (!path || !path.startsWith('/') || path.startsWith('//') || path.length > 512) {
-        return json({ error: 'path must be a same-origin path' }, 400)
-      }
+      const path = typeof raw === 'string' && raw.length <= 512 ? safeNext(raw, null) : null
+      if (!path) return json({ error: 'path must be a same-origin path' }, 400)
       await gate.logView(req, auth, undefined, path)
       return json({ ok: true })
     }

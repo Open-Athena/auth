@@ -140,6 +140,13 @@ describe('verifyCode — the cross-device rescue', () => {
   })
 })
 
+describe('verifyLink — `next`', () => {
+  it.each(['https://evil.test/', '//evil.test/', '/\\evil.test/', '/\t/evil.test/'])('refuses to leave the site for %j, even on an unknown token', async next => {
+    const res = await flow.verifyLink({ request: new Request(`https://app.test/auth/email/link?token=nope&next=${encodeURIComponent(next)}`) })
+    expect([res.status, res.headers.get('location')]).toEqual([302, '/'])
+  })
+})
+
 describe('verifyLink — the same-device happy path', () => {
   it('signs in the clicking browser and redirects to next', async () => {
     await startReq(ALLOWED)

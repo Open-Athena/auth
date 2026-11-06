@@ -134,12 +134,16 @@ describe('oidcStart', () => {
       const body = state.slice(0, state.indexOf('.')).replace(/-/g, '+').replace(/_/g, '/')
       return (JSON.parse(atob(body)) as { sub: string }).sub
     }
-    const [offsite, protocolRelative, ok] = await Promise.all([
+    const [offsite, protocolRelative, backslash, tab, ok] = await Promise.all([
       start('https://evil.test/steal'),
       start('//evil.test/steal'),
+      start('/\\evil.test/steal'),
+      start('/\t/evil.test/steal'),
       start('/reports'),
     ])
-    expect([subjectOf(offsite.state), subjectOf(protocolRelative.state), subjectOf(ok.state)].map(sub => sub.slice(sub.indexOf(':', 5) + 1))).toEqual([
+    expect([offsite, protocolRelative, backslash, tab, ok].map(({ state }) => subjectOf(state)).map(sub => sub.slice(sub.indexOf(':', 5) + 1))).toEqual([
+      '/',
+      '/',
       '/',
       '/',
       '/reports',

@@ -24,6 +24,7 @@ import { requestMeta } from './audit.js'
 import type { Gate } from './gate.js'
 import { RetainedLoginError } from './retained.js'
 import type { SendEmail } from './email.js'
+import { safeNext } from './next.js'
 import type { PendingAuthStore } from './store.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 
@@ -99,10 +100,6 @@ function sixDigitCode(): string {
 }
 
 const hashCode = (email: string, code: string): Promise<string> => hashToken(`${email}:${code}`)
-
-/** Only same-origin paths, so a link's `?next=` can't become an open redirect. */
-const safeNext = (raw: string | null, fallback: string): string =>
-  raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : fallback
 
 /** A live row, or null: covers absent, already-consumed, and expired identically. */
 function usable(row: PendingAuth | null, nowS: number): PendingAuth | null {

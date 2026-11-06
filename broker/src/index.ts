@@ -14,7 +14,7 @@
  *   /                                            who's signed in here; sign out
  *   /dev/signin                                  local dev only (`DEV_SIGNIN=1` and a loopback host)
  */
-import { createGate, domainPolicy } from '@open-athena/auth'
+import { createGate, domainPolicy, safeNext } from '@open-athena/auth'
 import { d1AuditSink, d1GrantStore, d1ProfileStore } from '@open-athena/auth/d1'
 import { oidcCallback, oidcStart } from '@open-athena/auth/oidc'
 import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
@@ -171,8 +171,7 @@ export default {
       }
       case '/dev/signin': {
         if (!devSignin) return new Response('not found\n', { status: 404 })
-        const next = url.searchParams.get('next') ?? '/'
-        const safe = next.startsWith('/') && !next.startsWith('//') ? next : '/'
+        const safe = safeNext(url.searchParams.get('next'), '/')
         if (req.method === 'POST') {
           const email = String((await req.formData()).get('email') ?? '').trim().toLowerCase()
           const r = await gate.signIn(email, req)
