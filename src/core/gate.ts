@@ -59,7 +59,7 @@ import {
   mintDecisionTokens,
   readDecisionToken,
 } from './decisions.js'
-import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
+import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 import { type RetainedOptions, retainedMode } from './retained.js'
 
@@ -933,7 +933,8 @@ export function createGate(opts: GateOptions) {
    * cookie at redeem time, so changing it only affects future redemptions.
    *
    * Binding an `email` (or clearing it) likewise applies to the holder's
-   * existing session on its next request: no new link, nothing re-sent.
+   * existing session on its next request: no new link, nothing re-sent. So do
+   * new `scopes`.
    *
    * The holder's name and face apply on their next request: a grant session
    * re-reads its grant every time. A new `avatar` is copied first (throwing
@@ -951,10 +952,12 @@ export function createGate(opts: GateOptions) {
     const { subjectName: name, avatar, ...patch }: GrantPatch & GrantEdit = edit
     let prior: Subject | null = null
     let priorEmail: string | null = null
-    if ('email' in edit) {
+    let priorScopes: string[] | null = null
+    if ('email' in edit || 'scopes' in edit) {
       const existing = await store.byId(id)
       if (!existing) return null
       priorEmail = existing.email
+      priorScopes = existing.scopes
     }
     if ('subjectName' in edit || 'avatar' in edit) {
       const existing = await store.byId(id)
@@ -976,11 +979,15 @@ export function createGate(opts: GateOptions) {
     const grant = await store.update(id, patch)
     // Logged because changing a link's terms is exactly the sort of thing the
     // ledger exists to show: "who extended this, and when".
-    // A rebind also names the address it replaced, so "whose link was this"
-    // stays answerable after the fact.
+    // A rebind also names the address it replaced, and a scope change both sets,
+    // so "whose link was this" and "who could see what" stay answerable.
     const keys = [...Object.keys(edit), ...alsoLogged].sort().join(',')
     const rebound = priorEmail !== null && edit.email != null && edit.email !== priorEmail
-    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: (rebound ? `${keys}; was ${priorEmail}` : keys) || null })
+    const rescoped = priorScopes !== null && edit.scopes !== undefined && formatScopes(priorScopes) !== formatScopes(edit.scopes)
+    const reason = [keys, rebound && `was ${priorEmail}`, rescoped && `scopes ${formatScopes(priorScopes!)} -> ${formatScopes(edit.scopes!)}`]
+      .filter(Boolean)
+      .join('; ')
+    if (grant) await log({ ts: nowS, event: 'update', grantId: id, reason: reason || null })
     const priorAsset = assetId(prior?.avatar)
     if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
       await assets.del(priorAsset).catch(() => {})

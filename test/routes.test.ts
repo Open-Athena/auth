@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore } from '../src/adapters/d1.js'
+import { d1Allowlist, d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore } from '../src/adapters/d1.js'
 import { createGate } from '../src/core/gate.js'
 import { adminPolicy, anyEmailPolicy, firstMatch } from '../src/core/policy.js'
 import { authRoutes } from '../src/core/routes.js'
@@ -612,5 +612,103 @@ describe('access log routes', () => {
       views: 0,
       topPaths: [],
     })
+  })
+})
+
+describe('editing a link\'s scopes', () => {
+  const patch = (id: string, data: unknown, cookie?: string) => call(`/grants/${id}`, { method: 'PATCH', body: JSON.stringify(data) }, cookie)
+  const mint = async (scopes = ['a', 'b']) => {
+    const admin = await asAdmin()
+    const minted = await post('/grants', { name: 'Bob', scopes }, admin)
+    return { admin, id: minted.body.grant.id as string, token: minted.body.token as string }
+  }
+  const scopesOf = async (id: string) => (await gate.byId(id))!.scopes
+
+  it('a session already redeemed loses a removed scope and gains an added one on its next request', async () => {
+    const { admin, id, token } = await mint()
+    const session = pair((await post('/exchange', { token })).setCookie!)
+    expect((await call('/whoami', {}, session)).body.scopes).toEqual(['a', 'b'])
+
+    const res = await patch(id, { scopes: ['b', 'c'] }, admin)
+    expect([res.status, res.body.grant.scopes]).toEqual([200, ['b', 'c']])
+    expect((await call('/whoami', {}, session)).body.scopes).toEqual(['b', 'c'])
+    expect(await scopesOf(id)).toEqual(['b', 'c'])
+  })
+
+  it.each([
+    ['empty', []],
+    ['not a list', 'a'],
+    ['null', null],
+    ['not strings', ['a', 1]],
+    ['blank', ['']],
+    ['two names in one', ['a b']],
+    ['a comma', ['a,b']],
+  ])('refuses %s, and changes nothing', async (_, scopes) => {
+    const { admin, id } = await mint()
+    const res = await patch(id, { scopes, name: 'Changed' }, admin)
+    expect([res.status, res.body]).toEqual([400, { error: 'scopes must be a non-empty list of names' }])
+    const grant = (await gate.byId(id))!
+    expect([grant.scopes, grant.name]).toEqual([['a', 'b'], 'Bob'])
+  })
+
+  it('collapses a repeat', async () => {
+    const { admin, id } = await mint()
+    expect((await patch(id, { scopes: ['c', 'c'] }, admin)).body.grant.scopes).toEqual(['c'])
+  })
+
+  it('refuses a revoked link with a 409', async () => {
+    const { admin, id } = await mint()
+    await post(`/grants/${id}/revoke`, {}, admin)
+    expect(await patch(id, { scopes: ['c'] }, admin)).toMatchObject({ status: 409, body: { error: 'link is revoked' } })
+    expect(await scopesOf(id)).toEqual(['a', 'b'])
+  })
+
+  it('needs an admin', async () => {
+    const { id, token } = await mint()
+    const session = pair((await post('/exchange', { token })).setCookie!)
+    expect((await patch(id, { scopes: ['c'] })).status).toBe(401)
+    expect((await patch(id, { scopes: ['*'] }, session)).status).toBe(403)
+    expect(await scopesOf(id)).toEqual(['a', 'b'])
+  })
+
+  it("can't touch another creator's link when grants are scoped to their creator", async () => {
+    const g = createGate({ store: d1GrantStore(db), secret: SECRET, policy: anyEmailPolicy(['*']) })
+    const h = authRoutes(g, { creatorOf: a => (a.kind === 'sso' ? a.email : 'anon'), scopeToCreator: (a: Auth) => (a.kind === 'sso' ? a.email : undefined) })
+    const cookieFor = async (email: string) => pair((await g.signIn(email, new Request('https://x.test/'), NOW))!.cookie)
+    const send = (cookie: string, path: string, method: string, data: unknown) =>
+      h(new Request(url(path), { method, headers: { Cookie: cookie }, body: JSON.stringify(data) }))
+    const [alice, bob] = await Promise.all([cookieFor('alice@demo.test'), cookieFor('bob@demo.test')])
+    const minted = (await (await send(alice, '/grants', 'POST', { scopes: ['a'] }))!.json()) as { grant: { id: string } }
+    const id = minted.grant.id
+    expect((await send(bob, `/grants/${id}`, 'PATCH', { scopes: ['b'] }))!.status).toBe(404)
+    expect((await g.byId(id))!.scopes).toEqual(['a'])
+    expect((await send(alice, `/grants/${id}`, 'PATCH', { scopes: ['b'] }))!.status).toBe(200)
+    expect((await g.byId(id))!.scopes).toEqual(['b'])
+  })
+
+  it('logs both sets, and just the key when nothing changed', async () => {
+    const { admin, id } = await mint()
+    await patch(id, { scopes: ['b', 'c'] }, admin)
+    await patch(id, { scopes: ['b', 'c'] }, admin)
+    await patch(id, { scopes: ['d'], email: 'bob@demo.test' }, admin)
+    const { results } = await db.prepare("SELECT reason FROM access_log WHERE event = 'update' AND grant_id = ? ORDER BY id").bind(id).all<{ reason: string }>()
+    expect(results.map(r => r.reason)).toEqual(['scopes; scopes a b -> b c', 'scopes', 'email,scopes; scopes b c -> d'])
+  })
+
+  it("leaves createdBy alone, whatever's sent", async () => {
+    const { admin, id } = await mint()
+    await patch(id, { createdBy: 'mallory', scopes: ['c'] }, admin)
+    expect((await gate.byId(id))!.createdBy).toBe('boss@openathena.ai')
+  })
+
+  it('leaves an allowlist row as it was', async () => {
+    const allowlist = d1Allowlist(db)
+    const h = authRoutes(gate, { audit: d1AuditQuery(db), allowlist })
+    const admin = await asAdmin()
+    const send = async (path: string, method: string, data: unknown) =>
+      (await h(new Request(url(path), { method, headers: { Cookie: admin }, body: JSON.stringify(data) })))!.json() as Promise<{ grant: { id: string } }>
+    const { grant } = await send('/grants', 'POST', { scopes: ['a'], email: 'bob@demo.test', allowlist: true })
+    await send(`/grants/${grant.id}`, 'PATCH', { scopes: ['b'] })
+    expect(await allowlist.lookup('bob@demo.test')).toEqual(['a'])
   })
 })

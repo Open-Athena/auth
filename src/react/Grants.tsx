@@ -310,11 +310,40 @@ function ConfirmButton({
   )
 }
 
+/** The offered scopes, then any on the link no longer offered. The last one checked can't be unchecked. */
+function ScopeChecks({ grant, grants, scopes, busy, className }: { grant: Grant; grants: UseGrantsResult; scopes: readonly GrantScope[]; busy: boolean; className: string }) {
+  const listed = [...scopes.map(s => s.id), ...grant.scopes.filter(id => !scopes.some(s => s.id === id))]
+  return (
+    <>
+      {listed.map(id => {
+        const on = grant.scopes.includes(id)
+        return (
+          <label key={id} className={className}>
+            <input
+              type="checkbox"
+              checked={on}
+              disabled={busy || (on && grant.scopes.length === 1)}
+              onChange={() => void grants.update(grant.id, { scopes: listed.filter(s => (s === id ? !on : grant.scopes.includes(s))) })}
+            />
+            <span>{scopes.find(s => s.id === id)?.label ?? id}</span>
+          </label>
+        )
+      })}
+    </>
+  )
+}
+
 export interface GrantCardProps {
   grant: Grant
   grants: UseGrantsResult
   /** To label this link's scopes; an id no longer offered shows as itself. */
   scopes?: readonly GrantScope[]
+  /**
+   * A checkbox per scope, saved on each click, for adding or removing one on a
+   * link already sent. Sessions already redeemed follow on their next request.
+   * A scope no longer offered stays listed, so a save can't drop it unnoticed.
+   */
+  editScopes?: boolean
   buildLink: (grant: Grant, token: string) => string
   allowlist?: boolean
   avatarEndpoint?: string
@@ -324,7 +353,7 @@ export interface GrantCardProps {
     Partial<
       Record<
         | 'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm'
-        | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened',
+        | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes',
         ReactNode
       >
     >
@@ -332,7 +361,7 @@ export interface GrantCardProps {
 }
 
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export function GrantCard({ grant, grants, scopes = [], buildLink, allowlist = false, avatarEndpoint, onHolderSaved, labels = {}, classNames }: GrantCardProps) {
+export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, labels = {}, classNames }: GrantCardProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const [editing, setEditing] = useState(false)
   const { activity: loadActivity } = grants
@@ -429,12 +458,16 @@ export function GrantCard({ grant, grants, scopes = [], buildLink, allowlist = f
         <div>
           <dt>scopes</dt>
           <dd>
-            {grant.scopes.map((id, i) => (
-              <span key={id}>
-                {i > 0 && ', '}
-                {scopes.find(s => s.id === id)?.label ?? id}
-              </span>
-            ))}
+            {editScopes && !revoked ? (
+              <ScopeChecks grant={grant} grants={grants} scopes={scopes} busy={busy} className={cx.check} />
+            ) : (
+              grant.scopes.map((id, i) => (
+                <span key={id}>
+                  {i > 0 && ', '}
+                  {scopes.find(s => s.id === id)?.label ?? id}
+                </span>
+              ))
+            )}
           </dd>
         </div>
         <div>
@@ -463,6 +496,10 @@ export function GrantCard({ grant, grants, scopes = [], buildLink, allowlist = f
           <dd>{grant.expiresAt === null ? 'never' : new Date(grant.expiresAt * 1000).toLocaleDateString()}</dd>
         </div>
       </dl>
+
+      {editScopes && allowlist && !revoked && grant.email && (
+        <p className={cx.muted}>{labels.allowlistKeepsScopes ?? `This doesn't change what ${grant.email} gets by signing in, if they're on the allowlist.`}</p>
+      )}
 
       {activity && activity.topPaths.length > 0 && (
         <p className={cx.muted}>
@@ -586,6 +623,8 @@ export type GrantsPanelProps = ({ client: AuthClient; controller?: undefined } |
     emptyLabel?: ReactNode
     labels?: GrantMintFormProps['labels']
     cardLabels?: GrantCardProps['labels']
+    /** Scope checkboxes on each link: see `GrantCard`. */
+    editScopes?: boolean
     classNames?: GrantsClassNames & { section?: string }
   }
 
@@ -605,6 +644,7 @@ export function GrantsPanel({
   emptyLabel = 'None yet.',
   labels,
   cardLabels,
+  editScopes = false,
   classNames,
   defaultMemo,
   expiryDays,
@@ -660,6 +700,7 @@ export function GrantsPanel({
               grant={grant}
               grants={grants}
               scopes={scopes}
+              editScopes={editScopes}
               buildLink={buildLink}
               allowlist={allowlist ?? false}
               labels={cardLabels}

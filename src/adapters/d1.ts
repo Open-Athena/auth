@@ -176,6 +176,7 @@ export function d1GrantStore(db: D1Database): GrantStore {
       if ('sessionTtlS' in patch) cols.session_ttl = patch.sessionTtlS ?? null
       if ('expiryEndsSessions' in patch) cols.expiry_ends_sessions = patch.expiryEndsSessions ? 1 : 0
       if ('email' in patch) cols.email = patch.email ?? null
+      if (patch.scopes) cols.scopes = formatScopes(patch.scopes)
       if ('subject' in patch) cols.subject_json = patch.subject ? JSON.stringify(patch.subject) : null
       const entries = Object.entries(cols)
       // An empty patch is a read, not a no-op write: callers get the row back

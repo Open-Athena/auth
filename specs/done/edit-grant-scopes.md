@@ -1,5 +1,18 @@
 # Edit a share link's scopes after minting
 
+**Status:** done. `PATCH /grants/:id` takes `scopes`, and `<GrantCard>` / `<GrantsPanel>` take `editScopes`.
+
+How the result answers what this left open, or differs from it:
+
+- **Authority:** holds, because minting doesn't limit scopes to the minter's own, so a delegated creator could already mint any set. The same goes for `*`. Such a link passes `hasScope` for anything, the admin scope included, as it always could from minting.
+- **Validation is stricter than minting:** each name must have no space or comma, because the column is space-separated and `a b` would come back as two scopes. Repeats collapse.
+- **Allowlist:** left alone, as suggested. A card with `allowlist` and a bound email says so.
+- **Unoffered scopes** stay listed as checkboxes, so they survive a save and can still be removed on purpose.
+- **Saves on each click**, with the last checked box disabled.
+- **The audit reason** is `scopes; scopes a b -> b c`, and just `scopes` when nothing changed.
+- **`ui.css`:** the panel now has its own surface. Found while checking this: on a light-only host in OS dark mode, the default ink was white on white.
+- **The demo doesn't use it:** it offers one scope, so there's nothing to toggle.
+
 *(Requested from `jobs.oa.dev`, `~/c/oa/jobs`, 2026-11-05.)*
 
 ## Context

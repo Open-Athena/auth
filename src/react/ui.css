@@ -23,6 +23,8 @@
   font-size: 14px;
   line-height: 1.4;
 }
+/* Its own surface, so the ink is legible on a host whose scheme differs from the OS's. */
+:where(.oa-ui-grants) { background: var(--oa-ui-surface); }
 .oa-ui *,
 .oa-ui-um-trigger { box-sizing: border-box; }
 .oa-ui-muted { color: var(--oa-ui-muted); font-size: 13px; }
@@ -51,7 +53,8 @@
 .oa-ui-form fieldset { display: grid; gap: 4px; }
 .oa-ui-form fieldset { border: 0; margin: 0; padding: 0; }
 .oa-ui-form legend { padding: 0 0 4px; }
-.oa-ui-form label.oa-ui-check { align-items: baseline; display: flex; gap: 6px; }
+.oa-ui-form label.oa-ui-check,
+.oa-ui-facts label.oa-ui-check { align-items: baseline; display: flex; gap: 6px; }
 .oa-ui-input {
   background: transparent;
   border: 1px solid var(--oa-ui-line);

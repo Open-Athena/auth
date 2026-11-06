@@ -70,7 +70,7 @@ describe('GrantMintForm', () => {
 })
 
 /** The grant routes, in memory: enough to run the panel end to end. */
-function backend() {
+function backend(patches: unknown[] = []) {
   const grants: Grant[] = []
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const path = String(input)
@@ -86,6 +86,13 @@ function backend() {
       return reply({ grant, token: `token-${grant.id}` })
     }
     if (path === '/api/auth/grants') return reply({ grants })
+    const patched = /^\/api\/auth\/grants\/([^/]+)$/.exec(path)
+    if (patched && init?.method === 'PATCH') {
+      patches.push(JSON.parse(String(init.body)))
+      const grant = grants.find(g => g.id === patched[1])!
+      Object.assign(grant, JSON.parse(String(init.body)))
+      return reply({ grant })
+    }
     const m = /^\/api\/auth\/grants\/([^/]+)\/(\w+)$/.exec(path)
     if (!m) return reply({ error: 'no route' }, 500)
     const grant = grants.find(g => g.id === m[1])!
@@ -161,5 +168,55 @@ describe('GrantsPanel', () => {
     await user.click(await screen.findByRole('button', { name: 'Enable' }))
     await screen.findByRole('button', { name: 'Disable' })
     expect(screen.queryByText('No new redemptions; anyone already in stays in.')).toBe(null)
+  })
+})
+
+describe('GrantsPanel editScopes', () => {
+  const panel = async (editScopes: boolean, offered = SCOPES) => {
+    const patches: unknown[] = []
+    const client = backend(patches)
+    await client.grants.mint({ name: 'Bob', scopes: ['alpha', 'retired'] })
+    renderWithQuery(<GrantsPanel client={client} scopes={offered} editScopes={editScopes} buildLink={() => 'x'} />)
+    await screen.findByRole('article')
+    return { client, patches, user: userEvent.setup() }
+  }
+  /** Each scope checkbox on the card: `[name, checked, disabled]`. */
+  const checks = () =>
+    within(screen.getByRole('article'))
+      .queryAllByRole('checkbox')
+      .map(c => [(c as HTMLInputElement).closest('label')!.textContent, (c as HTMLInputElement).checked, (c as HTMLInputElement).disabled])
+
+  it('shows no checkboxes unless asked', async () => {
+    await panel(false)
+    expect(checks()).toEqual([])
+    expect(screen.getByRole('article').querySelector('dd')!.textContent).toBe('Alpha, retired')
+  })
+
+  it('lists a scope no longer offered, and keeps it when another changes', async () => {
+    const { user, patches } = await panel(true)
+    expect(checks()).toEqual([['Alpha', true, false], ['Beta', false, false], ['retired', true, false]])
+    await user.click(within(screen.getByRole('article')).getByRole('checkbox', { name: 'Beta' }))
+    await waitFor(() => expect(checks()).toEqual([['Alpha', true, false], ['Beta', true, false], ['retired', true, false]]))
+    expect(patches).toEqual([{ scopes: ['alpha', 'beta', 'retired'] }])
+    await user.click(within(screen.getByRole('article')).getByRole('checkbox', { name: 'Alpha' }))
+    await waitFor(() => expect(patches).toEqual([{ scopes: ['alpha', 'beta', 'retired'] }, { scopes: ['beta', 'retired'] }]))
+  })
+
+  it("won't let the last one be unchecked", async () => {
+    const { user, patches } = await panel(true)
+    await user.click(within(screen.getByRole('article')).getByRole('checkbox', { name: 'Alpha' }))
+    await waitFor(() => expect(checks()).toEqual([['Alpha', false, false], ['Beta', false, false], ['retired', true, true]]))
+    await user.click(within(screen.getByRole('article')).getByRole('checkbox', { name: 'retired' }))
+    expect(patches).toEqual([{ scopes: ['retired'] }])
+  })
+
+  it('is read-only on a revoked link', async () => {
+    const { client } = await panel(true)
+    const { grants } = await client.grants.list()
+    await client.grants.revoke(grants[0]!.id)
+    cleanup()
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} editScopes buildLink={() => 'x'} />)
+    await screen.findByText('revoked')
+    expect(checks()).toEqual([])
   })
 })

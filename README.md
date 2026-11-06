@@ -86,7 +86,7 @@ const client = createAuthClient()
 />
 ```
 
-`<GrantsPanel>` composes `<GrantMintForm>`, `<GrantCard>` and `<GrantLink>`, all exported. `useGrants({ client })` is the hook. At least one scope must be chosen, and a lone scope starts checked. Rotate and revoke take a second click, because neither can be undone.
+`<GrantsPanel>` composes `<GrantMintForm>`, `<GrantCard>` and `<GrantLink>`, all exported. `useGrants({ client })` is the hook. At least one scope must be chosen, and a lone scope starts checked. Rotate and revoke take a second click, because neither can be undone. `editScopes` adds a checkbox per scope on each link: a change reaches sessions already redeemed on their next request, with no new URL, and is logged with both sets. The API is `PATCH /grants/:id` with `{ scopes }`. A row the link added to the allowlist keeps its scopes.
 
 **User menu.** `useUserMenu({ whoami, client, items })` in `/react` returns the identity, the exact items for this person, `signOut()` (sending the selection in retained mode), and ARIA and keyboard props. It doesn't position anything, which keeps `/react` free of `@floating-ui/react`. `<UserMenu>` adds positioning and outside-click dismissal, from its own subpath, and needs that optional peer:
 
