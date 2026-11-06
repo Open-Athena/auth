@@ -114,6 +114,12 @@ export interface AuthenticationResult {
     auth: Auth | null;
     reason: SessionLossReason | null;
     credential: 'cookie' | 'token' | 'none';
+    /**
+     * When the session behind `auth` was minted (epoch s): its sign-in time, for
+     * an identity provider's `auth_time`. Null for a token (no session) or a
+     * failure; 0 for a cookie minted before sessions carried `iat`.
+     */
+    issuedAt: number | null;
 }
 export type RequestAccessResult = 
 /** Policy matched: a grant was minted and handed to `notify` immediately. */
@@ -250,6 +256,7 @@ export declare function createGate(opts: GateOptions): {
         authenticate(req: Request, nowMs: number, logView: boolean): Promise<"absent" | {
             auth: Auth | null;
             reason: SessionLossReason | null;
+            issuedAt: number | null;
         }>;
         selection(req: Request, nowMs: number): Promise<string | null>;
         signIn(req: Request, email: string, nowMs: number): Promise<string[]>;
@@ -289,6 +296,8 @@ export declare function createGate(opts: GateOptions): {
     logView: (req: Request, auth: Auth, nowS?: number, path?: string) => Promise<void>;
     whoami: (auth: Auth) => Whoami;
     getProfile: (auth: Auth) => Promise<Profile | null>;
+    /** An address's name and face from its profile, or null: what an identity provider puts in `name`/`picture`. */
+    subjectFor: (email: string) => Promise<Subject | null>;
     putProfile: (auth: Auth, input: ProfileInput, nowMs?: number) => Promise<PutProfileResult>;
     seedProfileFromClaims: (email: string, claims: {
         name?: string;

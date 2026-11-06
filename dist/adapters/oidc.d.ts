@@ -26,9 +26,18 @@ export interface OidcOptions extends AccountHintOptions {
      * avatar) from the id_token's `name`/`picture`. Default true, so a Google
      * face and name Just Work; it only does anything when the gate has a
      * `profiles` store. `false` keeps profiles initials-only until self-set.
-     * Never overrides a self-set profile.
+     * Never overrides a self-set profile. A seed that got no photo retries it at
+     * later sign-ins (`AVATAR_SEED_PENDING`).
      */
     seedProfile?: boolean;
+    /**
+     * Require the id_token's `hd` claim (Google Workspace) to be one of these.
+     * An address at the domain isn't enough: anyone can create a consumer
+     * Google account for an address they don't manage, and Google vouches for
+     * it with no `hd`. A miss is a denial (`/?denied=`), like the policy's.
+     * Pair it with `authParams: { hd }` so Google's chooser shows only those.
+     */
+    hostedDomain?: string | string[];
     fetch?: typeof globalThis.fetch;
 }
 /**
@@ -57,6 +66,7 @@ export interface AccountHintOptions {
     accountHintCookie?: string | false;
 }
 export declare const DEFAULT_ACCOUNT_HINT_COOKIE = "oa_google_hint";
+/** Only same-origin paths, so `?next=` can't become an open redirect. */
 /**
  * Start the flow: mint a nonce, sign it into the state, and bounce to the
  * provider.
@@ -124,6 +134,8 @@ export interface OneTapVerifyOptions extends AccountHintOptions {
     debug?: boolean;
     /** Seed a first-ever principal's profile from the credential's claims. See `OidcOptions.seedProfile`. */
     seedProfile?: boolean;
+    /** See `OidcOptions.hostedDomain`. */
+    hostedDomain?: string | string[];
     fetch?: typeof globalThis.fetch;
 }
 /**

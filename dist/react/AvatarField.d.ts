@@ -9,7 +9,13 @@ export interface AvatarFieldProps {
      * null for none (initials). Controlled.
      */
     value: string | null;
-    onChange: (value: string | null) => void;
+    /**
+     * `cleared` is true only for the Clear button. Any other null means "no face
+     * here": a failed lookup, a lookup that found none, or emptied text.
+     */
+    onChange: (value: string | null, cleared?: boolean) => void;
+    /** Offer Clear with nothing in the field, for a face held elsewhere (`ProfilePanel`'s saved one). */
+    clearable?: boolean;
     /** Whose face: with nothing typed, their Gravatar is previewed (see `autoGravatar`). */
     email?: string | null;
     /** Default true. False offers a "Use Gravatar" button instead of looking it up unprompted. */
@@ -39,4 +45,4 @@ export interface AvatarFieldProps {
  * stored (see `downscaleImage`), which also re-encodes away EXIF — so no
  * server-side image codec or resizing service is needed.
  */
-export declare function AvatarField({ endpoint, value, onChange, email, autoGravatar, name, preview, size, uploadSize, id, classNames, labels, }: AvatarFieldProps): import("react").JSX.Element;
+export declare function AvatarField({ endpoint, value, onChange, clearable, email, autoGravatar, name, preview, size, uploadSize, id, classNames, labels, }: AvatarFieldProps): import("react").JSX.Element;

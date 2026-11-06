@@ -11,12 +11,12 @@ import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
 import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
 import { looksAutomated } from './bots.js';
-import { cleanName } from './profile.js';
+import { AVATAR_SEED_PENDING, cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
 import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
-import { ALL_SCOPES } from './types.js';
+import { ALL_SCOPES, formatScopes } from './types.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
@@ -117,11 +117,11 @@ export function createGate(opts) {
     { logView: shouldLogView = true } = {}) {
         const nowS = sec(nowMs);
         let credential = 'none';
-        const failed = (reason) => ({ auth: null, reason, credential });
-        const afterAuth = async (auth) => {
+        const failed = (reason) => ({ auth: null, reason, credential, issuedAt: null });
+        const afterAuth = async (auth, issuedAt) => {
             if (logViews && shouldLogView)
                 await logView(req, auth, nowS);
-            return { auth, reason: null, credential };
+            return { auth, reason: null, credential, issuedAt };
         };
         const url = new URL(req.url);
         const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
@@ -142,13 +142,13 @@ export function createGate(opts) {
                 return failed(grant.revokedAt !== null ? 'revoked' : isExpired(grant, nowS) ? 'expired' : 'invalid');
             }
             await store.touch(grant.id, nowS, touchIntervalS);
-            return await afterAuth(grantAuth(grant));
+            return await afterAuth(grantAuth(grant), null);
         }
         if (retained) {
             const r = await retained.authenticate(req, nowMs, shouldLogView);
             if (r !== 'absent') {
                 credential = 'cookie';
-                return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+                return r.auth ? await afterAuth(r.auth, r.issuedAt) : failed(r.reason);
             }
         }
         const cookie = readCookie(req, cookieName);
@@ -159,7 +159,7 @@ export function createGate(opts) {
         if (!inspected.ok)
             return failed(inspected.reason);
         const r = await resolveClaims(req, inspected.claims, nowS, { quiet: false });
-        return r.auth ? await afterAuth(r.auth) : failed(r.reason);
+        return r.auth ? await afterAuth(r.auth, inspected.claims.iat) : failed(r.reason);
     }
     /**
      * A session's principal → its live identity, or why it has none. Shared by
@@ -638,7 +638,8 @@ export function createGate(opts) {
      * cookie at redeem time, so changing it only affects future redemptions.
      *
      * Binding an `email` (or clearing it) likewise applies to the holder's
-     * existing session on its next request: no new link, nothing re-sent.
+     * existing session on its next request: no new link, nothing re-sent. So do
+     * new `scopes`.
      *
      * The holder's name and face apply on their next request: a grant session
      * re-reads its grant every time. A new `avatar` is copied first (throwing
@@ -652,11 +653,13 @@ export function createGate(opts) {
         const { subjectName: name, avatar, ...patch } = edit;
         let prior = null;
         let priorEmail = null;
-        if ('email' in edit) {
+        let priorScopes = null;
+        if ('email' in edit || 'scopes' in edit) {
             const existing = await store.byId(id);
             if (!existing)
                 return null;
             priorEmail = existing.email;
+            priorScopes = existing.scopes;
         }
         if ('subjectName' in edit || 'avatar' in edit) {
             const existing = await store.byId(id);
@@ -683,12 +686,16 @@ export function createGate(opts) {
         const grant = await store.update(id, patch);
         // Logged because changing a link's terms is exactly the sort of thing the
         // ledger exists to show: "who extended this, and when".
-        // A rebind also names the address it replaced, so "whose link was this"
-        // stays answerable after the fact.
+        // A rebind also names the address it replaced, and a scope change both sets,
+        // so "whose link was this" and "who could see what" stay answerable.
         const keys = [...Object.keys(edit), ...alsoLogged].sort().join(',');
         const rebound = priorEmail !== null && edit.email != null && edit.email !== priorEmail;
+        const rescoped = priorScopes !== null && edit.scopes !== undefined && formatScopes(priorScopes) !== formatScopes(edit.scopes);
+        const reason = [keys, rebound && `was ${priorEmail}`, rescoped && `scopes ${formatScopes(priorScopes)} -> ${formatScopes(edit.scopes)}`]
+            .filter(Boolean)
+            .join('; ');
         if (grant)
-            await log({ ts: nowS, event: 'update', grantId: id, reason: (rebound ? `${keys}; was ${priorEmail}` : keys) || null });
+            await log({ ts: nowS, event: 'update', grantId: id, reason: reason || null });
         const priorAsset = assetId(prior?.avatar);
         if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
             await assets.del(priorAsset).catch(() => { });
@@ -775,7 +782,9 @@ export function createGate(opts) {
         }
         const name = 'name' in input ? cleanName(input.name) : (existing?.name ?? null);
         let avatar = existing?.avatar ?? null;
-        let avatarSrc = existing?.avatarSrc ?? null;
+        // No word on the avatar is no decision about it: a first save stays open to
+        // the sign-in seed, and only `avatar: null` below is a removal.
+        let avatarSrc = existing ? existing.avatarSrc : AVATAR_SEED_PENDING;
         if (input.avatar !== undefined) {
             if (input.avatar === null) {
                 avatar = null;
@@ -814,18 +823,20 @@ export function createGate(opts) {
      * awaiting this before responding already puts it on the first `/whoami`.
      *
      * See specs/done/oidc-profile-seed.md §1 for the "seed only when no row
-     * exists" provenance rule and the optional refresh-on-login extension.
+     * exists" provenance rule and the optional refresh-on-login extension, and
+     * specs/done/broker-picture-claim.md and specs/done/imported-photo-fallback.md
+     * for the one exception: a row nobody has set a photo on (`AVATAR_SEED_PENDING`)
+     * is still filled, for the avatar alone.
      */
     async function seedProfileFromClaims(email, claims, nowMs = Date.now()) {
         if (!profiles)
             return null;
-        // A self-set profile (or an earlier seed) outranks the IdP: only the very
-        // first sign-in for an email with no row seeds; every later one is a no-op.
-        if (await profiles.get(email))
+        // A self-set profile (or an earlier seed that got a photo) outranks the IdP:
+        // the first sign-in for an email with no row seeds; after that, only a row
+        // still marked as waiting for a photo is touched.
+        const existing = await profiles.get(email);
+        if (existing && existing.avatarSrc !== AVATAR_SEED_PENDING)
             return subjectFor(email);
-        // The IdP's own display name, in the order and form the person uses; the
-        // given/family pair only when that's all the IdP sent.
-        const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '));
         let avatar = null;
         if (claims.picture && isSafeAvatarUrl(claims.picture)) {
             // Copy the Google `picture` — never persist the live
@@ -834,7 +845,22 @@ export function createGate(opts) {
             // `avatarFetchTimeoutMs`: the host is third-party and on the login path.
             avatar = (await copyAvatar({ kind: 'url', url: claims.picture }).catch(() => null))?.value ?? null;
         }
-        const profile = { email, name, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) };
+        if (existing) {
+            if (!avatar)
+                return subjectFor(email);
+            // Re-read: the copy took a while, and a choice made during it wins. The
+            // name stays, and `updatedAt` too, since it's the self-edit throttle's basis.
+            const current = await profiles.get(email);
+            if (current?.avatarSrc === AVATAR_SEED_PENDING)
+                await profiles.put({ ...current, avatar, avatarSrc: 'url' });
+            else if (assets && assetId(avatar))
+                await assets.del(assetId(avatar)).catch(() => { });
+            return subjectFor(email);
+        }
+        // The IdP's own display name, in the order and form the person uses; the
+        // given/family pair only when that's all the IdP sent.
+        const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '));
+        const profile = { email, name, avatar, avatarSrc: avatar ? 'url' : AVATAR_SEED_PENDING, updatedAt: sec(nowMs) };
         await profiles.put(profile);
         return subjectFor(email);
     }
@@ -848,7 +874,7 @@ export function createGate(opts) {
                 // it is not a secret (the token is), and without it a link session
                 // has no identifier a person can quote back to an admin.
                 id: auth.grant.id,
-                name: auth.grant.name,
+                // Not `grant.name`: the memo is the minter's, and this goes to whoever holds the link.
                 subject: auth.grant.subject,
                 email: auth.grant.email,
                 scopes: auth.scopes,
@@ -877,6 +903,8 @@ export function createGate(opts) {
         logView,
         whoami,
         getProfile,
+        /** An address's name and face from its profile, or null: what an identity provider puts in `name`/`picture`. */
+        subjectFor,
         putProfile,
         seedProfileFromClaims,
         copyAvatar,

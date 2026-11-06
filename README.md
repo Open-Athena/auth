@@ -4,7 +4,7 @@
 
 Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes), a framework-free client, unstyled React primitives, and Vue `useWhoami` / `AuthGate` wrappers.
 
-Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
+Mint a link, say who it's for, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
 
 Scope note: this is *gating* — sessions, sign-in, share links, request-access, audit — not a general-purpose auth framework (no password store, no OAuth server, no RBAC engine).
 
@@ -32,10 +32,12 @@ src/core/       sessions, tokens, grants, policy, requests, email codes, audit, 
 src/adapters/   d1 (stores, audit sink & queries), oidc (Google + any issuer), resend (mail),
                 r2 (avatar bytes), google-directory (group → allowlist sync)
 src/client/     typed fetch client, URL/exchange/identity/image helpers — no framework imports
-src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled
+src/react/      useWhoami / AuthGate / SignInPanel / WhoamiChip / Avatar / AvatarField / disclosure — unstyled;
+                GrantsPanel / UserMenu — optional ui.css
 src/vue/        useWhoami / AuthGate — Vue-only composable and slotted gate, unstyled
 src/session-log/  optional, time-boxed user-action logging (routes; D1 store in adapters/,
                 logger in client/session-log/, admin UI in react/session-log/)
+src/provider/   optional OIDC provider over a gate, for a sign-in broker (D1 store in adapters/)
 src/testing/    in-memory stores, so adopters can test a gated route without a DB
 migrations/     the schema (one baseline file pre-1.0; see below)
 scripts/        provisioning (Google client, Resend domain, group-sync SA) and d1-rebaseline
@@ -63,6 +65,58 @@ await auth.grants.revoke(grant.id)
 `displayName`, `hasScope`, `hasKeyParam`, `exchangeKeyParam` and `downscaleImage` are available from `/client`, along with the shared wire types. Existing `/react` helper imports still work. Importing `/client` is SSR-safe; browser-only helpers need browser APIs when called, and `shareUrl` needs an explicit absolute target outside the browser. It preserves the target's other query parameters and hash, replacing an existing `key`. The emitted module graph is checked during `pnpm build` for external dependencies, including React/Vue.
 
 The backend root import and platform adapters remain separate from `/client`. React hooks/components live under `/react`; Vue wrappers live under `/vue`. Vanilla apps need neither framework.
+
+## Share-Link Admin and User Menu
+
+Each has headless logic that owns state and API calls, and reference components built only on it, so an app can use them as they are, restyle them, or replace them.
+
+**Share links.** `createGrantsController({ client })` in `/client` holds the list, loading and failure state, per-link pending state, and the one-time token. It has `mint`, `update`, `disable`, `enable`, `revoke`, `rotate`, `activity`, `refresh` and `dismissToken`, and binds to any framework through `subscribe`/`getSnapshot`. A list response that left before a change finished is dropped, so it can't bring back old state. The raw token lives only in the controller's memory, until it's dismissed, replaced by a newer one, or its link is revoked: actions don't return it, and a reload loses it.
+
+```tsx
+import { createAuthClient, shareUrl } from '@open-athena/auth/client'
+import { GrantsPanel } from '@open-athena/auth/react'
+import '@open-athena/auth/react/ui.css'
+
+const client = createAuthClient()
+
+<GrantsPanel
+  client={client}
+  scopes={[{ id: 'reports', label: 'Reports', hint: 'Everything under /reports' }]}
+  buildLink={(grant, token) => shareUrl(token, `${location.origin}/${grant.scopes[0]}/`)}
+/>
+```
+
+`<GrantsPanel>` composes `<GrantMintForm>`, `<GrantCard>` and `<GrantLink>`, all exported. `useGrants({ client })` is the hook. At least one scope must be chosen, and a lone scope starts checked. Rotate and revoke take a second click, because neither can be undone. `editScopes` adds a checkbox per scope on each link: a change reaches sessions already redeemed on their next request, with no new URL, and is logged with both sets. The API is `PATCH /grants/:id` with `{ scopes }`. A row the link added to the allowlist keeps its scopes.
+
+**User menu.** `useUserMenu({ whoami, client, items })` in `/react` returns the identity, the exact items for this person, `signOut()` (sending the selection in retained mode), and ARIA and keyboard props. It doesn't position anything, which keeps `/react` free of `@floating-ui/react`. `<UserMenu>` adds positioning and outside-click dismissal, from its own subpath, and needs that optional peer:
+
+```tsx
+import { UserMenu } from '@open-athena/auth/react/user-menu'
+
+<UserMenu
+  whoami={whoami}
+  client={client}
+  items={[
+    { key: 'links', label: 'Share links', href: '/admin', when: 'admin' },
+    { key: 'drafts', label: 'Your drafts', href: '/drafts', when: 'sso' },
+  ]}
+/>
+```
+
+It lists who you are, Profile (`sso` only; `onOpenProfile` for your own page, `profile={false}` for a gate with no profile store), your `items`, accounts (when whoami carries a selection, meaning the gate retains logins), and sign out. A share-link guest is always labelled as one, and an anonymous link still gets a face and a sign-out. `identity` overrides the name and face with what the app knows better, and an item's `content` renders as is, for an app's own submenu.
+
+**Outside React.** `@open-athena/auth/react/mount` needs `react-dom` and `@floating-ui/react`, and fetches identity itself:
+
+```ts
+import { mountUserMenu, mountGrantsPanel } from '@open-athena/auth/react/mount'
+import '@open-athena/auth/react/ui.css'
+
+const menu = mountUserMenu(document.querySelector('#user')!, { basePath: '/api/auth' })
+menu.update({ items: [] })
+menu.unmount()
+```
+
+**Theming.** `ui.css` is optional. Set `--oa-ui-surface`, `--oa-ui-ink` and friends on `.oa-ui`, not an ancestor, because the menu's popover is portaled to `<body>`. Its defaults have no specificity, so your rule wins whichever stylesheet loads first. They follow the OS color scheme; a page with its own theme should set at least those two, plus `color-scheme`. Components also take `classNames`, replacing the defaults one by one.
 
 ## Session Loss
 
@@ -179,6 +233,31 @@ The identity on every batch is the request's (`identify`), never the client's. A
 
 The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
 
+## Signing In Through a Broker (OIDC Provider)
+
+Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: sign in once at the broker (Google, an emailed code, any of its retained accounts), and every other app gets you with no page in between. It's deliberately narrow: authorization code with PKCE S256 only, confidential clients from a static registry, exact redirect URIs, no consent screen, no refresh tokens. What it leaves out it refuses.
+
+```ts
+// the broker: discovery at /.well-known/openid-configuration, endpoints under /oidc
+const provider = oidcProviderRoutes({
+  gate,                                   // its sessions are who is signed in at the broker
+  issuer: 'https://login.example.org',
+  clients: [{ id: 'app-b', secretHash: await hashClientSecret(env.APP_B_SECRET), redirectUris: ['https://b.example.org/auth/cb'] }],
+  keys: [JSON.parse(env.OIDC_SIGNING_KEY)],   // from generateSigningKey(); the first signs, all are published
+  store: d1ProviderStore(env.DB),         // @open-athena/auth/provider/d1; migrations/provider/
+  subjectSecret: env.OIDC_SUBJECT_SECRET, // keys `sub`: keep it stable
+  loginUrl: '/signin',                    // gets `next`, and `prompt` / `login_hint` when an app sent them
+  claims: ({ email }) => ({ groups: groupsOf(email) }),   // optional extras
+})
+
+// each app: the ordinary relying party, pointed at the broker
+const rp = { gate, clientId: 'app-b', clientSecret: env.BROKER_SECRET, redirectUri: 'https://b.example.org/auth/cb', provider: brokerProvider('https://login.example.org') }
+oidcStart(rp)     // `?prompt=none` tries silently; `?account=choose` asks for the chooser
+oidcCallback(rp)  // a refusal comes back as `?sso=login_required` (or `access_denied`), never a loop
+```
+
+Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. For an organization-only broker, give its own Google sign-in `hostedDomain: 'example.org'` (and `authParams: { hd: 'example.org' }`): an address at the domain isn't proof of a managed account, `hd` is. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
+
 ## Minimal Demo Routes
 
 The demo's [root][demo-root] and [Vanilla][demo-vanilla] routes use the framework-free client; [Vue][demo-vue] and [React][demo-react] show their respective wrappers. Framework links navigate to separate documents so vanilla loads neither framework, and Vue and React do not load each other.
@@ -245,7 +324,8 @@ if (!auth || !hasScope(auth, 'internal')) return new Response('nope', { status: 
 
 ```ts
 const { grant, token } = await gate.mint({
-  name: 'Bob Smith (donor)',
+  subject: { name: 'Bob Smith' },
+  name: 'Donor, Q3 outreach',
   scopes: ['reports'],
   expiresAt: Math.floor(Date.now() / 1000) + 30 * 86400,
   createdBy: auth.email,
@@ -255,6 +335,8 @@ const { grant, token } = await gate.mint({
 const res = await gate.redeem(token, request)   // POST /auth/exchange
 if (res.ok) return new Response(null, { headers: { 'set-cookie': res.cookie } })
 ```
+
+`subject` is who the link is for: it's what the recipient's chip, menu and access notice say. `name` is the memo, the minter's own label: admin routes return it, and `whoami`, `/accounts` and `displayName` never pass it to the link session. A link with no subject name or email is anonymous, and `<UserMenu>` and `<WhoamiChip>` say so (`anonymousLabel`). A server handler still holds it as `auth.grant.name`, so don't render that to a link session.
 
 Every knob is optional; zero-config is an unlimited-use, never-expiring, unnamed link. `maxRedeems` counts **sessions minted** (≈ distinct browsers), not requests — which is what makes "one-use link" mean what a human predicts. Note that `maxRedeems: 1` is hostile UX in practice (the recipient opens it on their phone, then their laptop, and is locked out); prefer unlimited-redeem, named, logged, and revocable.
 
@@ -280,7 +362,7 @@ scripts/provision-oauth-client.mjs \
   --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
-A first Google sign-in seeds the person's profile (their name, and a copy of their picture; see **Faces** below) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves.
+A first Google sign-in seeds the person's profile (their name, and a copy of their picture; see **Faces** below) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a photo the person set or removed, or a name they typed. Until they do one of those, the sign-in photo is the fallback: a row with no photo and no choice about one (a seed that got none, or a save of only a name) is marked `avatarSrc: 'seed-pending'` and filled at a later sign-in, for the photo alone.
 
 Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins.
 

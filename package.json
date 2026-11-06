@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.fd8dd1e",
+  "version": "0.1.0-dist.cbd3bc2",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -27,6 +27,14 @@
       "types": "./dist/adapters/oidc.d.ts",
       "default": "./dist/adapters/oidc.js"
     },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "default": "./dist/provider/index.js"
+    },
+    "./provider/d1": {
+      "types": "./dist/adapters/d1-provider.d.ts",
+      "default": "./dist/adapters/d1-provider.js"
+    },
     "./r2": {
       "types": "./dist/adapters/r2.d.ts",
       "default": "./dist/adapters/r2.js"
@@ -51,6 +59,15 @@
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
+    "./react/user-menu": {
+      "types": "./dist/react/UserMenu.d.ts",
+      "default": "./dist/react/UserMenu.js"
+    },
+    "./react/mount": {
+      "types": "./dist/react/mount.d.ts",
+      "default": "./dist/react/mount.js"
+    },
+    "./react/ui.css": "./dist/react/ui.css",
     "./react/session-log": {
       "types": "./dist/react/session-log/index.d.ts",
       "default": "./dist/react/session-log/index.js"
@@ -69,18 +86,26 @@
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "*",
+    "@floating-ui/react": "^0.27.20",
     "@tanstack/react-query": "^5.0.0",
     "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
     "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
     "@cloudflare/workers-types": {
       "optional": true
     },
+    "@floating-ui/react": {
+      "optional": true
+    },
     "@tanstack/react-query": {
       "optional": true
     },
     "react": {
+      "optional": true
+    },
+    "react-dom": {
       "optional": true
     },
     "vue": {

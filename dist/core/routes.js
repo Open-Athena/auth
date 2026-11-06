@@ -12,6 +12,7 @@ import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvata
 import { cleanSubject, isEmailish } from './requests.js';
 import { hashToken } from './tokens.js';
 import { hasScope } from './types.js';
+import { safeNext } from './next.js';
 import { RetainedLoginError, selectionConflict } from './retained.js';
 /**
  * Every response here is identity-shaped — who you are, which links are yours,
@@ -250,12 +251,12 @@ export function authRoutes(gate, opts = {}) {
         if (rest === '/track' && method === 'POST') {
             if (!auth)
                 return json({ ok: true }); // anonymous beacons are simply dropped
-            const { path } = await body(req);
+            const { path: raw } = await body(req);
             // A client-supplied path is untrusted input that lands in an admin's
             // table: take same-origin paths only, and cap the length.
-            if (!path || !path.startsWith('/') || path.startsWith('//') || path.length > 512) {
+            const path = typeof raw === 'string' && raw.length <= 512 ? safeNext(raw, null) : null;
+            if (!path)
                 return json({ error: 'path must be a same-origin path' }, 400);
-            }
             await gate.logView(req, auth, undefined, path);
             return json({ ok: true });
         }
@@ -422,8 +423,8 @@ export function authRoutes(gate, opts = {}) {
                     return owned;
                 const b = await body(req);
                 // Whitelisted, not spread: a PATCH body is admin-supplied but still
-                // untrusted structure, and `scopes`/`createdBy` are not negotiable
-                // after minting. The holder's face goes in as a ref, as at mint.
+                // untrusted structure, and `createdBy` is not negotiable after minting.
+                // The holder's face goes in as a ref, as at mint.
                 const patch = {};
                 if ('name' in b)
                     patch.name = b.name ?? null;
@@ -441,6 +442,16 @@ export function authRoutes(gate, opts = {}) {
                     patch.subjectName = b.subjectName ?? null;
                 if ('avatar' in b)
                     patch.avatar = b.avatar ?? null;
+                // Whoever may edit this link could mint these scopes on a new one, so
+                // this grants nothing they couldn't already. Names only: the column is
+                // space-separated, so one with a space or comma would come back as two.
+                if ('scopes' in b) {
+                    const scopes = b.scopes;
+                    if (!Array.isArray(scopes) || !scopes.length || !scopes.every(s => typeof s === 'string' && /^[^\s,]+$/.test(s))) {
+                        return json({ error: 'scopes must be a non-empty list of names' }, 400);
+                    }
+                    patch.scopes = [...new Set(scopes)];
+                }
                 // Binding an address is the admin attesting the holder is that person,
                 // as minting with an email already is. Checked in full before the
                 // update, so a request that can't be honored changes nothing.
@@ -458,12 +469,13 @@ export function authRoutes(gate, opts = {}) {
                         return json({ error: 'allowlist needs a valid email' }, 400);
                     allowEmail = patch.email;
                 }
-                if (patch.email) {
+                if (patch.email || patch.scopes) {
                     const existing = await gate.byId(id);
                     if (!existing)
                         return json({ error: 'not found' }, 404);
                     // Binding an address to a dead link would only make an account by
-                    // the back door; the allowlist panel is the front door.
+                    // the back door; the allowlist panel is the front door. New scopes on
+                    // one would change nothing, and read as if they had.
                     if (existing.revokedAt !== null)
                         return json({ error: 'link is revoked' }, 409);
                 }

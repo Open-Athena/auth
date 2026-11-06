@@ -61,6 +61,7 @@ export declare function retainedMode(opts: RetainedOptions, deps: Deps): {
     authenticate(req: Request, nowMs: number, logView: boolean): Promise<"absent" | {
         auth: Auth | null;
         reason: import("./denial.js").SessionLossReason | null;
+        issuedAt: number | null;
     }>;
     /** The serialized selection context for this request's set, or null without one. */
     selection(req: Request, nowMs: number): Promise<string | null>;

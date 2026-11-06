@@ -11,7 +11,10 @@ export interface Subject {
 }
 export interface Grant {
     id: string;
-    /** Admin-side label: "Bob Smith (donor)". */
+    /**
+     * The memo: the minter's own label, "Q3 board packet" or "Bob (donor), weak on X".
+     * Admin routes return it; a link session never sees it. Who the link is for goes in `subject`.
+     */
     name: string | null;
     /** Freeform: why this link exists. */
     note: string | null;
@@ -61,7 +64,7 @@ export interface NewGrant {
     expiryEndsSessions?: boolean;
     createdBy: string;
 }
-/** The knobs an admin can change after minting. Everything else is immutable. */
+/** The knobs an admin can change after minting. Everything else (`createdBy`, say) is immutable. */
 export interface GrantPatch {
     name?: string | null;
     note?: string | null;
@@ -75,6 +78,12 @@ export interface GrantPatch {
      * next request; nothing is re-sent.
      */
     email?: string | null;
+    /**
+     * What the link opens. A grant session re-reads its grant, so sessions already
+     * redeemed gain and lose scopes on their next request; nothing is re-sent. A
+     * row the link added to the allowlist at mint or bind time keeps its scopes.
+     */
+    scopes?: string[];
     /** Replaces the holder's subject wholesale. Stores take it as given; `gate.update` builds it (copying any avatar) from a `GrantEdit`. */
     subject?: Subject | null;
 }

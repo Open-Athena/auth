@@ -135,12 +135,11 @@ export function retainedMode(opts, deps) {
                 continue;
             const expiresAt = Math.min(s.expiresAt, h.browser.expiresAt);
             accounts.push(auth.kind === 'sso'
-                ? { id: s.id, kind: 'sso', email: auth.email, name: null, subject: auth.subject, active: s.id === h.browser.activeSessionId, expiresAt }
+                ? { id: s.id, kind: 'sso', email: auth.email, subject: auth.subject, active: s.id === h.browser.activeSessionId, expiresAt }
                 : {
                     id: s.id,
                     kind: 'grant',
                     email: auth.grant.email,
-                    name: auth.grant.name,
                     subject: auth.grant.subject,
                     active: s.id === h.browser.activeSessionId,
                     expiresAt,
@@ -150,7 +149,7 @@ export function retainedMode(opts, deps) {
         for (const p of await store.pendings(h.binding, nowS)) {
             const g = await deps.grantById(p.grantId);
             if (g)
-                incomingLinks.push({ id: p.id, name: g.name, email: g.email, subject: g.subject, expiresAt: p.expiresAt });
+                incomingLinks.push({ id: p.id, email: g.email, subject: g.subject, expiresAt: p.expiresAt });
         }
         return {
             selection: serializeSelectionContext(contextOf(h.browser)),
@@ -173,9 +172,9 @@ export function retainedMode(opts, deps) {
             const nowS = sec(nowMs);
             const h = await held(req, nowS);
             if (!h)
-                return { auth: null, reason: 'invalid' };
-            const { auth, reason } = await active(h, req, nowS, { quiet: false, logView });
-            return { auth, reason };
+                return { auth: null, reason: 'invalid', issuedAt: null };
+            const { auth, reason, session } = await active(h, req, nowS, { quiet: false, logView });
+            return { auth, reason, issuedAt: session?.issuedAt ?? null };
         },
         /** The serialized selection context for this request's set, or null without one. */
         async selection(req, nowMs) {

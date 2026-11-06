@@ -7,8 +7,16 @@
  * This stays *gating*, not a profile system: a name and an avatar, nothing
  * more. No bios, no preferences, no social graph.
  */
-/** How a stored avatar was sourced — provenance for re-resolve/debug. */
-export type AvatarSourceKind = 'upload' | 'url' | 'site' | 'github' | 'gravatar' | 'bluesky' | 'mastodon';
+/**
+ * On a row with no avatar: nobody has made a choice about the photo (a seed got
+ * none, or the person has only saved a name), so a sign-in may still fill it in.
+ * Any other row without one (`avatarSrc: null`) is left alone, because that's
+ * what someone removing their photo looks like. Not a real source: it says there
+ * is no photo yet.
+ */
+export declare const AVATAR_SEED_PENDING = "seed-pending";
+/** How a stored avatar was sourced — provenance for re-resolve/debug — or `AVATAR_SEED_PENDING`. */
+export type AvatarSourceKind = 'upload' | 'url' | 'site' | 'github' | 'gravatar' | 'bluesky' | 'mastodon' | typeof AVATAR_SEED_PENDING;
 export interface Profile {
     /** The verified principal (SSO email, or a magic-link-verified grant email). */
     email: string;

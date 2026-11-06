@@ -53,7 +53,7 @@ export function useAccounts({ basePath = '/api/auth', enabled = true } = {}) {
         error: m.error,
     };
 }
-const who = (a) => a.subject?.name ?? (a.kind === 'grant' ? (a.name ?? a.email ?? 'Share link') : (a.email ?? a.name ?? 'Account'));
+const who = (a) => a.subject?.name ?? a.email ?? (a.kind === 'grant' ? 'Share link' : 'Account');
 /**
  * The browser's accounts: switch with one click, add another, take one off,
  * or sign out of all. A share-link login is always labelled as one, so a
@@ -61,7 +61,7 @@ const who = (a) => a.subject?.name ?? (a.kind === 'grant' ? (a.name ?? a.email ?
  * account and no incoming link it is just that account and the sign-out
  * actions: no picker to step through.
  */
-export function AccountSwitcher({ basePath, addAccountHref, onChanged, labels = {}, classNames = {} }) {
+export function AccountSwitcher({ basePath, addAccountHref, onChanged, hideSignOut = false, labels = {}, classNames = {} }) {
     const a = useAccounts({ basePath });
     const l = {
         heading: 'Accounts',
@@ -83,5 +83,5 @@ export function AccountSwitcher({ basePath, addAccountHref, onChanged, labels = 
     const many = accounts.length > 1;
     const row = (x) => (_jsxs("li", { className: [classNames.item, x.active && classNames.active].filter(Boolean).join(' ') || undefined, children: [_jsxs("button", { type: "button", className: classNames.switch, disabled: a.busy || x.active, "aria-current": x.active ? 'true' : undefined, onClick: () => done(a.select(x.id)), children: [_jsx(Avatar, { src: x.subject?.avatar ?? null, name: who(x), size: 24 }), _jsx("span", { children: who(x) }), x.email && who(x) !== x.email && _jsx("span", { children: x.email }), _jsx("span", { className: classNames.tag, children: x.kind === 'grant' ? l.link : l.verified }), x.active && many && _jsx("span", { className: classNames.tag, children: l.current })] }), many && (_jsx("button", { type: "button", className: classNames.remove, disabled: a.busy, onClick: () => done(a.remove(x.id)), "aria-label": `${l.remove} ${who(x)}`, children: "\u00D7" }))] }, x.id));
     const offer = (i) => (_jsxs("li", { className: classNames.incoming, children: [_jsxs("span", { children: [l.incoming, ": ", who({ ...i, kind: 'grant' }), " ", _jsx("span", { className: classNames.tag, children: l.link })] }), _jsx("button", { type: "button", className: classNames.button, disabled: a.busy, onClick: () => done(a.acceptIncoming(i.id)), children: l.useLink })] }, i.id));
-    return (_jsxs("div", { className: classNames.root, role: "group", "aria-label": typeof l.heading === 'string' ? l.heading : 'Accounts', children: [_jsxs("ul", { className: classNames.list, children: [accounts.map(row), incoming.map(offer)] }), a.error && (_jsx("p", { className: classNames.error, role: "alert", children: a.error.message })), _jsxs("div", { className: classNames.actions, children: [addAccountHref && (_jsx("a", { className: classNames.button, href: addAccountHref, children: l.add })), accounts.some(x => x.active) && (_jsx("button", { type: "button", className: classNames.button, disabled: a.busy, onClick: () => done(a.signOut()), children: l.signOut })), many && (_jsx("button", { type: "button", className: classNames.button, disabled: a.busy, onClick: () => done(a.signOutAll()), children: l.signOutAll }))] })] }));
+    return (_jsxs("div", { className: classNames.root, role: "group", "aria-label": typeof l.heading === 'string' ? l.heading : 'Accounts', children: [_jsxs("ul", { className: classNames.list, children: [accounts.map(row), incoming.map(offer)] }), a.error && (_jsx("p", { className: classNames.error, role: "alert", children: a.error.message })), _jsxs("div", { className: classNames.actions, children: [addAccountHref && (_jsx("a", { className: classNames.button, href: addAccountHref, children: l.add })), !hideSignOut && accounts.some(x => x.active) && (_jsx("button", { type: "button", className: classNames.button, disabled: a.busy, onClick: () => done(a.signOut()), children: l.signOut })), many && (_jsx("button", { type: "button", className: classNames.button, disabled: a.busy, onClick: () => done(a.signOutAll()), children: l.signOutAll }))] })] }));
 }

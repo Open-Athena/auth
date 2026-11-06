@@ -2,6 +2,7 @@ export { b64uDecodeBytes, b64uDecodeString, b64uEncode } from './core/base64.js'
 export { nullAudit, requestMeta } from './core/audit.js';
 export { DEFAULT_AVATAR_SIZE, InvalidImageError, MAX_AVATAR_DIMENSION, MAX_INLINE_AVATAR_BYTES, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, fetchAvatar, githubAvatarUrl, gravatarUrl, isGithubHandle, isSafeAvatarUrl, parseAvatarRef, validateUploadedImage, } from './core/avatar.js';
 export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js';
+export { safeNext } from './core/next.js';
 export { MAX_PROFILE_NAME, cleanName } from './core/profile.js';
 export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js';
 export { renderDecisionPage } from './core/decision-page.js';
