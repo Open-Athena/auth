@@ -65,7 +65,7 @@ The demo lives in the Open Athena Cloudflare account, so every wrangler call goe
 scripts/oa-wrangler.sh d1 create oa-auth-demo          # fresh only: paste database_id into wrangler.toml
 pnpm db:remote                                         # apply migrations
 scripts/oa-wrangler.sh pages secret put SESSION_SECRET # openssl rand -base64 32
-pnpm deploy                                            # build + publish to production
+pnpm run deploy                                        # build + publish to production
 ```
 
 After a migrations squash (see the package README), the live database is moved across it with `scripts/d1-rebaseline.mjs --db oa-auth-demo --migrations-dir migrations --remote --wrangler demo/scripts/oa-wrangler.sh` (dry run; add `--run` to write).

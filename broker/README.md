@@ -72,7 +72,7 @@ openssl rand -base64 32 | tr -d '\n' | scripts/oa-wrangler.sh secret put SESSION
 ../scripts/oidc-signing-key.mjs | scripts/oa-wrangler.sh secret put OIDC_SIGNING_KEY
 scripts/oa-wrangler.sh secret put GOOGLE_CLIENT_ID
 scripts/oa-wrangler.sh secret put GOOGLE_CLIENT_SECRET
-pnpm deploy
+pnpm run deploy   # not `pnpm deploy`: that's pnpm's own command
 ```
 
 The Google client is a "Web application" OAuth client in an OA GCP project, with redirect URI `https://login.oa.dev/auth/google/callback` (`../scripts/provision-oauth-client.mjs` walks the console step). Its consent screen should be "Internal" to the Workspace.
