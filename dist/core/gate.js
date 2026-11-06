@@ -11,7 +11,7 @@ import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
 import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
 import { looksAutomated } from './bots.js';
-import { cleanName } from './profile.js';
+import { AVATAR_SEED_PENDING, cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
 import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
@@ -821,18 +821,19 @@ export function createGate(opts) {
      * awaiting this before responding already puts it on the first `/whoami`.
      *
      * See specs/done/oidc-profile-seed.md §1 for the "seed only when no row
-     * exists" provenance rule and the optional refresh-on-login extension.
+     * exists" provenance rule and the optional refresh-on-login extension, and
+     * specs/done/broker-picture-claim.md for the one exception: a seed that got no
+     * photo (`AVATAR_SEED_PENDING`) is retried, for the avatar alone.
      */
     async function seedProfileFromClaims(email, claims, nowMs = Date.now()) {
         if (!profiles)
             return null;
-        // A self-set profile (or an earlier seed) outranks the IdP: only the very
-        // first sign-in for an email with no row seeds; every later one is a no-op.
-        if (await profiles.get(email))
+        // A self-set profile (or an earlier seed that got a photo) outranks the IdP:
+        // the first sign-in for an email with no row seeds; after that, only a row
+        // still marked as waiting for a photo is touched.
+        const existing = await profiles.get(email);
+        if (existing && existing.avatarSrc !== AVATAR_SEED_PENDING)
             return subjectFor(email);
-        // The IdP's own display name, in the order and form the person uses; the
-        // given/family pair only when that's all the IdP sent.
-        const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '));
         let avatar = null;
         if (claims.picture && isSafeAvatarUrl(claims.picture)) {
             // Copy the Google `picture` — never persist the live
@@ -841,7 +842,22 @@ export function createGate(opts) {
             // `avatarFetchTimeoutMs`: the host is third-party and on the login path.
             avatar = (await copyAvatar({ kind: 'url', url: claims.picture }).catch(() => null))?.value ?? null;
         }
-        const profile = { email, name, avatar, avatarSrc: avatar ? 'url' : null, updatedAt: sec(nowMs) };
+        if (existing) {
+            if (!avatar)
+                return subjectFor(email);
+            // Re-read: the copy took a while, and a choice made during it wins. The
+            // name stays, and `updatedAt` too, since it's the self-edit throttle's basis.
+            const current = await profiles.get(email);
+            if (current?.avatarSrc === AVATAR_SEED_PENDING)
+                await profiles.put({ ...current, avatar, avatarSrc: 'url' });
+            else if (assets && assetId(avatar))
+                await assets.del(assetId(avatar)).catch(() => { });
+            return subjectFor(email);
+        }
+        // The IdP's own display name, in the order and form the person uses; the
+        // given/family pair only when that's all the IdP sent.
+        const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '));
+        const profile = { email, name, avatar, avatarSrc: avatar ? 'url' : AVATAR_SEED_PENDING, updatedAt: sec(nowMs) };
         await profiles.put(profile);
         return subjectFor(email);
     }

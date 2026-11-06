@@ -7,6 +7,13 @@
  * This stays *gating*, not a profile system: a name and an avatar, nothing
  * more. No bios, no preferences, no social graph.
  */
+/**
+ * On a row with no avatar: a sign-in seed wrote it and got no photo, and nobody
+ * has chosen otherwise, so a later sign-in may still fill the avatar in. Any
+ * other row without one (`avatarSrc: null`) is left alone, because that's also
+ * what someone clearing their photo looks like.
+ */
+export const AVATAR_SEED_PENDING = 'seed-pending';
 /** Longest a self-asserted display name may be. */
 export const MAX_PROFILE_NAME = 80;
 /**

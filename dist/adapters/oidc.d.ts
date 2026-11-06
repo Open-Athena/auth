@@ -26,7 +26,8 @@ export interface OidcOptions extends AccountHintOptions {
      * avatar) from the id_token's `name`/`picture`. Default true, so a Google
      * face and name Just Work; it only does anything when the gate has a
      * `profiles` store. `false` keeps profiles initials-only until self-set.
-     * Never overrides a self-set profile.
+     * Never overrides a self-set profile. A seed that got no photo retries it at
+     * later sign-ins (`AVATAR_SEED_PENDING`).
      */
     seedProfile?: boolean;
     /**

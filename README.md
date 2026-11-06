@@ -362,7 +362,7 @@ scripts/provision-oauth-client.mjs \
   --pages-project your-app [--wrangler <account-pinning wrapper>] [--dev-vars .dev.vars]   # add --run to store
 ```
 
-A first Google sign-in seeds the person's profile (their name, and a copy of their picture; see **Faces** below) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves.
+A first Google sign-in seeds the person's profile (their name, and a copy of their picture; see **Faces** below) when the gate has a `profiles` store, so the chip shows a face without any setup; pass `seedProfile: false` to `oidcCallback` / `googleOneTapVerify` to opt out. It never overwrites a profile the person set themselves. A seed that got no photo marks the row (`avatarSrc: 'seed-pending'`) and tries again at later sign-ins, for the photo alone; clearing a photo or setting one ends that.
 
 Use **one client per deployment** (the callback `aud` names the app, so a token minted for one is inert at another). For One Tap ([`GoogleOneTap`](src/react/GoogleOneTap.tsx)), the app's origin just needs to be in the client's Authorized JavaScript origins.
 

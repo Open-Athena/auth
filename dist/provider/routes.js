@@ -10,6 +10,7 @@
 import { b64uEncode } from '../core/base64.js';
 import { generateToken, hashToken } from '../core/tokens.js';
 import { keySet } from './keys.js';
+import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js';
 /** What a client registry stores in place of a secret. */
 export const hashClientSecret = (secret) => hashToken(secret);
 const STANDARD_SCOPES = ['openid', 'email', 'profile'];
@@ -20,6 +21,7 @@ const VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/;
 const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/;
 /** The marker `/authorize` adds when it sends someone to sign in afresh. */
 const LOGIN_AFTER = 'oa_login_after';
+const PICTURE_PATH = '/picture/';
 const enc = new TextEncoder();
 const sec = (ms) => Math.floor(ms / 1000);
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body) + '\n', {
@@ -63,6 +65,7 @@ export function oidcProviderRoutes(opts) {
     let keys = null;
     const ks = () => (keys ??= keySet(opts.keys));
     const scopesSupported = [...STANDARD_SCOPES, ...(opts.scopes ?? [])];
+    const tickets = pictureTickets(subjectSecret);
     const discovery = () => ({
         issuer,
         authorization_endpoint: endpoint('/authorize'),
@@ -100,9 +103,13 @@ export function oidcProviderRoutes(opts) {
             const subject = await gate.subjectFor(email);
             if (subject?.name)
                 out.name = subject.name;
-            // Only a fetchable URL: an inline `data:` face would bloat every token.
+            // Always a URL: an inline `data:` face would bloat every token.
             if (subject?.avatar && /^https:\/\//.test(subject.avatar))
                 out.picture = subject.avatar;
+            else if (subject?.avatar && isHostedAvatar(subject.avatar)) {
+                const ticket = await tickets.seal({ email, clientId: client.id, expiresAt: sec(Date.now()) + tokenTtlS });
+                out.picture = endpoint(`${PICTURE_PATH}${ticket}`);
+            }
         }
         return out;
     }
@@ -338,6 +345,23 @@ export function oidcProviderRoutes(opts) {
             return challenge('invalid_token');
         return json({ ...(await claimsFor(at.email, client, at.scope.split(' '))), sub: at.sub });
     }
+    // ---- /picture/<ticket> ---------------------------------------------------
+    /**
+     * The face a `picture` claim points at (`picture.ts`). No session: an app's
+     * server fetches this. One answer for every refusal, so it says nothing about
+     * whether a ticket was once good or who it's for.
+     */
+    async function picture(ticket) {
+        const missing = () => page(404, 'not found');
+        const t = await tickets.open(ticket);
+        if (!t || t.expiresAt <= sec(Date.now()))
+            return missing();
+        const client = await clientOf(t.clientId);
+        if (!client || !(await admitted(t.email, client)))
+            return missing();
+        const avatar = (await gate.subjectFor(t.email))?.avatar;
+        return (avatar && (await pictureResponse(avatar, id => gate.getAsset(id)))) || missing();
+    }
     // ---- /logout -------------------------------------------------------------
     async function logout(req) {
         const params = req.method === 'POST' && (req.headers.get('content-type') ?? '').startsWith('application/x-www-form-urlencoded')
@@ -368,6 +392,9 @@ export function oidcProviderRoutes(opts) {
             return json(discovery(), 200, { 'cache-control': 'public, max-age=300' });
         if (!path.startsWith(`${base}/`))
             return null;
+        if (path.startsWith(`${base}${PICTURE_PATH}`)) {
+            return req.method === 'GET' ? picture(path.slice(`${base}${PICTURE_PATH}`.length)) : page(405, 'GET only');
+        }
         switch (path.slice(base.length)) {
             case '/jwks':
                 return json(ks().jwks, 200, { 'cache-control': 'public, max-age=300' });
