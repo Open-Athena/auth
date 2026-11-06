@@ -77,16 +77,22 @@ export interface GrantCardProps {
     grants: UseGrantsResult;
     /** To label this link's scopes; an id no longer offered shows as itself. */
     scopes?: readonly GrantScope[];
+    /**
+     * A checkbox per scope, saved on each click, for adding or removing one on a
+     * link already sent. Sessions already redeemed follow on their next request.
+     * A scope no longer offered stays listed, so a save can't drop it unnoticed.
+     */
+    editScopes?: boolean;
     buildLink: (grant: Grant, token: string) => string;
     allowlist?: boolean;
     avatarEndpoint?: string;
     /** After the holder is edited: binding an email may have added an allowlist row. */
     onHolderSaved?: () => void;
-    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened', ReactNode>>;
+    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export declare function GrantCard({ grant, grants, scopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, labels, classNames }: GrantCardProps): import("react").JSX.Element;
+export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, labels, classNames }: GrantCardProps): import("react").JSX.Element;
 export type GrantsPanelProps = ({
     client: AuthClient;
     controller?: undefined;
@@ -109,10 +115,12 @@ export type GrantsPanelProps = ({
     emptyLabel?: ReactNode;
     labels?: GrantMintFormProps['labels'];
     cardLabels?: GrantCardProps['labels'];
+    /** Scope checkboxes on each link: see `GrantCard`. */
+    editScopes?: boolean;
     classNames?: GrantsClassNames & {
         section?: string;
     };
 };
 /** A mint form over the list of links, composed from the exported parts. */
-export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, }: GrantsPanelProps): import("react").JSX.Element;
+export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, }: GrantsPanelProps): import("react").JSX.Element;
 export {};

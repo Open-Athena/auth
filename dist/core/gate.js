@@ -16,7 +16,7 @@ import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
 import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
-import { ALL_SCOPES } from './types.js';
+import { ALL_SCOPES, formatScopes } from './types.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
@@ -638,7 +638,8 @@ export function createGate(opts) {
      * cookie at redeem time, so changing it only affects future redemptions.
      *
      * Binding an `email` (or clearing it) likewise applies to the holder's
-     * existing session on its next request: no new link, nothing re-sent.
+     * existing session on its next request: no new link, nothing re-sent. So do
+     * new `scopes`.
      *
      * The holder's name and face apply on their next request: a grant session
      * re-reads its grant every time. A new `avatar` is copied first (throwing
@@ -652,11 +653,13 @@ export function createGate(opts) {
         const { subjectName: name, avatar, ...patch } = edit;
         let prior = null;
         let priorEmail = null;
-        if ('email' in edit) {
+        let priorScopes = null;
+        if ('email' in edit || 'scopes' in edit) {
             const existing = await store.byId(id);
             if (!existing)
                 return null;
             priorEmail = existing.email;
+            priorScopes = existing.scopes;
         }
         if ('subjectName' in edit || 'avatar' in edit) {
             const existing = await store.byId(id);
@@ -683,12 +686,16 @@ export function createGate(opts) {
         const grant = await store.update(id, patch);
         // Logged because changing a link's terms is exactly the sort of thing the
         // ledger exists to show: "who extended this, and when".
-        // A rebind also names the address it replaced, so "whose link was this"
-        // stays answerable after the fact.
+        // A rebind also names the address it replaced, and a scope change both sets,
+        // so "whose link was this" and "who could see what" stay answerable.
         const keys = [...Object.keys(edit), ...alsoLogged].sort().join(',');
         const rebound = priorEmail !== null && edit.email != null && edit.email !== priorEmail;
+        const rescoped = priorScopes !== null && edit.scopes !== undefined && formatScopes(priorScopes) !== formatScopes(edit.scopes);
+        const reason = [keys, rebound && `was ${priorEmail}`, rescoped && `scopes ${formatScopes(priorScopes)} -> ${formatScopes(edit.scopes)}`]
+            .filter(Boolean)
+            .join('; ');
         if (grant)
-            await log({ ts: nowS, event: 'update', grantId: id, reason: (rebound ? `${keys}; was ${priorEmail}` : keys) || null });
+            await log({ ts: nowS, event: 'update', grantId: id, reason: reason || null });
         const priorAsset = assetId(prior?.avatar);
         if (grant && priorAsset && assets && priorAsset !== assetId(grant.subject?.avatar)) {
             await assets.del(priorAsset).catch(() => { });
