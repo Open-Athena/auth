@@ -11,7 +11,10 @@ export interface Subject {
 }
 export interface Grant {
     id: string;
-    /** Admin-side label: "Bob Smith (donor)". */
+    /**
+     * The memo: the minter's own label, "Q3 board packet" or "Bob (donor), weak on X".
+     * Admin routes return it; a link session never sees it. Who the link is for goes in `subject`.
+     */
     name: string | null;
     /** Freeform: why this link exists. */
     note: string | null;

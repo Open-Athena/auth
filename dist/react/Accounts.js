@@ -53,7 +53,7 @@ export function useAccounts({ basePath = '/api/auth', enabled = true } = {}) {
         error: m.error,
     };
 }
-const who = (a) => a.subject?.name ?? (a.kind === 'grant' ? (a.name ?? a.email ?? 'Share link') : (a.email ?? a.name ?? 'Account'));
+const who = (a) => a.subject?.name ?? a.email ?? (a.kind === 'grant' ? 'Share link' : 'Account');
 /**
  * The browser's accounts: switch with one click, add another, take one off,
  * or sign out of all. A share-link login is always labelled as one, so a

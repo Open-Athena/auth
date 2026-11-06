@@ -4,7 +4,7 @@
 
 Reusable auth layers for apps with the "public site, gate a slice" shape: a backend kernel (HMAC sessions, DB-backed grant tokens, Google/OIDC sign-in, emailed codes), a framework-free client, unstyled React primitives, and Vue `useWhoami` / `AuthGate` wrappers.
 
-Mint a link, name it after the person you're sending it to, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
+Mint a link, say who it's for, set how many times and how long it works, and see what they looked at. Google or an emailed code for people the policy admits; request-access for everyone else.
 
 Scope note: this is *gating* — sessions, sign-in, share links, request-access, audit — not a general-purpose auth framework (no password store, no OAuth server, no RBAC engine).
 
@@ -324,7 +324,8 @@ if (!auth || !hasScope(auth, 'internal')) return new Response('nope', { status: 
 
 ```ts
 const { grant, token } = await gate.mint({
-  name: 'Bob Smith (donor)',
+  subject: { name: 'Bob Smith' },
+  name: 'Donor, Q3 outreach',
   scopes: ['reports'],
   expiresAt: Math.floor(Date.now() / 1000) + 30 * 86400,
   createdBy: auth.email,
@@ -334,6 +335,8 @@ const { grant, token } = await gate.mint({
 const res = await gate.redeem(token, request)   // POST /auth/exchange
 if (res.ok) return new Response(null, { headers: { 'set-cookie': res.cookie } })
 ```
+
+`subject` is who the link is for: it's what the recipient's chip, menu and access notice say. `name` is the memo, the minter's own label: admin routes return it, and `whoami`, `/accounts` and `displayName` never pass it to the link session. A link with no subject name or email is anonymous, and `<UserMenu>` and `<WhoamiChip>` say so (`anonymousLabel`). A server handler still holds it as `auth.grant.name`, so don't render that to a link session.
 
 Every knob is optional; zero-config is an unlimited-use, never-expiring, unnamed link. `maxRedeems` counts **sessions minted** (≈ distinct browsers), not requests — which is what makes "one-use link" mean what a human predicts. Note that `maxRedeems: 1` is hostile UX in practice (the recipient opens it on their phone, then their laptop, and is locked out); prefer unlimited-redeem, named, logged, and revocable.
 

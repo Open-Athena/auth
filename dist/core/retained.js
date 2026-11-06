@@ -135,12 +135,11 @@ export function retainedMode(opts, deps) {
                 continue;
             const expiresAt = Math.min(s.expiresAt, h.browser.expiresAt);
             accounts.push(auth.kind === 'sso'
-                ? { id: s.id, kind: 'sso', email: auth.email, name: null, subject: auth.subject, active: s.id === h.browser.activeSessionId, expiresAt }
+                ? { id: s.id, kind: 'sso', email: auth.email, subject: auth.subject, active: s.id === h.browser.activeSessionId, expiresAt }
                 : {
                     id: s.id,
                     kind: 'grant',
                     email: auth.grant.email,
-                    name: auth.grant.name,
                     subject: auth.grant.subject,
                     active: s.id === h.browser.activeSessionId,
                     expiresAt,
@@ -150,7 +149,7 @@ export function retainedMode(opts, deps) {
         for (const p of await store.pendings(h.binding, nowS)) {
             const g = await deps.grantById(p.grantId);
             if (g)
-                incomingLinks.push({ id: p.id, name: g.name, email: g.email, subject: g.subject, expiresAt: p.expiresAt });
+                incomingLinks.push({ id: p.id, email: g.email, subject: g.subject, expiresAt: p.expiresAt });
         }
         return {
             selection: serializeSelectionContext(contextOf(h.browser)),

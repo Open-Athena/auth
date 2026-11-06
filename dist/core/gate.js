@@ -855,7 +855,7 @@ export function createGate(opts) {
                 // it is not a secret (the token is), and without it a link session
                 // has no identifier a person can quote back to an admin.
                 id: auth.grant.id,
-                name: auth.grant.name,
+                // Not `grant.name`: the memo is the minter's, and this goes to whoever holds the link.
                 subject: auth.grant.subject,
                 email: auth.grant.email,
                 scopes: auth.scopes,

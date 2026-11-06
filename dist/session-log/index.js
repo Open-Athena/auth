@@ -26,7 +26,7 @@ export function fromGate(gate, opts = {}) {
             if (!hasScope(a, adminScope)) {
                 return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
             }
-            return { who: a.kind === 'sso' ? a.email : (a.grant.email ?? a.grant.name ?? `grant:${a.grant.id}`) };
+            return { who: a.kind === 'sso' ? a.email : (a.grant.email ?? a.grant.subject?.name ?? `grant:${a.grant.id}`) };
         },
     };
 }
