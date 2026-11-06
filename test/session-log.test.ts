@@ -205,6 +205,32 @@ async function setup(o: { on?: string | null; routes?: Partial<SessionLogRoutesO
   return { db, raw, gate, handle, call, put, viewer, switches }
 }
 
+describe('who set the switch, for a link holding the admin scope', () => {
+  const MEMO = 'candidate, weak on X'
+  const setBy = async (over: { email?: string; subject?: { name: string } }) => {
+    const s = await setup({ on: null })
+    const { grant, token } = await s.gate.mint({ name: MEMO, scopes: ['admin'], createdBy: 'test', ...over })
+    const [status, state] = await s.put({ enabled: true, until: '2026-10-17' }, { token })
+    expect(status).toBe(200)
+    const [, reread] = await s.call('GET', '/switch', { admin: true })
+    expect(reread.who).toBe(state.who)
+    return { who: state.who, id: grant.id }
+  }
+
+  it('is its bound address', async () => {
+    expect((await setBy({ email: 'ann@example.test', subject: { name: 'Ann' } })).who).toBe('ann@example.test')
+  })
+
+  it('then its subject name', async () => {
+    expect((await setBy({ subject: { name: 'Ann' } })).who).toBe('Ann')
+  })
+
+  it('then its id, never the memo', async () => {
+    const { who, id } = await setBy({})
+    expect(who).toBe(`grant:${id}`)
+  })
+})
+
 describe('the switch: GET / PUT <base>/switch', () => {
   const bounds = { defaultUntil: Date.UTC(2026, 9, 20), maxUntil: Date.UTC(2026, 10, 13) }
   const nowS = NOW / 1000

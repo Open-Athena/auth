@@ -162,7 +162,6 @@ describe('authenticate — grant sessions', () => {
     expect(g.whoami(auth!)).toEqual({
       kind: 'grant',
       id: grant.id,
-      name: 'Bob',
       subject: null,
       email: null,
       scopes: ['reports'],

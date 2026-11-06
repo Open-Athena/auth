@@ -38,7 +38,7 @@ function IncomingLink({ whoami }: { whoami: Whoami }) {
   const { accounts, acceptIncoming, busy, error } = useAccounts({ basePath: '/api/view' })
   const link = accounts?.incoming[0]
   if (!link) return null
-  const label = link.subject?.name ?? link.name ?? 'someone'
+  const label = link.subject?.name ?? link.email ?? 'someone'
   return (
     <div className="note incoming-link" role="status">
       <p>
@@ -164,7 +164,6 @@ function identityFacts(whoami: Whoami): [string, string][] {
     ['Subject', `g:${whoami.id}`],
     ['How you got in', 'A share link, exchanged for a session. Revoking the link ends this session on its next request.'],
     ['Link knows you as', displayName(whoami) ?? '— nothing; this link is anonymous'],
-    ['Link memo', whoami.name ?? '—'],
     ['Scopes', whoami.scopes.join(', ') || 'none'],
     ['Expires', when(whoami.expiresAt)],
   ]

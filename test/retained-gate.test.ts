@@ -83,16 +83,16 @@ function setup(o: { limits?: Partial<RetainedLimits>; incoming?: IncomingPolicy;
     gate.mint({ name, subject: { name }, scopes: ['view'], createdBy: 'boss@x.test', maxRedeems: o.maxRedeems ?? null })
   const whoami = async (b: Browser) => {
     const r = await call(b, 'GET', '/whoami')
-    return r.status === 200 ? (r.body.kind === 'sso' ? r.body.email : `link:${r.body.name}`) : [r.status, r.body.reason]
+    return r.status === 200 ? (r.body.kind === 'sso' ? r.body.email : `link:${r.body.subject.name}`) : [r.status, r.body.reason]
   }
   const accounts = async (b: Browser) => {
     const r = await call(b, 'GET', '/accounts')
     const a = r.body as AccountsResponse
-    return a.accounts.map(x => `${x.active ? '*' : ''}${x.kind === 'sso' ? x.email : `link:${x.name}`}`)
+    return a.accounts.map(x => `${x.active ? '*' : ''}${x.kind === 'sso' ? x.email : `link:${x.subject?.name}`}`)
   }
   const idOf = async (b: Browser, label: string) => {
     const a = (await call(b, 'GET', '/accounts')).body as AccountsResponse
-    return a.accounts.find(x => (x.kind === 'sso' ? x.email : `link:${x.name}`) === label)!.id
+    return a.accounts.find(x => (x.kind === 'sso' ? x.email : `link:${x.subject?.name}`) === label)!.id
   }
   const redeems = (id: string) => (raw.prepare('SELECT redeems FROM grants WHERE id = ?').get(id) as { redeems: number }).redeems
   return { db, raw, gate, handle, call, mutate, signIn, mint, whoami, accounts, idOf, redeems, delisted }
@@ -128,7 +128,7 @@ describe('retained logins', () => {
       200, 'ann@x.test', 'string', 0, 'ann@x.test',
     ])
     const a = (await t.call(b, 'GET', '/accounts')).body as AccountsResponse
-    expect(a.incoming.map(i => [i.id === ex.body.incoming, i.name])).toEqual([[true, 'Guest pass']])
+    expect(a.incoming.map(i => [i.id === ex.body.incoming, i.subject?.name])).toEqual([[true, 'Guest pass']])
     expect((await t.mutate(b, '/accounts/incoming', { id: ex.body.incoming })).status).toBe(200)
     expect([await t.whoami(b), await t.accounts(b), t.redeems(grant.id)]).toEqual([
       'link:Guest pass',
@@ -144,8 +144,8 @@ describe('retained logins', () => {
     const t = setup()
     const b = new Browser()
     const { grant, token } = await t.mint('Board')
-    expect((await t.call(b, 'POST', '/exchange', { token })).body.name).toBe('Board')
-    expect((await t.call(b, 'POST', '/exchange', { token })).body.name).toBe('Board')
+    expect((await t.call(b, 'POST', '/exchange', { token })).body.subject.name).toBe('Board')
+    expect((await t.call(b, 'POST', '/exchange', { token })).body.subject.name).toBe('Board')
     expect([t.redeems(grant.id), await t.accounts(b)]).toEqual([1, ['*link:Board']])
     const dead = await t.mint('Dead')
     await t.gate.revoke(dead.grant.id)
@@ -161,7 +161,7 @@ describe('retained logins', () => {
     const b = new Browser()
     await t.signIn(b, 'ann@x.test')
     const { token } = await t.mint('Guest')
-    expect((await t.call(b, 'POST', '/exchange', { token })).body.name).toBe('Guest')
+    expect((await t.call(b, 'POST', '/exchange', { token })).body.subject.name).toBe('Guest')
     expect(await t.accounts(b)).toEqual(['ann@x.test', '*link:Guest'])
   })
 
@@ -210,7 +210,37 @@ describe('retained logins', () => {
     await t.signIn(b, 'ann@x.test')
     const { token } = await t.mint('Script')
     const r = await t.call(b, 'GET', '/whoami', undefined, { authorization: `Bearer ${token}` })
-    expect([r.body.name, r.body.selection, await t.whoami(b)]).toEqual(['Script', undefined, 'ann@x.test'])
+    expect([r.body.subject.name, r.body.selection, await t.whoami(b)]).toEqual(['Script', undefined, 'ann@x.test'])
+  })
+
+  it('a link’s memo reaches neither the held logins nor an incoming offer', async () => {
+    const t = setup()
+    const b = new Browser()
+    const link = (subject: { name: string } | null) =>
+      t.gate.mint({ name: 'candidate, weak on X', subject, scopes: ['view'], createdBy: 'boss@x.test' })
+    const held = await link({ name: 'Bea' })
+    const offered = await link(null)
+    await t.call(b, 'POST', '/exchange', { token: held.token })
+    const ex = await t.call(b, 'POST', '/exchange', { token: offered.token })
+    expect(ex.body).toEqual({
+      kind: 'grant',
+      id: held.grant.id,
+      subject: { name: 'Bea' },
+      email: null,
+      scopes: ['view'],
+      admin: false,
+      expiresAt: null,
+      selection: expect.any(String),
+      incoming: expect.any(String),
+    })
+    const listed = (await t.call(b, 'GET', '/accounts')).body as AccountsResponse
+    const session = listed.accounts[0]!
+    expect(listed).toEqual({
+      selection: expect.any(String),
+      active: session.id,
+      accounts: [{ id: session.id, kind: 'grant', email: null, subject: { name: 'Bea' }, active: true, expiresAt: expect.any(Number) }],
+      incoming: [{ id: ex.body.incoming, email: null, subject: null, expiresAt: expect.any(Number) }],
+    })
   })
 
   it('a stale or missing selection is refused with 409 and changes nothing', async () => {

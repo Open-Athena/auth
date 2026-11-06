@@ -46,7 +46,7 @@ for (const example of examples) {
 
     test('failed sign-out displays an alert without losing the identity', async ({ page }) => {
       await page.route('**/api/view/whoami', route => route.fulfill({ json: {
-        kind: 'grant', id: 'browser-grant', name: null, subject: { name: 'Mona Octocat' },
+        kind: 'grant', id: 'browser-grant', subject: { name: 'Mona Octocat' },
         email: null, scopes: ['view'], admin: false, expiresAt: null,
       } }))
       await page.route('**/api/view/logout', route => route.fulfill({ status: 503, json: { error: 'unavailable' } }))
@@ -76,7 +76,7 @@ for (const example of examples) {
           const request = route.request()
           mutations.push({ path: new URL(request.url()).pathname, method: request.method(), body: request.postDataJSON() })
           identity = {
-            kind: 'grant', id: 'browser-grant', name: null,
+            kind: 'grant', id: 'browser-grant',
             subject: named ? { name: 'Mona Octocat' } : null,
             email: null, scopes: ['view'], admin: false, expiresAt: null,
           }

@@ -12,21 +12,29 @@ afterEach(() => {
 })
 
 describe('framework-free identity helpers', () => {
+  it('leaves an anonymous link anonymous, even if an older gate still sends the memo', () => {
+    const anonymous: GrantWhoami = {
+      kind: 'grant', id: 'g1', subject: null, email: null, scopes: [], admin: false, expiresAt: null,
+    }
+    expect(displayName(anonymous)).toBe(null)
+    expect(displayName({ ...anonymous, name: 'candidate, weak on X' } as GrantWhoami)).toBe(null)
+  })
+
   it('preserves label precedence and scope matching', () => {
     const grant: GrantWhoami = {
-      kind: 'grant', id: 'g1', name: 'Board packet', subject: { name: 'Ann', email: 'subject@example.com' },
+      kind: 'grant', id: 'g1', subject: { name: 'Ann', email: 'subject@example.com' },
       email: 'link@example.com', scopes: ['reports'], admin: false, expiresAt: null,
     }
     expect(DEFAULT_WHOAMI_ENDPOINT).toBe('/api/auth/whoami')
     expect([
       displayName(grant),
       displayName({ ...grant, subject: {} }),
-      displayName({ ...grant, name: null, subject: { email: 'subject@example.com' } }),
-      displayName({ ...grant, name: null, subject: null }),
-      displayName({ ...grant, name: null, subject: null, email: null }),
+      displayName({ ...grant, subject: { email: 'subject@example.com' } }),
+      displayName({ ...grant, subject: null }),
+      displayName({ ...grant, subject: null, email: null }),
       displayName({ kind: 'sso', email: 'staff@example.com', admin: true, scopes: [], subject: { name: 'Staff' } }),
       displayName(null), displayName(undefined),
-    ]).toEqual(['Ann', 'Board packet', 'subject@example.com', 'link@example.com', null, 'Staff', null, null])
+    ]).toEqual(['Ann', 'link@example.com', 'subject@example.com', 'link@example.com', null, 'Staff', null, null])
     expect([
       hasScope(grant, 'reports'), hasScope(grant, 'report'),
       hasScope({ ...grant, scopes: ['*'] }, 'anything'), hasScope(null, 'reports'),

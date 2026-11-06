@@ -118,6 +118,40 @@ describe('whoami', () => {
   })
 })
 
+describe("a link's memo", () => {
+  const MEMO = 'candidate, weak on X'
+  const identity = (id: string, subject: { name: string } | null) => ({
+    kind: 'grant',
+    id,
+    subject,
+    email: null,
+    scopes: ['reports'],
+    admin: false,
+    expiresAt: null,
+  })
+
+  it.each([
+    ['with a subject name', 'Bob', { name: 'Bob' }],
+    ['without one', undefined, null],
+  ])('never reaches the link session, %s', async (_, subjectName, subject) => {
+    const admin = await asAdmin()
+    const minted = await post('/grants', { name: MEMO, subjectName, scopes: ['reports'], avatar: null }, admin)
+    const id: string = minted.body.grant.id
+    const exchanged = await post('/exchange', { token: minted.body.token })
+    expect(exchanged.body).toEqual(identity(id, subject))
+    const session = pair(exchanged.setCookie!)
+    expect((await call('/whoami', {}, session)).body).toEqual(identity(id, subject))
+  })
+
+  it('stays on the admin routes', async () => {
+    const admin = await asAdmin()
+    const minted = await post('/grants', { name: MEMO, subjectName: 'Bob', scopes: ['reports'], avatar: null }, admin)
+    expect(minted.body.grant.name).toBe(MEMO)
+    const listed = (await call('/grants', {}, admin)).body.grants
+    expect(listed.map((g: { id: string; name: string | null }) => [g.id, g.name])).toEqual([[minted.body.grant.id, MEMO]])
+  })
+})
+
 describe('exchange', () => {
   it('trades a token for a session cookie', async () => {
     const cookie = await asAdmin()
@@ -129,7 +163,6 @@ describe('exchange', () => {
       // The grant id is returned to the recipient: it names the session they
       // are in, and it isn't the secret — the token is.
       id: minted.body.grant.id,
-      name: 'Bob',
       subject: null,
       email: null,
       scopes: ['reports'],

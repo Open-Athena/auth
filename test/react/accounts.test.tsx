@@ -3,7 +3,7 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AccountView, AccountsResponse } from '../../src/core/http.js'
+import type { AccountView, AccountsResponse, IncomingView } from '../../src/core/http.js'
 import { AccountSwitcher } from '../../src/react/Accounts.js'
 import { renderWithQuery } from './helpers.js'
 
@@ -17,7 +17,6 @@ const acct = (id: string, o: Partial<AccountView> = {}): AccountView => ({
   id,
   kind: 'sso',
   email: `${id}@x.test`,
-  name: null,
   subject: null,
   active: false,
   expiresAt: 2_000_000_000,
@@ -49,7 +48,7 @@ const names = () => screen.getAllByRole('listitem').map(li => li.textContent)
 
 describe('AccountSwitcher', () => {
   it('lists accounts, tags a share link as one, and switches with the selection it last saw', async () => {
-    const bea = { kind: 'grant', email: null, name: 'Board', subject: { name: 'Bea' } } as const
+    const bea = { kind: 'grant', email: null, subject: { name: 'Bea' } } as const
     let current = page([acct('ann', { active: true }), acct('g1', bea)])
     const calls = stub({
       '/api/auth/accounts': () => ({ status: 200, body: current }),
@@ -97,12 +96,31 @@ describe('AccountSwitcher', () => {
     expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual(['Aann@x.testverified', 'Sign out'])
   })
 
+  it('labels an anonymous link as a share link, even if an older gate still sends the memo', async () => {
+    const stale = { kind: 'grant', email: null, subject: null, name: 'candidate, weak on X' } as Partial<AccountView>
+    stub({
+      '/api/auth/accounts': () => ({
+        status: 200,
+        body: page([acct('ann', { active: true }), acct('g1', stale)], {
+          incoming: [{ id: 'p1', email: null, subject: null, expiresAt: 2_000_000_000, name: 'candidate, weak on X' } as IncomingView],
+        }),
+      }),
+    })
+    renderWithQuery(<AccountSwitcher />)
+    await screen.findByRole('button', { name: 'Use it' })
+    expect(names()).toEqual([
+      'Aann@x.testverifiedcurrent×',
+      'SLShare linkshare link×',
+      'Opened a share link: Share link share linkUse it',
+    ])
+  })
+
   it('an incoming link is offered, and taking it posts its id', async () => {
     const calls = stub({
       '/api/auth/accounts': () => ({
         status: 200,
         body: page([acct('ann', { active: true })], {
-          incoming: [{ id: 'p1', name: 'Board', email: null, subject: { name: 'Bea' }, expiresAt: 2_000_000_000 }],
+          incoming: [{ id: 'p1', email: null, subject: { name: 'Bea' }, expiresAt: 2_000_000_000 }],
         }),
       }),
       '/api/auth/accounts/incoming': () => ({ status: 200, body: page([acct('ann'), acct('g1', { kind: 'grant', active: true })]) }),

@@ -22,7 +22,7 @@ const sso = (o: Partial<SsoWhoami> = {}): SsoWhoami => ({
   kind: 'sso', email: 'ada@x.test', admin: false, scopes: [], subject: { name: 'Ada Lovelace' }, ...o,
 })
 const guest = (o: Partial<GrantWhoami> = {}): GrantWhoami => ({
-  kind: 'grant', id: 'g1', name: 'Board memo', subject: { name: 'Bea Guest' }, email: null, scopes: ['read'], admin: false, expiresAt: null, ...o,
+  kind: 'grant', id: 'g1', subject: { name: 'Bea Guest' }, email: null, scopes: ['read'], admin: false, expiresAt: null, ...o,
 })
 
 const APP_ITEMS: UserMenuItem[] = [
@@ -60,7 +60,7 @@ describe('useUserMenu', () => {
     const { result } = hook({ whoami: guest() })
     expect(keys(result)).toEqual(['guide', 'help', 'sign-out'])
     expect({ kind: result.current.kind, name: result.current.displayName }).toEqual({ kind: 'guest', name: 'Bea Guest' })
-    const anonymous = hook({ whoami: guest({ name: null, subject: null }), items: [] })
+    const anonymous = hook({ whoami: guest({ subject: null }), items: [] })
     expect(keys(anonymous.result)).toEqual(['sign-out'])
     expect(anonymous.result.current.displayName).toBe(null)
   })
@@ -150,7 +150,7 @@ describe('UserMenu', () => {
   })
 
   it('an anonymous link still has a face, a label and sign out', async () => {
-    renderWithQuery(<UserMenu whoami={guest({ name: null, subject: null })} client={client()} />)
+    renderWithQuery(<UserMenu whoami={guest({ subject: null })} client={client()} />)
     const trigger = screen.getByRole('button', { name: 'Signed in with a share link' })
     expect(trigger.textContent).toBe('?')
     await userEvent.setup().click(trigger)
@@ -179,8 +179,8 @@ describe('UserMenu', () => {
           active: 'a',
           incoming: [],
           accounts: [
-            { id: 'a', kind: 'sso', email: 'ada@x.test', name: null, subject: null, active: true, expiresAt: 2e9 },
-            { id: 'b', kind: 'grant', email: null, name: 'Memo', subject: null, active: false, expiresAt: 2e9 },
+            { id: 'a', kind: 'sso', email: 'ada@x.test', subject: null, active: true, expiresAt: 2e9 },
+            { id: 'b', kind: 'grant', email: null, subject: null, active: false, expiresAt: 2e9 },
           ],
         },
       },

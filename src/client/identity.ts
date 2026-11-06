@@ -23,7 +23,6 @@ export interface GrantWhoami {
   kind: 'grant'
   /** The grant's id — the session's subject is `g:<id>`. Not a secret. */
   id: string
-  name: string | null
   subject: Subject | null
   email: string | null
   scopes: string[]
@@ -37,23 +36,17 @@ export interface GrantWhoami {
 export type Whoami = SsoWhoami | GrantWhoami
 
 /**
- * Best available human label: the *person* first, then the link's memo, then an
- * email.
- *
- * Subject before name, because they answer different questions. `name` is an
- * admin's memo — "Q3 board packet", "test-1756800000" — written for the table
- * it appears in, while `subject` is who the link was minted *for*. Preferring
- * the memo meant a link with both rendered "Private link for Q3 board packet",
- * which is the wrong noun in the wrong sentence.
+ * Best available human label: the *person*, then an email, or null for an
+ * anonymous link. A link's memo is not a candidate: it's the minter's note, and
+ * a gate doesn't send it to the link session.
  */
 export function displayName(whoami: Whoami | null | undefined): string | null {
   if (!whoami) return null
   if (whoami.kind === 'grant') {
     const subject: Subject = whoami.subject ?? {}
-    return subject.name || whoami.name || subject.email || whoami.email || null
+    return subject.name || subject.email || whoami.email || null
   }
-  // A self-set name wins over the bare email, same as a grant's subject wins
-  // over its memo — it's who the person said they are.
+  // A self-set name wins over the bare email: it's who the person said they are.
   return whoami.subject?.name || whoami.email || null
 }
 

@@ -97,8 +97,8 @@ export interface AccountSwitcherProps {
   >
 }
 
-const who = (a: { kind?: AccountView['kind']; email: string | null; name: string | null; subject: AccountView['subject'] }): string =>
-  a.subject?.name ?? (a.kind === 'grant' ? (a.name ?? a.email ?? 'Share link') : (a.email ?? a.name ?? 'Account'))
+const who = (a: { kind: AccountView['kind']; email: string | null; subject: AccountView['subject'] }): string =>
+  a.subject?.name ?? a.email ?? (a.kind === 'grant' ? 'Share link' : 'Account')
 
 /**
  * The browser's accounts: switch with one click, add another, take one off,

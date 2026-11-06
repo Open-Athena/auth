@@ -33,8 +33,6 @@ export interface AccountView {
   /** A verified email sign-in, or a share link (`grant`): never shown as each other. */
   kind: 'sso' | 'grant'
   email: string | null
-  /** A share link's memo. */
-  name: string | null
   subject: Subject | null
   active: boolean
   /** When this login stops working here (epoch s). */
@@ -44,7 +42,6 @@ export interface AccountView {
 /** A share link opened while another login was active, held for the person to switch to. */
 export interface IncomingView {
   id: string
-  name: string | null
   email: string | null
   subject: Subject | null
   /** When the offer lapses (epoch s); the link must be opened again after. */

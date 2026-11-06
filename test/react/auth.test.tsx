@@ -21,8 +21,7 @@ const SSO: Whoami = { kind: 'sso', email: 'staff@openathena.ai', admin: false, s
 const GRANT: Whoami = {
   kind: 'grant',
   id: 'gTESTgrant01',
-  name: 'Bob Smith',
-  subject: null,
+  subject: { name: 'Bob Smith' },
   email: 'bob@example.com',
   scopes: ['reports'],
   admin: false,
@@ -39,24 +38,15 @@ afterEach(() => {
 })
 
 describe('displayName', () => {
-  it('prefers the person over the memo, then the email', () => {
-    const subjectOnly = { ...GRANT, name: null, subject: { name: 'Bob Smith' } }
-    const emailOnly = { ...GRANT, name: null, subject: null }
-    // The case that motivated the ordering: `name` is an admin's memo about the
-    // link, `subject` is who it was minted for. Preferring the memo rendered
-    // "Private link for Q3 board packet".
-    const both = { ...GRANT, name: 'Q3 board packet', subject: { name: 'Bob Smith' } }
+  it('prefers the person, then the email', () => {
+    const emailOnly = { ...GRANT, subject: null }
     expect([
-      displayName(both),
       displayName(GRANT),
-      displayName(subjectOnly),
       displayName(emailOnly),
       displayName(SSO),
       displayName(null),
       displayName(undefined),
     ]).toEqual([
-      'Bob Smith',
-      'Bob Smith',
       'Bob Smith',
       'bob@example.com',
       'staff@openathena.ai',
@@ -305,7 +295,7 @@ describe('signing out', () => {
 })
 
 describe('an anonymous link', () => {
-  const ANON: Whoami = { ...GRANT, name: null, subject: null, email: null }
+  const ANON: Whoami = { ...GRANT, subject: null, email: null }
 
   it('still discloses that access is logged, without inventing a name', () => {
     // The case where the visitor is least identifiable is the case where the
