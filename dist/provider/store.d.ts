@@ -1,7 +1,9 @@
 /**
  * What an OIDC provider keeps between `/authorize` and `/token`: the
  * authorization code, by its hash, until it is exchanged once or expires.
- * Everything else is stateless (signed tokens) or the gate's (sessions).
+ * It also remembers a spent code until its tokens expire, so that presenting the
+ * code again can revoke them. Everything else is stateless (signed tokens) or the
+ * gate's (sessions).
  */
 /** One issued authorization code. */
 export interface CodeRecord {
@@ -29,7 +31,12 @@ export interface ProviderStore {
      * most one gets it. Expired codes return null.
      */
     takeCode(codeHash: string, nowS: number): Promise<CodeRecord | null>;
-    /** Delete expired codes (bounded); returns how many went. */
+    /** Remember an exchanged code until `expiresAt` (when its access token dies). */
+    noteSpent(codeHash: string, expiresAt: number): Promise<void>;
+    /** The code was presented again: its access token stops working. A no-op for a code that isn't remembered. */
+    revokeSpent(codeHash: string): Promise<void>;
+    isSpentRevoked(codeHash: string): Promise<boolean>;
+    /** Delete expired codes and spent records (bounded); returns how many went. */
     cleanup(nowS: number): Promise<number>;
 }
 /** A process-local store, for tests and single-instance development. */

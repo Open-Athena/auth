@@ -275,7 +275,15 @@ export function oidcProviderRoutes(opts) {
         const nowS = sec(Date.now());
         // Taken before any check: a code is spent by any attempt to use it, so a
         // stolen one is worth at most one guess.
-        const rec = await store.takeCode(await hashToken(code), nowS);
+        const codeHash = await hashToken(code);
+        const rec = await store.takeCode(codeHash, nowS);
+        // OAuth 2.0 §4.1.2: a code seen again means one of the two exchanges wasn't
+        // the app, so the token from the first stops working. An ID token already
+        // issued can't be recalled: it's the app's, and short-lived.
+        if (rec)
+            await store.noteSpent(codeHash, nowS + tokenTtlS);
+        else
+            await store.revokeSpent(codeHash);
         if (!rec ||
             rec.clientId !== client.id ||
             rec.redirectUri !== form.get('redirect_uri') ||
@@ -302,7 +310,7 @@ export function oidcProviderRoutes(opts) {
             ...(rec.authTime !== null ? { auth_time: rec.authTime } : {}),
             ...(rec.nonce !== null ? { nonce: rec.nonce } : {}),
         });
-        const accessToken = await ks().sign({ iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, iat: nowS, exp: nowS + tokenTtlS }, 'at+jwt');
+        const accessToken = await ks().sign({ iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, jti: codeHash, iat: nowS, exp: nowS + tokenTtlS }, 'at+jwt');
         return json({ access_token: accessToken, token_type: 'Bearer', expires_in: tokenTtlS, id_token: idToken, scope: rec.scope });
     }
     // ---- /userinfo -----------------------------------------------------------
@@ -323,6 +331,8 @@ export function oidcProviderRoutes(opts) {
             typeof at.scope !== 'string') {
             return challenge('invalid_token');
         }
+        if (typeof at.jti === 'string' && (await store.isSpentRevoked(at.jti)))
+            return challenge('invalid_token');
         const client = await clientOf(String(at.client_id));
         if (!client || !(await admitted(at.email, client)))
             return challenge('invalid_token');
