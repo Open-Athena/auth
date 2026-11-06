@@ -1,7 +1,9 @@
 /**
  * What an OIDC provider keeps between `/authorize` and `/token`: the
  * authorization code, by its hash, until it is exchanged once or expires.
- * Everything else is stateless (signed tokens) or the gate's (sessions).
+ * It also remembers a spent code until its tokens expire, so that presenting the
+ * code again can revoke them. Everything else is stateless (signed tokens) or the
+ * gate's (sessions).
  */
 
 /** One issued authorization code. */
@@ -31,13 +33,19 @@ export interface ProviderStore {
    * most one gets it. Expired codes return null.
    */
   takeCode(codeHash: string, nowS: number): Promise<CodeRecord | null>
-  /** Delete expired codes (bounded); returns how many went. */
+  /** Remember an exchanged code until `expiresAt` (when its access token dies). */
+  noteSpent(codeHash: string, expiresAt: number): Promise<void>
+  /** The code was presented again: its access token stops working. A no-op for a code that isn't remembered. */
+  revokeSpent(codeHash: string): Promise<void>
+  isSpentRevoked(codeHash: string): Promise<boolean>
+  /** Delete expired codes and spent records (bounded); returns how many went. */
   cleanup(nowS: number): Promise<number>
 }
 
 /** A process-local store, for tests and single-instance development. */
 export function memoryProviderStore(): ProviderStore & { codes: Map<string, CodeRecord> } {
   const codes = new Map<string, CodeRecord>()
+  const spent = new Map<string, { revoked: boolean; expiresAt: number }>()
   return {
     codes,
     async putCode(code) {
@@ -49,12 +57,24 @@ export function memoryProviderStore(): ProviderStore & { codes: Map<string, Code
       codes.delete(codeHash)
       return c.expiresAt > nowS ? c : null
     },
+    async noteSpent(codeHash, expiresAt) {
+      spent.set(codeHash, { revoked: false, expiresAt })
+    },
+    async revokeSpent(codeHash) {
+      const s = spent.get(codeHash)
+      if (s) s.revoked = true
+    },
+    async isSpentRevoked(codeHash) {
+      return spent.get(codeHash)?.revoked ?? false
+    },
     async cleanup(nowS) {
       let n = 0
-      for (const [k, c] of codes) {
-        if (c.expiresAt <= nowS) {
-          codes.delete(k)
-          n++
+      for (const m of [codes, spent]) {
+        for (const [k, c] of m) {
+          if (c.expiresAt <= nowS) {
+            m.delete(k)
+            n++
+          }
         }
       }
       return n

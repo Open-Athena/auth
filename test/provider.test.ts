@@ -466,6 +466,39 @@ describe('refusals', () => {
     expect(res!.status).toBe(400)
   })
 
+  it("presenting a spent code again kills the access token it produced, and only that one", async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const issue = async () => {
+      const { verifier, challenge } = await pkce()
+      const res = await b.request(authorizeUrl({ code_challenge: challenge, code_challenge_method: 'S256', scope: 'openid email' }))
+      return { code: queryOf(res).params.code!, verifier }
+    }
+    const exchange = async (form: Record<string, string>) => {
+      const res = await w.provider(tokenRequest({ grant_type: 'authorization_code', redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret', ...form }))
+      return (await res!.json()) as { error?: string; access_token?: string }
+    }
+    const userinfo = async (token: string) => {
+      const res = await w.provider(new Request(`${ISSUER}/oidc/userinfo`, { headers: { authorization: `Bearer ${token}` } }))
+      return [res!.status, res!.headers.get('www-authenticate')]
+    }
+
+    const [one, two] = [await issue(), await issue()]
+    const first = (await exchange({ code: one.code, code_verifier: one.verifier })).access_token!
+    const second = (await exchange({ code: two.code, code_verifier: two.verifier })).access_token!
+    expect(await userinfo(first)).toEqual([200, null])
+
+    // A code never issued revokes nothing.
+    expect(await exchange({ code: 'never-issued', code_verifier: one.verifier })).toEqual({ error: 'invalid_grant' })
+    expect(await userinfo(first)).toEqual([200, null])
+
+    at(30)
+    expect(await exchange({ code: one.code, code_verifier: one.verifier })).toEqual({ error: 'invalid_grant' })
+    expect(await userinfo(first)).toEqual([401, 'Bearer error="invalid_token"'])
+    expect(await userinfo(second)).toEqual([200, null])
+  })
+
   it('a code works once, only for its client, redirect and verifier, and not after a minute', async () => {
     const w = await world()
     const b = w.browser()
@@ -592,5 +625,20 @@ describe('d1ProviderStore', () => {
     expect(await s.takeCode('old1', 150)).toBe(null)
     expect([await s.cleanup(150), await s.cleanup(150)]).toEqual([2, 0])
     expect(raw.prepare('SELECT count(*) AS n FROM provider_codes').get()).toEqual({ n: 0 })
+  })
+
+  it('remembers a spent code until it expires, and revokes only one it remembers', async () => {
+    const { db, raw } = testDbRaw(['provider'])
+    const s = d1ProviderStore(db)
+    await s.noteSpent('kept', 200)
+    await s.noteSpent('old', 100)
+    await s.revokeSpent('never-seen')
+    expect([await s.isSpentRevoked('kept'), await s.isSpentRevoked('never-seen')]).toEqual([false, false])
+    await s.revokeSpent('kept')
+    expect(await s.isSpentRevoked('kept')).toBe(true)
+    expect(await s.cleanup(150)).toBe(1)
+    expect(raw.prepare('SELECT code_hash AS h FROM provider_spent_codes').all()).toEqual([{ h: 'kept' }])
+    expect(await s.cleanup(200)).toBe(1)
+    expect(await s.isSpentRevoked('kept')).toBe(false)
   })
 })

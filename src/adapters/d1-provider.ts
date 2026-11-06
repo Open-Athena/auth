@@ -51,12 +51,26 @@ export function d1ProviderStore(db: D1Database, { cleanupChunk = 500 }: D1Provid
       const row = await db.prepare('DELETE FROM provider_codes WHERE code_hash = ? RETURNING *').bind(codeHash).first<CodeRow>()
       return row && row.expires_at > nowS ? fromRow(row) : null
     },
+    async noteSpent(codeHash, expiresAt) {
+      await db.prepare('INSERT OR REPLACE INTO provider_spent_codes (code_hash, revoked, expires_at) VALUES (?, 0, ?)').bind(codeHash, expiresAt).run()
+    },
+    async revokeSpent(codeHash) {
+      await db.prepare('UPDATE provider_spent_codes SET revoked = 1 WHERE code_hash = ?').bind(codeHash).run()
+    },
+    async isSpentRevoked(codeHash) {
+      const row = await db.prepare('SELECT revoked FROM provider_spent_codes WHERE code_hash = ?').bind(codeHash).first<{ revoked: number }>()
+      return row?.revoked === 1
+    },
     async cleanup(nowS) {
-      const r = await db
-        .prepare('DELETE FROM provider_codes WHERE rowid IN (SELECT rowid FROM provider_codes WHERE expires_at <= ? LIMIT ?)')
-        .bind(nowS, cleanupChunk)
-        .run()
-      return r.meta.changes ?? 0
+      let gone = 0
+      for (const table of ['provider_codes', 'provider_spent_codes']) {
+        const r = await db
+          .prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE expires_at <= ? LIMIT ?)`)
+          .bind(nowS, cleanupChunk)
+          .run()
+        gone += r.meta.changes ?? 0
+      }
+      return gone
     },
   }
 }

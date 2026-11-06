@@ -334,7 +334,13 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const nowS = sec(Date.now())
     // Taken before any check: a code is spent by any attempt to use it, so a
     // stolen one is worth at most one guess.
-    const rec = await store.takeCode(await hashToken(code), nowS)
+    const codeHash = await hashToken(code)
+    const rec = await store.takeCode(codeHash, nowS)
+    // OAuth 2.0 §4.1.2: a code seen again means one of the two exchanges wasn't
+    // the app, so the token from the first stops working. An ID token already
+    // issued can't be recalled: it's the app's, and short-lived.
+    if (rec) await store.noteSpent(codeHash, nowS + tokenTtlS)
+    else await store.revokeSpent(codeHash)
     if (
       !rec ||
       rec.clientId !== client.id ||
@@ -363,7 +369,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
       ...(rec.nonce !== null ? { nonce: rec.nonce } : {}),
     })
     const accessToken = await ks().sign(
-      { iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, iat: nowS, exp: nowS + tokenTtlS },
+      { iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, jti: codeHash, iat: nowS, exp: nowS + tokenTtlS },
       'at+jwt',
     )
     return json({ access_token: accessToken, token_type: 'Bearer', expires_in: tokenTtlS, id_token: idToken, scope: rec.scope })
@@ -375,7 +381,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const bearer = req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
     const challenge = (error: string) => json({ error }, 401, { 'www-authenticate': `Bearer error="${error}"` })
     if (!bearer) return json({ error: 'invalid_request' }, 401, { 'www-authenticate': 'Bearer' })
-    const at = await ks().verify<{ iss?: unknown; aud?: unknown; exp?: unknown; sub?: unknown; email?: unknown; scope?: unknown; client_id?: unknown }>(bearer)
+    const at = await ks().verify<{ iss?: unknown; aud?: unknown; exp?: unknown; sub?: unknown; email?: unknown; scope?: unknown; client_id?: unknown; jti?: unknown }>(bearer)
     const nowS = sec(Date.now())
     if (
       !at ||
@@ -389,6 +395,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     ) {
       return challenge('invalid_token')
     }
+    if (typeof at.jti === 'string' && (await store.isSpentRevoked(at.jti))) return challenge('invalid_token')
     const client = await clientOf(String(at.client_id))
     if (!client || !(await admitted(at.email, client))) return challenge('invalid_token')
     return json({ ...(await claimsFor(at.email, client, at.scope.split(' '))), sub: at.sub })
