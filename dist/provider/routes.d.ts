@@ -31,6 +31,12 @@ export interface ProviderOptions {
     /** Exactly what tokens carry as `iss`, e.g. `https://login.oa.dev`. No trailing slash. */
     issuer: string;
     clients: ProviderClient[];
+    /**
+     * Clients beyond the static `clients`, which win on a clash: `clientLookup`
+     * over a `ClientRegistry`. Asked on every request, so a client it stops
+     * returning is cut off at once.
+     */
+    lookupClient?: (id: string) => Promise<ProviderClient | null>;
     /** Private RS256 JWKs; the first signs, all are published. */
     keys: SigningJwk[];
     store: ProviderStore;

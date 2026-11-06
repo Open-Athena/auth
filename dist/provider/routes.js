@@ -4,8 +4,7 @@
  * is signed in here as X" into an ID token for one of a fixed list of apps.
  *
  * Deliberately narrow (see `specs/oidc-provider.md`): authorization code with
- * PKCE S256 only, confidential clients from a static registry, exact redirect
- * URIs, no consent screen (every client is first-party), no refresh tokens.
+ * PKCE S256 only, confidential clients from a registry, exact redirect URIs, no consent screen (every client is first-party), no refresh tokens.
  * What it leaves out it refuses, rather than half-supporting.
  */
 import { b64uEncode } from '../core/base64.js';
@@ -60,6 +59,7 @@ export function oidcProviderRoutes(opts) {
     const clients = new Map(opts.clients.map(c => [c.id, c]));
     if (clients.size !== opts.clients.length)
         throw new Error('duplicate client id');
+    const clientOf = async (id) => clients.get(id) ?? (id && opts.lookupClient ? await opts.lookupClient(id) : null);
     let keys = null;
     const ks = () => (keys ??= keySet(opts.keys));
     const scopesSupported = [...STANDARD_SCOPES, ...(opts.scopes ?? [])];
@@ -121,7 +121,7 @@ export function oidcProviderRoutes(opts) {
         for (const k of new Set(q.keys()))
             if (q.getAll(k).length > 1)
                 return page(400, `repeated parameter: ${k}`);
-        const client = clients.get(q.get('client_id') ?? '');
+        const client = await clientOf(q.get('client_id') ?? '');
         if (!client)
             return page(400, 'unknown client');
         const redirectUri = q.get('redirect_uri');
@@ -246,7 +246,7 @@ export function oidcProviderRoutes(opts) {
             id = form.get('client_id');
             secret = form.get('client_secret');
         }
-        const client = clients.get(id ?? '');
+        const client = await clientOf(id ?? '');
         if (!client || !secret)
             return invalid();
         if (!same(await hashClientSecret(secret), client.secretHash))
@@ -323,7 +323,7 @@ export function oidcProviderRoutes(opts) {
             typeof at.scope !== 'string') {
             return challenge('invalid_token');
         }
-        const client = clients.get(String(at.client_id));
+        const client = await clientOf(String(at.client_id));
         if (!client || !(await admitted(at.email, client)))
             return challenge('invalid_token');
         return json({ ...(await claimsFor(at.email, client, at.scope.split(' '))), sub: at.sub });
@@ -337,7 +337,7 @@ export function oidcProviderRoutes(opts) {
         // An expired hint is still evidence of which app is asking (OIDC
         // RP-Initiated Logout §2): only the signature and issuer are checked.
         const claims = hint ? await ks().verify(hint) : null;
-        const client = claims && claims.iss === issuer ? clients.get(String(claims.aud)) : undefined;
+        const client = claims && claims.iss === issuer ? await clientOf(String(claims.aud)) : null;
         const postLogout = params.get('post_logout_redirect_uri');
         const cookies = await gate.signOutCookies(req);
         if (client && postLogout && (client.postLogoutRedirectUris ?? []).includes(postLogout)) {
