@@ -22,6 +22,7 @@
  */
 import { requestMeta } from './audit.js';
 import { RetainedLoginError } from './retained.js';
+import { safeNext } from './next.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const enc = new TextEncoder();
@@ -42,8 +43,6 @@ function sixDigitCode() {
     return String(n % 1_000_000).padStart(6, '0');
 }
 const hashCode = (email, code) => hashToken(`${email}:${code}`);
-/** Only same-origin paths, so a link's `?next=` can't become an open redirect. */
-const safeNext = (raw, fallback) => raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : fallback;
 /** A live row, or null: covers absent, already-consumed, and expired identically. */
 function usable(row, nowS) {
     if (!row || row.consumedAt !== null || row.expiresAt <= nowS)

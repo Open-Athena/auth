@@ -12,6 +12,7 @@ import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvata
 import { cleanSubject, isEmailish } from './requests.js';
 import { hashToken } from './tokens.js';
 import { hasScope } from './types.js';
+import { safeNext } from './next.js';
 import { RetainedLoginError, selectionConflict } from './retained.js';
 /**
  * Every response here is identity-shaped — who you are, which links are yours,
@@ -250,12 +251,12 @@ export function authRoutes(gate, opts = {}) {
         if (rest === '/track' && method === 'POST') {
             if (!auth)
                 return json({ ok: true }); // anonymous beacons are simply dropped
-            const { path } = await body(req);
+            const { path: raw } = await body(req);
             // A client-supplied path is untrusted input that lands in an admin's
             // table: take same-origin paths only, and cap the length.
-            if (!path || !path.startsWith('/') || path.startsWith('//') || path.length > 512) {
+            const path = typeof raw === 'string' && raw.length <= 512 ? safeNext(raw, null) : null;
+            if (!path)
                 return json({ error: 'path must be a same-origin path' }, 400);
-            }
             await gate.logView(req, auth, undefined, path);
             return json({ ok: true });
         }

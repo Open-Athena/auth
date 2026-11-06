@@ -20,6 +20,7 @@
 import { b64uEncode } from '../core/base64.js';
 import { RetainedLoginError } from '../core/retained.js';
 import { verifyRs256Jwt } from '../core/jwt.js';
+import { safeNext } from '../core/next.js';
 import { clearCookie, isSecureRequest, readCookie, sessionCookie, signSession, verifySession } from '../core/session.js';
 import { generateToken } from '../core/tokens.js';
 export const GOOGLE = {
@@ -121,7 +122,6 @@ const pkceChallenge = async (verifier) => b64uEncode(await crypto.subtle.digest(
 /** Errors an authorization response may carry that mean "sign in some other way", not "attack". */
 const SOFT_ERRORS = new Set(['login_required', 'interaction_required', 'account_selection_required', 'consent_required', 'access_denied']);
 /** Only same-origin paths, so `?next=` can't become an open redirect. */
-const safeNext = (raw) => (raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/');
 /**
  * Start the flow: mint a nonce, sign it into the state, and bounce to the
  * provider.
@@ -138,7 +138,7 @@ export function oidcStart(opts) {
     return async ({ request }) => {
         const nonce = generateToken();
         const params = new URL(request.url).searchParams;
-        const next = safeNext(params.get('next'));
+        const next = safeNext(params.get('next'), '/');
         const account = params.get('account');
         const choose = account === 'choose';
         const selected = normalizeAccountHint(account);
@@ -207,7 +207,7 @@ export function oidcCallback(opts) {
         if (sep < 0)
             return deny('bad state');
         const nonce = rest.slice(0, sep);
-        const next = safeNext(rest.slice(sep + 1));
+        const next = safeNext(rest.slice(sep + 1), '/');
         // The double-submit. A valid signature proves *we* minted this state; the
         // cookie proves it was minted for *this browser*.
         const cookieNonce = readCookieValue(request, nonceCookie);

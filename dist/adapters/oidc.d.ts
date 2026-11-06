@@ -66,6 +66,7 @@ export interface AccountHintOptions {
     accountHintCookie?: string | false;
 }
 export declare const DEFAULT_ACCOUNT_HINT_COOKIE = "oa_google_hint";
+/** Only same-origin paths, so `?next=` can't become an open redirect. */
 /**
  * Start the flow: mint a nonce, sign it into the state, and bounce to the
  * provider.
