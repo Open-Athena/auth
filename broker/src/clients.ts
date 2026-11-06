@@ -13,4 +13,10 @@ export const clients: ProviderClient[] = [
     secretHash: 'GU57XIzT1CEZ5769SCQDmkdTBYQpY9ObMPGqwZ3PoUA',
     redirectUris: ['https://dev.gcs.oa.dev/auth/oa/callback'],
   },
+  // jobs.oa.dev (`oa-jobs` Worker; `OA_LOGIN_CLIENT_SECRET` there). ~/c/oa/jobs.
+  {
+    id: 'oa-jobs',
+    secretHash: '5NgqObLwulfo8TPH0_DPSqmiGYyjrQXHwiK3OHxZ6S8',
+    redirectUris: ['https://jobs.oa.dev/auth/oa/callback'],
+  },
 ]
