@@ -26,7 +26,7 @@ const EMAILISH = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * stored (see `downscaleImage`), which also re-encodes away EXIF — so no
  * server-side image codec or resizing service is needed.
  */
-export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, email, autoGravatar = true, name, preview = true, size = 48, uploadSize = 256, id = 'oa-avatar-ref', classNames = {}, labels = {}, }) {
+export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, clearable = false, email, autoGravatar = true, name, preview = true, size = 48, uploadSize = 256, id = 'oa-avatar-ref', classNames = {}, labels = {}, }) {
     const [text, setText] = useState('');
     const [status, setStatus] = useState({ kind: 'idle' });
     // Set by an upload, a clear, or an explicit Gravatar ask: the text/email
@@ -38,9 +38,9 @@ export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, em
     // Whether this field has reported anything yet: until it has, an empty field
     // is "untouched", not "cleared" — `ProfilePanel` reads that as "keep".
     const emitted = useRef(false);
-    const emit = (v) => {
+    const emit = (v, cleared = false) => {
         emitted.current = true;
-        onChangeRef.current(v);
+        onChangeRef.current(v, cleared);
     };
     const fileRef = useRef(null);
     const trimmedEmail = email?.trim() ?? '';
@@ -115,7 +115,7 @@ export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, em
         setText('');
         setGravatarAsked(false);
         setStatus({ kind: 'idle' });
-        emit(null);
+        emit(null, true);
     }
     const hint = status.kind === 'looking'
         ? (labels.looking ?? 'Looking up…')
@@ -135,5 +135,5 @@ export function AvatarField({ endpoint = '/api/auth/avatar', value, onChange, em
                         } }), _jsx("button", { className: classNames.button, type: "button", onClick: () => fileRef.current?.click(), children: labels.upload ?? 'Upload…' }), !autoGravatar && EMAILISH.test(trimmedEmail) && !text.trim() && (_jsx("button", { className: classNames.button, type: "button", onClick: () => {
                             setPinned(false);
                             setGravatarAsked(true);
-                        }, children: labels.gravatar ?? 'Use Gravatar' })), (value || text) && (_jsx("button", { className: classNames.button, type: "button", onClick: clear, children: labels.clear ?? 'Clear' })), _jsx("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,image/webp,image/gif,image/svg+xml", hidden: true, onChange: e => void upload(e.target.files?.[0]) })] }), hint && (_jsx("span", { className: classNames.hint, role: status.kind === 'error' ? 'alert' : undefined, children: hint }))] }));
+                        }, children: labels.gravatar ?? 'Use Gravatar' })), (value || text || clearable) && (_jsx("button", { className: classNames.button, type: "button", onClick: clear, children: labels.clear ?? 'Clear' })), _jsx("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,image/webp,image/gif,image/svg+xml", hidden: true, onChange: e => void upload(e.target.files?.[0]) })] }), hint && (_jsx("span", { className: classNames.hint, role: status.kind === 'error' ? 'alert' : undefined, children: hint }))] }));
 }
