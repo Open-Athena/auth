@@ -43,7 +43,11 @@ export interface ClientRegistry {
     /** This and the rest return false if there's no such client. */
     update(id: string, changes: ClientChanges, actor: string): Promise<boolean>;
     rotate(id: string, secretHash: string, actor: string): Promise<boolean>;
+    /** Atomic rotation and audit; false if the id is missing or its hash has changed. */
+    rotateIfCurrent?(id: string, expectedHash: string, newHash: string, actor: string): Promise<boolean>;
     setDisabled(id: string, disabled: boolean, actor: string): Promise<boolean>;
+    /** Atomic state transition and audit; false if missing or already in that state. */
+    setDisabledIfChanged?(id: string, disabled: boolean, actor: string): Promise<boolean>;
     /** Newest first. */
     events(limit?: number): Promise<ClientEvent[]>;
 }

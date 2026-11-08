@@ -289,6 +289,8 @@ Tested against the OpenID Foundation's **Basic OP** conformance plan, suite **v5
 
 **Cross-app logout is not enabled.** Optional `/backchannel` and `/backchannel/d1` exports provide a strict signed logout-token receiver, replay receipts and SID revocation tombstones (`migrations/backchannel/`). This is a foundation, not automatic logout: the broker does not yet issue correlated SIDs or fan out events, and existing app sessions do not consult these tombstones. Never advertise these exports alone as global sign-out. See `specs/broker-revocation.md` for the remaining provider/RP correlation, enforcement and durable-delivery work.
 
+**Delegated broker registration.** `/provider` also exports `clientManagementRoutes` and `managementTokenAuth`: an optional hash-only, expiring machine capability scoped to exact app IDs, callback URLs and operations. Matching create retries never rotate a credential; explicit rotation uses atomic compare-and-swap and audit. Metadata responses contain no secret hashes, and browser cookies grant no access. The reference broker leaves the API disabled until configured. See [the agent-facing contract](docs/client-management.md) for wiring, secret delivery/recovery and the optional MCP boundary (not implemented).
+
 ## Minimal Demo Routes
 
 The demo's [root][demo-root] and [Vanilla][demo-vanilla] routes use the framework-free client; [Vue][demo-vue] and [React][demo-react] show their respective wrappers. Framework links navigate to separate documents so vanilla loads neither framework, and Vue and React do not load each other.

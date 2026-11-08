@@ -101,9 +101,35 @@ export function d1ClientRegistry(db) {
             const at = now();
             return change(id, 'UPDATE provider_clients SET secret_hash = ?, updated_at = ?, updated_by = ? WHERE id = ?', [secretHash, at, actor, id], 'rotate', actor, at);
         },
+        async rotateIfCurrent(id, expectedHash, newHash, actor) {
+            const at = now();
+            const [updated] = await db.batch([
+                db
+                    .prepare('UPDATE provider_clients SET secret_hash = ?, updated_at = ?, updated_by = ? WHERE id = ? AND secret_hash = ?')
+                    .bind(newHash, at, actor, id, expectedHash),
+                // Immediately follows the CAS in the same transaction; never log a failed comparison.
+                db
+                    .prepare(`INSERT INTO provider_client_events (client_id, action, actor, at, detail)
+             SELECT ?, 'rotate', ?, ?, NULL WHERE changes() = 1`)
+                    .bind(id, actor, at),
+            ]);
+            return (updated?.meta.changes ?? 0) > 0;
+        },
         setDisabled(id, disabled, actor) {
             const at = now();
             return change(id, 'UPDATE provider_clients SET disabled_at = ?, updated_at = ?, updated_by = ? WHERE id = ?', [disabled ? at : null, at, actor, id], disabled ? 'disable' : 'enable', actor, at);
+        },
+        async setDisabledIfChanged(id, disabled, actor) {
+            const at = now();
+            const [updated] = await db.batch([
+                db.prepare(`UPDATE provider_clients SET disabled_at = ?, updated_at = ?, updated_by = ?
+                    WHERE id = ? AND disabled_at IS ${disabled ? '' : 'NOT '}NULL`)
+                    .bind(disabled ? at : null, at, actor, id),
+                db.prepare(`INSERT INTO provider_client_events (client_id, action, actor, at, detail)
+                    SELECT ?, ?, ?, ?, NULL WHERE changes() = 1`)
+                    .bind(id, disabled ? 'disable' : 'enable', actor, at),
+            ]);
+            return (updated?.meta.changes ?? 0) > 0;
         },
         async events(limit = 50) {
             const { results } = await db
