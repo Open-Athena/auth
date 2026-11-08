@@ -54,20 +54,22 @@ const fields = (d: Pick<Draft, 'name' | 'redirects' | 'postLogouts'>) => `<label
 <label>Callback URLs, one per line<textarea name="redirects" rows="2" required>${esc(d.redirects)}</textarea></label>
 <label>After-logout URLs, one per line (optional)<textarea name="postLogouts" rows="1">${esc(d.postLogouts)}</textarea></label>`
 
-function clientCard(c: RegisteredClient, draft: Draft | null): string {
+function clientRows(c: RegisteredClient, draft: Draft | null): string {
   const d = draft ?? { id: c.id, name: c.name, redirects: c.redirectUris.join('\n'), postLogouts: c.postLogoutRedirectUris.join('\n') }
   const action = `/admin/clients/${encodeURIComponent(c.id)}`
-  return `<div class="client">
-<h3><code>${esc(c.id)}</code> <span>${esc(c.name)}</span>${c.disabledAt !== null ? ` <span class="tag">disabled ${esc(when(c.disabledAt))}</span>` : ''}</h3>
-<p class="muted">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</p>
-<details${draft ? ' open' : ''}><summary>Edit</summary>
-<form method="post" action="${esc(action)}">${fields(d)}<div class="actions"><button name="action" value="save">Save</button></div></form>
-</details>
-<div class="actions">
-<form method="post" action="${esc(action)}"><button class="quiet" name="action" value="${c.disabledAt === null ? 'disable' : 'enable'}">${c.disabledAt === null ? 'Disable' : 'Enable'}</button></form>
-<form method="post" action="${esc(action)}" class="actions" style="margin:0"><label class="check"><input type="checkbox" name="confirm" required> The old secret stops working now</label><button class="quiet" name="action" value="rotate">Rotate secret</button></form>
-</div>
-</div>`
+  const editor = `edit-${c.id}`
+  return `<tr class="app-row">
+<th scope="row"><span class="app-name">${esc(c.name)}</span><code class="app-id muted">${esc(c.id)}</code></th>
+<td class="callbacks">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</td>
+<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span></td>
+<td><div class="row-actions"><button type="button" class="quiet" data-edit aria-controls="${esc(editor)}" aria-expanded="${draft ? 'true' : 'false'}">Edit</button>
+<form method="post" action="${esc(action)}"><button class="quiet" name="action" value="${c.disabledAt === null ? 'disable' : 'enable'}">${c.disabledAt === null ? 'Disable' : 'Enable'}</button></form></div></td>
+</tr>
+<tr id="${esc(editor)}" class="app-editor"${draft ? '' : ' hidden'}><td colspan="4">
+<form method="post" action="${esc(action)}" class="app-fields">${fields(d)}<div class="actions"><button name="action" value="save">Save changes</button></div></form>
+<div class="secret-actions"><form method="post" action="${esc(action)}" class="row-actions"><label class="check"><input type="checkbox" name="confirm" required> The old secret stops working now</label><button class="quiet" name="action" value="rotate">Rotate secret</button></form>
+<span class="muted">Updated ${esc(when(c.updatedAt))}</span></div>
+</td></tr>`
 }
 
 export function adminRoutes({ gate, registry, staticClients, admins, redirectDomains, signInPath }: AdminOptions) {
@@ -79,15 +81,18 @@ export function adminRoutes({ gate, registry, staticClients, admins, redirectDom
     const creating = draft && !editing ? draft : { id: '', name: '', redirects: '', postLogouts: '' }
     const body = `<p class="muted">Signed in as ${esc(actor)}. Callbacks must be https under ${esc(redirectDomains.join(', '))}, or loopback.</p>
 ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
-${clients.map(c => clientCard(c, editing?.id === c.id ? editing : null)).join('\n') || '<p class="muted">None yet.</p>'}
+<div class="scroll"><table class="apps" aria-label="Registered apps"><thead><tr><th scope="col">App</th><th scope="col">Callbacks</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>
+${clients.map(c => clientRows(c, editing?.id === c.id ? editing : null)).join('\n')}
 ${staticClients
   .map(
-    c => `<div class="client"><h3><code>${esc(c.id)}</code> <span class="tag">in code</span></h3>
-<p class="muted">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</p></div>`,
+    c => `<tr class="app-row"><th scope="row"><code>${esc(c.id)}</code></th>
+<td class="callbacks">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</td><td><span class="status">In code</span></td><td class="muted">Read-only</td></tr>`,
   )
   .join('\n')}
+${clients.length + staticClients.length === 0 ? '<tr><td colspan="4" class="muted">No apps registered.</td></tr>' : ''}
+</tbody></table></div>
 <h2>Add an app</h2>
-<form method="post" action="/admin/clients">
+<form method="post" action="/admin/clients" class="app-fields create-app">
 <label>Client id<input name="id" required maxlength="63" pattern="[a-z0-9-]+" value="${esc(creating.id)}"></label>
 ${fields(creating)}
 <div class="actions"><button>Create</button></div>
@@ -102,6 +107,17 @@ ${events
 </tbody></table></div>`
     : '<p class="muted">None yet.</p>'
 }
+<script nonce="${nonce}">
+document.querySelectorAll('[data-edit]').forEach(button => {
+  button.addEventListener('click', () => {
+    const row = document.getElementById(button.getAttribute('aria-controls'))
+    const opening = button.getAttribute('aria-expanded') !== 'true'
+    row.hidden = !opening
+    button.setAttribute('aria-expanded', String(opening))
+    if (opening) row.querySelector('input').focus()
+  })
+})
+</script>
 `
     return page('Registered apps', body, error ? 400 : 200, { wide: true, headers: securityHeaders(nonce) })
   }

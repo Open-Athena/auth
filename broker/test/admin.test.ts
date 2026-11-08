@@ -3,6 +3,7 @@
  * provider, plus `oa-client.mjs`'s SQL run against the same tables.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { d1ClientRegistry, d1ProviderStore } from '../../src/adapters/d1-provider.js'
 import { d1AuditSink, d1GrantStore } from '../../src/adapters/d1.js'
 import { createGate, domainPolicy } from '../../src/index.js'
@@ -73,6 +74,19 @@ const secretOf = (html: string) => /<code id="secret">([^<]+)<\/code>/.exec(html
 const NEW = { id: 'oa-jobs', name: 'Jobs', redirects: CB, postLogouts: '' }
 
 describe('who gets in', () => {
+  it('renders compact app rows with separate collapsed editors', async () => {
+    const { get, cookieFor, registry } = setup()
+    await registry.create({ id: 'oa-jobs', name: 'Job descriptions', secretHash: 'test-only-hash', redirectUris: [CB] }, ADMIN)
+    await registry.create({ id: 'disky-gcs-dev', name: 'GCS usage (dev)', secretHash: 'test-only-hash', redirectUris: ['https://dev.gcs.oa.dev/auth/oa/callback'] }, ADMIN)
+    const html = await (await get(await cookieFor(ADMIN))).text()
+    const headings = [...html.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map(m => m[1])
+    const editors = [...html.matchAll(/<tr id="([^"]+)" class="app-editor"( hidden)?>/g)].map(m => ({ id: m[1], hidden: m[2] === ' hidden' }))
+    expect(headings).toEqual(['App', 'Callbacks', 'Status', 'Actions'])
+    expect(editors).toEqual([{ id: 'edit-disky-gcs-dev', hidden: true }, { id: 'edit-oa-jobs', hidden: true }])
+    expect([...html.matchAll(/<span class="app-name">([^<]+)<\/span>/g)].map(m => m[1])).toEqual(['GCS usage (dev)', 'Job descriptions'])
+    mkdirSync('tmp/broker-preview', { recursive: true })
+    writeFileSync('tmp/broker-preview/index.html', html)
+  })
   it('sends someone not signed in to sign in', async () => {
     const { admin } = setup()
     const res = (await admin(new Request(`${ORIGIN}/admin`)))!
@@ -167,7 +181,7 @@ describe('creating an app', () => {
     const cookie = await cookieFor(ADMIN)
     await post('/admin/clients', { ...NEW, name: '<script>x</script>' }, cookie)
     const html = await (await get(cookie)).text()
-    expect(/<h3><code>oa-jobs<\/code> <span>(.*?)<\/span>/.exec(html)?.[1]).toBe('&#60;script&#62;x&#60;/script&#62;')
+    expect(/<span class="app-name">(.*?)<\/span>/.exec(html)?.[1]).toBe('&#60;script&#62;x&#60;/script&#62;')
     expect(html).not.toContain('<script>x')
   })
 })
