@@ -29,3 +29,5 @@ CLIENT_REDIRECT_DOMAIN = "oa.dev"
 #   OIDC_SIGNING_KEY      - private RS256 JWK (`../scripts/oidc-signing-key.mjs | scripts/oa-wrangler.sh secret put OIDC_SIGNING_KEY`)
 #   GOOGLE_CLIENT_ID      - Google OAuth "Web application" client, callback https://login.oa.dev/auth/google/callback
 #   GOOGLE_CLIENT_SECRET
+# Optional (disabled when absent):
+#   CLIENT_MANAGEMENT_GRANTS - JSON array of hash-only, expiring per-app capabilities; see ../docs/client-management.md

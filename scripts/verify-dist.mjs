@@ -72,7 +72,7 @@ import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/
 import { fromGate, sessionLogRoutes, validateBatch } from '@open-athena/auth/session-log'
 import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
 import { bootSessionLog, slog } from '@open-athena/auth/session-log/client'
-import { brokerProvider, generateSigningKey, memoryProviderStore, oidcProviderRoutes } from '@open-athena/auth/provider'
+import { brokerProvider, clientManagementRoutes, managementTokenAuth, generateSigningKey, memoryProviderStore, oidcProviderRoutes } from '@open-athena/auth/provider'
 import { d1ProviderStore } from '@open-athena/auth/provider/d1'
 import { createRequire } from 'node:module'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -124,6 +124,7 @@ const checks = {
   'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
   'docs match source':            JSON.stringify(shippedDocs) === JSON.stringify(expectedDocs),
+  'client management exports':   [clientManagementRoutes, managementTokenAuth].every(f => typeof f === 'function'),
   'baseline migration shipped':  initDdl.includes('CREATE TABLE grants') && initDdl.includes('CREATE TABLE profiles'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,

@@ -1,6 +1,6 @@
 # Scoped Client Management
 
-Requested by Disky in Agent Mail message 232 and authorized to start by Ryan in auth on 2026-11-07. Status: implementing. This is an operator API, not open dynamic client registration. Production deployment and minting new management credentials remain explicit rollout steps.
+Requested by Disky in Agent Mail message 232 and authorized to start by Ryan in auth on 2026-11-07. Status: implemented and tested; hosted API activation and MCP wrapper remain separate rollout work. This is an operator API, not open dynamic client registration. Production deployment and minting new management credentials remain explicit rollout steps.
 
 ## Contract
 
@@ -17,3 +17,11 @@ MCP, if added later, is only a thin wrapper around the same authorized HTTP oper
 ## Acceptance
 
 Test authentication and exact expiry before any storage/body read; expired/missing/forged grants, malformed config, static/out-of-scope IDs, callback widening, method/media/body bounds, secret-free responses, audit attribution, matching and conflicting create retries, explicit rotation and stale CAS, and feature-disabled broker behavior. Exercise real registry SQL. No new management-token issuance, production deployment or callback-policy relaxation is implied by implementation.
+
+## Implementation and Verification
+
+`clientManagementRoutes` and `managementTokenAuth` are exported from `/provider`, with optional broker wiring at `/api/clients`. Hash-only expiring capabilities cover exact client IDs, URLs and actions; cookies grant nothing. D1 implements optional `rotateIfCurrent` and `setDisabledIfChanged` operations with conditional audit insertion in the same transaction. Custom adapters without an atomic operation receive 501 rather than an unsafe fallback. Serial metadata retries avoid extra writes; concurrent metadata edits remain last-write-wins.
+
+The 110 focused tests cover API authorization/validation, real-SQL CAS/audit and CLI failure/recovery. A review found non-string hash coercion and duplicate concurrent disable audit; both were reproduced with failing tests and fixed. Removing expiry, exact-client scope, create-hash comparison or SQL CAS guards made the corresponding regression tests fail; all mutations were restored. Full suite: 1,254 passed, two skipped; local workerd/D1 retained tests: 118 passed. Root typecheck/build and broker typecheck passed. See `docs/client-management.md` for the usable contract.
+
+After explicit direct user approval, the operator bootstrap created `oa-disky` with the production callback `https://disky.oa.dev/auth/oa/callback` and `oa-disky-dev` with `https://dev.disky.oa.dev/auth/oa/callback` plus `http://localhost:3871/auth/oa/callback`. Distinct generated secrets were installed directly as `OA_LOGIN_CLIENT_SECRET` in Pages `disky-oa` production/preview, respectively. Metadata and audit read-back passed; no plaintext was printed or saved locally. Recovery receipts contain only hashes/configuration/phases and variable names/types. No existing value was overwritten, no DNS changed, and neither application nor broker code was deployed. The management API itself remains disabled until an operator configures grants and deploys it; this provisioning used the existing operator path, not an unshipped endpoint. Disky received the separate completion handoff.

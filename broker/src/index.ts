@@ -17,7 +17,7 @@
 import { createGate, domainPolicy, safeNext } from '@open-athena/auth'
 import { d1AuditSink, d1GrantStore, d1ProfileStore } from '@open-athena/auth/d1'
 import { oidcCallback, oidcStart } from '@open-athena/auth/oidc'
-import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
+import { clientLookup, clientManagementRoutes, managementTokenAuth, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
 import { d1ClientRegistry, d1ProviderStore } from '@open-athena/auth/provider/d1'
 import { adminRoutes, parseAdmins } from './admin.js'
 import { clients } from './clients.js'
@@ -30,6 +30,8 @@ export interface Env {
   ADMIN_EMAILS?: string
   /** Callbacks `/admin` accepts must be https under this (or loopback). */
   CLIENT_REDIRECT_DOMAIN: string
+  /** JSON array of scoped, expiring management grants. Absent = API disabled. Hashes only. */
+  CLIENT_MANAGEMENT_GRANTS?: string
   SESSION_SECRET?: string
   /** A private RS256 JWK (JSON). */
   OIDC_SIGNING_KEY?: string
@@ -87,6 +89,13 @@ export default {
     const devSignin = local && env.DEV_SIGNIN === '1'
     const registry = d1ClientRegistry(env.DB)
     const admins = parseAdmins(env.ADMIN_EMAILS)
+    if (url.pathname === '/api/clients' || url.pathname.startsWith('/api/clients/')) {
+      if (!env.CLIENT_MANAGEMENT_GRANTS) return Response.json({ error: 'not found' }, { status: 404, headers: { 'cache-control': 'no-store' } })
+      let authorize: ReturnType<typeof managementTokenAuth>
+      try { authorize = managementTokenAuth(JSON.parse(env.CLIENT_MANAGEMENT_GRANTS)) }
+      catch { return Response.json({ error: 'client management unavailable' }, { status: 503, headers: { 'cache-control': 'no-store' } }) }
+      return (await clientManagementRoutes({ registry, authorize, redirectDomains: [env.CLIENT_REDIRECT_DOMAIN], reservedClientIds: clients.map(c => c.id) })(req))!
+    }
     const provider = oidcProviderRoutes({
       gate,
       issuer,
