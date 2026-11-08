@@ -1,6 +1,6 @@
 # Cross-service OA sign-in, without shared app cookies
 
-Status: architecture proposal, 2026-10-19. Requested while rolling `@open-athena/auth` out across OA services. No broker, new credentials, DNS changes or deployments are implemented or authorized by this document. This is a separate scope decision from the existing relying-party library's "not becoming an IdP" position: a central broker issuing identity to apps **would** be a downstream identity provider, even when Google remains its upstream provider.
+Status: broker implemented and deployed at `login.oa.dev` (updated 2026-11-07). `broker/` uses this package's own OIDC provider, Worker and D1, with a D1-backed client registry and `/admin`. Jobs has verified real sign-in and photo import; the demo's Basic OP conformance result is recorded in `docs/conformance-results.md`. Cross-app back-channel revocation and central directory distribution remain follow-ups. The Groups implementation is being extended with freshness-bounded snapshots (`group-snapshots.md`); no deployed policy is changed by that work. This document itself does not authorize infrastructure changes.
 
 ## What "zero tap" means
 

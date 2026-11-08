@@ -56,7 +56,13 @@ const CHECK = String.raw`
 import { authRoutes, createGate, domainPolicy, hasScope, hashToken, isBot } from '@open-athena/auth'
 import { createAuthClient, shareUrl, exchangeKeyParam, downscaleImage } from '@open-athena/auth/client'
 import { d1AuditQuery, d1AuditSink, d1GrantStore, d1RequestStore, rollupAccessLog } from '@open-athena/auth/d1'
-import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
+import { googleAccessToken, listGroupMembers, syncGroupsToAllowlist, syncGroupSnapshots } from '@open-athena/auth/google-directory'
+import { groupPolicy } from '@open-athena/auth/groups'
+import { d1GroupSnapshots } from '@open-athena/auth/groups/d1'
+import { activityFeed, activityActorFromAuth, sessionLogActivity, accessLogActivity } from '@open-athena/auth/activity'
+import { d1ActivityStore } from '@open-athena/auth/activity/d1'
+import { slackActivitySink } from '@open-athena/auth/activity/slack'
+import { discordActivitySink } from '@open-athena/auth/activity/discord'
 import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/auth/testing'
 import { fromGate, sessionLogRoutes, validateBatch } from '@open-athena/auth/session-log'
 import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
@@ -121,6 +127,8 @@ const checks = {
   'framework-free client exported': [createAuthClient, shareUrl, exchangeKeyParam, downscaleImage].every(f => typeof f === 'function'),
   'session log entrypoints':      [fromGate, sessionLogRoutes, validateBatch, d1SessionLogStore, bootSessionLog, slog].every(f => typeof f === 'function'),
   'provider entrypoints':         [brokerProvider, generateSigningKey, memoryProviderStore, oidcProviderRoutes, d1ProviderStore].every(f => typeof f === 'function'),
+  'group snapshot entrypoints':   [groupPolicy, d1GroupSnapshots, syncGroupSnapshots].every(f => typeof f === 'function'),
+  'activity entrypoints':         [activityFeed, activityActorFromAuth, sessionLogActivity, accessLogActivity, d1ActivityStore, slackActivitySink, discordActivitySink].every(f => typeof f === 'function'),
   'session log stylesheet':       readFileSync(createRequire(import.meta.url).resolve('@open-athena/auth/react/session-log.css'), 'utf8').includes('.oa-slog'),
   'client preserves target view': shareUrl('test-token', 'https://x.test/slide/3?q=1#notes') === 'https://x.test/slide/3?q=1&key=test-token#notes',
 }

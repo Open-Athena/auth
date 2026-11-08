@@ -20,6 +20,7 @@
  */
 import { b64uEncode } from '../core/base64.js'
 import type { AllowEntry, AllowlistStore } from '../core/store.js'
+import type { GroupSnapshot, GroupSnapshotStore } from '../groups/index.js'
 
 const enc = new TextEncoder()
 
@@ -246,6 +247,21 @@ export interface SyncResult {
 
 /** The allowlist `source` a synced group owns: `sync:<group>`. */
 export const syncSource = (group: string): string => `sync:${group.toLowerCase()}`
+
+/** Fetch all groups before writing; a failed listing never refreshes freshness. */
+export async function syncGroupSnapshots(
+  store: Pick<GroupSnapshotStore, 'put'>,
+  { groups, api = 'directory', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }: Omit<SyncOptions, 'groups'> & { groups: readonly string[] },
+): Promise<GroupSnapshot[]> {
+  const scope = api === 'directory' ? DIRECTORY_SCOPE : CLOUD_IDENTITY_SCOPE
+  const { accessToken } = await googleAccessToken({ key, scopes: [scope], subject, fetch, nowMs })
+  const snapshots: GroupSnapshot[] = []
+  for (const group of new Set(groups.map(g => g.toLowerCase()))) {
+    snapshots.push({ group, members: await listGroupMembers(group, { token: accessToken, api, fetch }), fetchedAt: Math.floor(nowMs / 1000) })
+  }
+  for (const snapshot of snapshots) await store.put(snapshot)
+  return snapshots
+}
 
 /**
  * One token, then per group: list → `replaceSource`. Rows carry the group's

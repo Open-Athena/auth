@@ -36,3 +36,13 @@ Group-based access; that's a separate question for the user.
 ## Downstream
 
 `jobs` becomes the first small adopter, and disky migrates when `gcs-1a` is ready. Tell the `jobs` session the dist SHA.
+
+## Implementation Phases (2026-11-07)
+
+The backend phase is implemented as optional `/activity`, `/activity/d1`, `/activity/slack` and `/activity/discord` entrypoints with `migrations/activity/`. It records replay-keyed events into actor-and-origin bursts, captures per-kind record/notify modes, exposes bounded retention and delivery leases, and supplies session/access-log bridges. Sinks edit one message per burst, not disky's app-specific staged-deletion threads. `record` does not send network requests; callers explicitly await `deliver`/`flush` or schedule them with their runtime's lifetime mechanism. No scheduler is provisioned.
+
+Actor labels use recipient subject/address, never private memo. The sink contract requires an explicit staff-only acknowledgement, which is not proof of channel membership/privacy. Applications must enforce staff authorization around any reads or settings. A remote message create can succeed before its response is lost: retry may duplicate a message, and no exactly-once guarantee is claimed. Recording policies are captured at ingestion; changes are not retroactive.
+
+Still pending after the backend phase: React admin surface and authorized read/settings routes, first-class persisted grant identity/filtering in `SessionLogWho`, reconciliation with disky's private session logger, jobs adoption and deployment. No dist SHA is available for these uncommitted changes. This spec remains active until those acceptance items are met.
+
+Verification: 15 activity tests cover real SQLite grouping/transactions/replay/retention, concurrent delivery fencing and retry, recipient-vs-memo identity, session/access bridges and mocked Slack/Discord create/edit payloads. The SQLite shim serializes transaction boundaries to model D1; this is not a live Workers concurrency test. Slack's public block validator accepted the message layout; no real Slack or Discord messages were sent.

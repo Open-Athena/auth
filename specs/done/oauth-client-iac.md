@@ -1,5 +1,7 @@
 # IaC for per-app Google OAuth clients: feasibility spike
 
+**Broker-app update (2026-11-07):** the per-deployment Google-client guidance below applies to apps authenticating directly with Google. Apps using OA's OIDC provider at `login.oa.dev` instead register their own broker client and callback URLs in the [broker admin console][broker-admin]; they do not create a new GCP OAuth client. The broker alone owns its upstream Google client. Registration is admin-only, not public self-service, and each app/environment still needs its own broker credentials and local authorization policy. See the [broker guide][broker-guide].
+
 *(Spike for the `google-oidc` work item's "OAuth client provisioning" line: each deployed consumer — `marin-gcs-usage`, the `auth.oa.dev` demo, future apps — needs its own Google "Web application" OAuth 2.0 client. The adoption pain, verbatim: "I always seem to hit a wall around that part of it, a bunch of unintuitive cloud-console clicks." This asks whether that wall can be turned into `terraform apply` / a `gcloud` script. Researched 2026-09-19 against current primary sources; fetched pages saved under `tmp/`.)*
 
 ## Feasibility verdict
@@ -73,6 +75,8 @@ If not using the script, the irreducible path per app is:
 The only cost of per-app is the manual create per deployment, which the checklist + script above is designed to absorb.
 
 [ae]: https://apievangelist.com/2026/09/08/google-oauth-console-only-service-accounts-scriptable/
+[broker-admin]: https://login.oa.dev/admin
+[broker-guide]: ../../broker/README.md
 [iapdep]: https://cloud.google.com/iap/docs/deprecations/migrate-oauth-client
 [tfwf]: https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_oauth_client
 [tfwfcred]: https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_oauth_client_credential

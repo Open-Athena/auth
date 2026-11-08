@@ -8,6 +8,7 @@ import {
   googleAccessToken,
   listGroupMembers,
   syncGroupsToAllowlist,
+  syncGroupSnapshots,
 } from '../src/adapters/google-directory.js'
 import { b64uDecodeBytes, b64uDecodeString } from '../src/core/base64.js'
 import { allowlistPolicy } from '../src/core/policy.js'
@@ -277,5 +278,36 @@ describe('syncGroupsToAllowlist', () => {
       syncGroupsToAllowlist(store, { ...opts, fetch: fakeGoogle({ [membersUrl('board@x.test')]: { status: 500 } }).fetch }),
     ).rejects.toThrow('/admin/directory/v1/groups/board%40x.test/members: HTTP 500 denied')
     expect(await store.list()).toEqual([row('bo@x.test', ['board'], 'board@x.test')])
+  })
+})
+
+describe('syncGroupSnapshots', () => {
+  it('fetches all groups before writing, de-duplicates group names, and records successful empty results', async () => {
+    const writes: unknown[] = []
+    const g = fakeGoogle({
+      [membersUrl('owners@x.test')]: { members: [{ email: 'Bo@x.test', type: 'USER', status: 'ACTIVE' }] },
+      [membersUrl('empty@x.test')]: {},
+    })
+    const expected = [
+      { group: 'owners@x.test', members: ['bo@x.test'], fetchedAt: IAT },
+      { group: 'empty@x.test', members: [], fetchedAt: IAT },
+    ]
+    expect(await syncGroupSnapshots({ put: async snapshot => {
+      expect(g.urls).toEqual([GOOGLE_TOKEN_URL, membersUrl('owners@x.test'), membersUrl('empty@x.test')])
+      writes.push(snapshot)
+    } }, { key: saKey, groups: ['Owners@x.test', 'owners@x.test', 'empty@x.test'], fetch: g.fetch, nowMs: NOW_MS })).toEqual(expected)
+    expect(writes).toEqual(expected)
+  })
+
+  it('writes nothing if a later group listing fails', async () => {
+    const writes: unknown[] = []
+    const g = fakeGoogle({
+      [membersUrl('owners@x.test')]: { members: [] },
+      [membersUrl('staff@x.test')]: { status: 403 },
+    })
+    await expect(syncGroupSnapshots({ put: async snapshot => { writes.push(snapshot) } }, {
+      key: saKey, groups: ['owners@x.test', 'staff@x.test'], fetch: g.fetch, nowMs: NOW_MS,
+    })).rejects.toThrow('/admin/directory/v1/groups/staff%40x.test/members: HTTP 403 denied')
+    expect(writes).toEqual([])
   })
 })

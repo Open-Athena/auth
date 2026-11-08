@@ -48,6 +48,30 @@
       "types": "./dist/adapters/google-directory.d.ts",
       "default": "./dist/adapters/google-directory.js"
     },
+    "./groups": {
+      "types": "./dist/groups/index.d.ts",
+      "default": "./dist/groups/index.js"
+    },
+    "./groups/d1": {
+      "types": "./dist/adapters/d1-groups.d.ts",
+      "default": "./dist/adapters/d1-groups.js"
+    },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "default": "./dist/activity/index.js"
+    },
+    "./activity/d1": {
+      "types": "./dist/adapters/d1-activity.d.ts",
+      "default": "./dist/adapters/d1-activity.js"
+    },
+    "./activity/slack": {
+      "types": "./dist/activity/slack.d.ts",
+      "default": "./dist/activity/slack.js"
+    },
+    "./activity/discord": {
+      "types": "./dist/activity/discord.d.ts",
+      "default": "./dist/activity/discord.js"
+    },
     "./session-log": {
       "types": "./dist/session-log/index.d.ts",
       "default": "./dist/session-log/index.js"
