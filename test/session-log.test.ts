@@ -172,7 +172,8 @@ async function setup(o: { on?: string | null; routes?: Partial<SessionLogRoutesO
     onSwitch: ({ prior, row }) => void switches.push({ prior, row }),
     ...o.routes,
   })
-  const viewer = (await gate.mint({ email: 'ann@example.test', scopes: ['view'], createdBy: 'test' })).token
+  const viewerGrant = await gate.mint({ email: 'ann@example.test', scopes: ['view'], createdBy: 'test' })
+  const viewer = viewerGrant.token
   const adminCookie = (await gate.signIn('ops@example.test', new Request(HOST), NOW))!.cookie.split(';')[0]!
   const call = async (
     method: string,
@@ -202,7 +203,7 @@ async function setup(o: { on?: string | null; routes?: Partial<SessionLogRoutesO
     if (st !== 200) throw new Error(`switch PUT: ${st}`)
     switches.length = 0
   }
-  return { db, raw, gate, handle, call, put, viewer, switches }
+  return { db, raw, gate, handle, call, put, viewer, viewerGrantId: viewerGrant.grant.id, switches }
 }
 
 describe('who set the switch, for a link holding the admin scope', () => {
@@ -412,7 +413,7 @@ describe('GET <base> (the boot config)', () => {
 
 describe('POST <base>', () => {
   it('stores a batch under the request identity (never the client’s) and summarizes the session', async () => {
-    const { call, viewer, raw } = await setup()
+    const { call, viewer, viewerGrantId, raw } = await setup()
     expect(await call('POST', '', { token: viewer, body: batch() })).toEqual([204, null])
     expect(
       await call('POST', '', {
@@ -441,6 +442,8 @@ describe('POST <base>', () => {
         n_batches: 2,
         first_url: '/?d=2026-10-10',
         received_ts: NOW / 1000,
+        grant_id: viewerGrantId,
+        subject_name: null,
       },
     ])
     expect(raw.prepare('SELECT sid, pid, seq, received_ts, first_ms, last_ms, n FROM session_log_batches ORDER BY seq').all()).toEqual([
@@ -519,7 +522,7 @@ describe('POST <base>', () => {
       await post(batch({ seq: 1, events: [ev(NOW, 'click', { l: 'only' })] })),
     ]).toEqual([204, 204])
     await Promise.all(pending)
-    expect(stored).toEqual([{ sid: 'sid-aaaaaa', kinds: ['start', 'movie.queued'], who: { email: 'ann@example.test', via: 'grant' } }])
+    expect(stored).toEqual([{ sid: 'sid-aaaaaa', kinds: ['start', 'movie.queued'], who: { email: 'ann@example.test', via: 'grant', grantId: s.viewerGrantId } }])
     expect(s.raw.prepare('SELECT seq, events FROM session_log_batches').all()).toEqual([
       { seq: 0, events: JSON.stringify([{ t: NOW, k: 'start', u: '/' }, { t: NOW, k: 'movie.queued', query: 'q=1' }]) },
     ])
@@ -574,7 +577,7 @@ describe('session list pages (keyset on last_ms desc, sid)', () => {
    *  have errors; even ones are bob's. */
   async function seeded(n: number) {
     const s = await setup({ on: null })
-    const ins = s.raw.prepare('INSERT INTO session_log VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    const ins = s.raw.prepare('INSERT INTO session_log (sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     for (let i = 0; i < n; i++) {
       const last = i >= 4 && i <= 6 ? NOW - 4000 : NOW - i * 1000
       ins.run(`sid-s${String(i).padStart(4, '0')}`, i % 2 ? 'ann@example.test' : 'bob@example.test', 'sso', 'b', null, last - 500, last, 1, i % 2, 1, null, NOW / 1000)
@@ -667,7 +670,7 @@ describe('session list pages (keyset on last_ms desc, sid)', () => {
 
 describe('admin reads', () => {
   it('lists sessions (filters) and returns one session’s events in time order — admins only', async () => {
-    const { call, viewer, gate } = await setup()
+    const { call, viewer, viewerGrantId, gate } = await setup()
     const other = (await gate.mint({ email: 'cat@example.test', scopes: ['view'], createdBy: 'test' })).token
     await call('POST', '', { token: viewer, body: batch({ events: [ev(NOW - 5000, 'start', { u: '/' }), ev(NOW - 1000, 'nav', { u: '/a' })] }) })
     // A reload: the same tab's sid, a new page load; its clock interleaves.
@@ -696,6 +699,7 @@ describe('admin reads', () => {
           sid: 'sid-aaaaaa',
           email: 'ann@example.test',
           via: 'grant',
+          grant_id: viewerGrantId,
           build: 'abc1234567',
           ua: 'UA/1',
           started_ms: NOW - 5000,

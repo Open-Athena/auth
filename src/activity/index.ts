@@ -18,6 +18,7 @@ import { BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityK
 export * from './types.js'
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js'
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js'
+export { activityRoutes, type ActivityRoutesOptions } from './routes.js'
 
 export interface ActivityFeedOptions {
   store: ActivityStore

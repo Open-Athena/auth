@@ -12,6 +12,7 @@
 import { fromGate, sessionLogRoutes } from '@open-athena/auth/session-log'
 import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
 import { type Env, REQUESTS_SCOPE, gates } from '../../_lib/gates.js'
+import { demoActivity } from '../../_lib/activity.js'
 
 interface Ctx {
   request: Request
@@ -33,6 +34,8 @@ const routes = (env: Env) => {
     },
     requireAdmin: req => fromGate(gates(envOf!, req).adminGate, { adminScope: REQUESTS_SCOPE }).requireAdmin(req),
     appEvents: { 'demo.mint': ['scopes', 'expires'] },
+    onStored: input => envOf!.ACTIVITY_ENABLED === '1' ? demoActivity(envOf!).hooks.onStored(input) : undefined,
+    onPurge: cutoff => envOf!.ACTIVITY_ENABLED === '1' ? demoActivity(envOf!).hooks.onPurge(cutoff) : undefined,
   }))
 }
 

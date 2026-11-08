@@ -28,12 +28,15 @@ export interface D1SessionLogOptions {
 
 const missingTable = (e: unknown): boolean => /no such table/.test(String((e as Error)?.message))
 
-/** Run `fn`, turning a missing table into `SessionLogNotSetUp`. */
+/** Run `fn`, distinguishing a missing track from an unapplied actor migration. */
 async function tables<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (e) {
     if (missingTable(e)) throw new SessionLogNotSetUp()
+    if (/(?:no such column:\s*(?:session_log\.)?|has no column named\s*)(?:grant_id|subject_name)\b/i.test(String((e as Error)?.message))) {
+      throw new Error('session log schema is outdated: apply migrations/session-log/0002_actor.sql', { cause: e })
+    }
     throw e
   }
 }
@@ -50,12 +53,21 @@ const BEHIND = '(last_ms < ? OR (last_ms = ? AND sid > ?))'
 const keyArgs = (c: Cursor): unknown[] => [c.lastMs, c.lastMs, c.sid]
 const whereSql = (w: string[]): string => (w.length ? ` WHERE ${w.join(' AND ')}` : '')
 
+const SESSION_COLUMNS = 'sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts, grant_id, subject_name'
+type StoredSessionRow = Omit<SessionRow, 'grant_id' | 'subject_name'> & { grant_id: string | null; subject_name: string | null }
+
+/** Keep absent actor fields out of the wire shape, preserving older JSON fixtures. */
+function sessionRow({ grant_id, subject_name, ...row }: StoredSessionRow): SessionRow {
+  return { ...row, ...(grant_id === null ? {} : { grant_id }), ...(subject_name === null ? {} : { subject_name }) }
+}
+
 function filterSql(f: SessionFilter): { where: string[]; args: unknown[] } {
   const where: string[] = []
   const args: unknown[] = []
   if (f.email) {
-    where.push("LOWER(COALESCE(email, '')) LIKE ?")
-    args.push(`%${f.email.toLowerCase()}%`)
+    where.push("(LOWER(COALESCE(email, '')) LIKE ? OR LOWER(COALESCE(subject_name, '')) LIKE ? OR LOWER(COALESCE(grant_id, '')) LIKE ?)")
+    const pattern = `%${f.email.toLowerCase()}%`
+    args.push(pattern, pattern, pattern)
   }
   if (f.since !== undefined) {
     where.push('last_ms >= ?')
@@ -106,10 +118,11 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
             .bind(b.sid, b.pid, b.seq, nowS, first, last, b.events.length, JSON.stringify(b.events)),
           db
             .prepare(
-              `INSERT INTO session_log (sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts)
-               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11 WHERE changes() > 0
+              `INSERT INTO session_log (sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts, grant_id, subject_name)
+               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13 WHERE changes() > 0
                ON CONFLICT (sid) DO UPDATE SET
-                 email = COALESCE(excluded.email, email), via = excluded.via, build = excluded.build,
+                 email = excluded.email, via = excluded.via, build = excluded.build,
+                 grant_id = excluded.grant_id, subject_name = excluded.subject_name,
                  ua = COALESCE(excluded.ua, ua),
                  started_ms = MIN(started_ms, excluded.started_ms), last_ms = MAX(last_ms, excluded.last_ms),
                  n_events = n_events + excluded.n_events, n_errors = n_errors + excluded.n_errors,
@@ -128,6 +141,8 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
               errors,
               firstUrl(b.events),
               nowS,
+              who.grantId ?? null,
+              who.subjectName ?? null,
             ),
         ])
         return ins?.meta.changes ? 'stored' : 'duplicate'
@@ -182,10 +197,11 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
           const w = c ? [...where, dir === 'after' ? BEHIND : AHEAD] : where
           const order = dir === 'after' ? 'last_ms DESC, sid ASC' : 'last_ms ASC, sid DESC'
           const r = await db
-            .prepare(`SELECT * FROM session_log${whereSql(w)} ORDER BY ${order} LIMIT ${limit}`)
+            .prepare(`SELECT ${SESSION_COLUMNS} FROM session_log${whereSql(w)} ORDER BY ${order} LIMIT ${limit}`)
             .bind(...args, ...(c ? keyArgs(c) : []))
-            .all<SessionRow>()
-          return dir === 'after' ? r.results : r.results.reverse()
+            .all<StoredSessionRow>()
+          const rows = r.results.map(sessionRow)
+          return dir === 'after' ? rows : rows.reverse()
         }
         let rows = f.before ? await page(f.before, 'before') : await page(f.after, 'after')
         if (f.before && rows.length < limit) rows = await page(undefined, 'after')
@@ -217,7 +233,8 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
     /** A session's row and its events, flattened across batches: by `t`, ties by page load, batch and position. */
     sessionDetail: sid =>
       tables(async (): Promise<SessionDetail | null> => {
-        const session = await db.prepare('SELECT * FROM session_log WHERE sid = ?').bind(sid).first<SessionRow>()
+        const stored = await db.prepare(`SELECT ${SESSION_COLUMNS} FROM session_log WHERE sid = ?`).bind(sid).first<StoredSessionRow>()
+        const session = stored ? sessionRow(stored) : null
         if (!session) return null
         const rows = await db
           .prepare('SELECT pid, seq, events FROM session_log_batches WHERE sid = ? ORDER BY first_ms, pid, seq')

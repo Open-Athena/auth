@@ -246,7 +246,7 @@ function Console({ whoami }: { whoami: Whoami }) {
           description={
             <p className="muted">
               Records what signed-in visitors do here (pages, clicks on controls, requests, errors), to replay a reported
-              bug at <Link to="/admin/sessions">/admin/sessions</Link>. Off by default; it turns itself off after the
+              bug at <Link to="/admin/sessions">/admin/sessions</Link>. <Link to="/admin/activity">Activity feed</Link>. Off by default; it turns itself off after the
               chosen day. Staff only, like the request queue: a session names its visitor.
             </p>
           }

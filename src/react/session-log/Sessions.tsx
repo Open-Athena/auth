@@ -33,15 +33,16 @@ const plainLink: RenderLink = ({ href, className, children }) => (
   </a>
 )
 
-/** Who a session was, by default: the address, else "anonymous", and a share-link session is tagged as such. */
-export function DefaultViewer({ s }: { s: Pick<SessionRow, 'email' | 'via'> }) {
+/** Recipient name, then address, then grant ID; a share-link session is tagged as such. */
+export function DefaultViewer({ s }: { s: Pick<SessionRow, 'email' | 'via' | 'grant_id' | 'subject_name'> }) {
+  const recipient = s.subject_name?.trim() || s.email || (s.grant_id ? `grant:${s.grant_id}` : null)
   return (
     <span className="oa-slog-who">
-      {s.email ? <span>{s.email}</span> : s.via !== 'grant' && <em>anonymous</em>}
+      {recipient ? <span>{recipient}</span> : s.via !== 'grant' && <em>anonymous</em>}
       {s.via === 'grant' && (
         <>
-          {s.email && <span className="oa-slog-dim"> · </span>}
-          <span className="oa-slog-guest">share link{s.email ? '' : ', no address'}</span>
+          {recipient && <span className="oa-slog-dim"> · </span>}
+          <span className="oa-slog-guest">share link{recipient ? '' : ', no address'}</span>
         </>
       )}
     </span>
@@ -50,6 +51,7 @@ export function DefaultViewer({ s }: { s: Pick<SessionRow, 'email' | 'via'> }) {
 
 /** The list's filters and page, as its URL would hold them (`u`, `since`, `err`, `after` / `before`). */
 export interface SessionListParams {
+  /** Address, recipient name or grant ID substring (the API's `email` parameter). */
   email: string
   since: string
   errors: boolean
@@ -73,7 +75,7 @@ export interface SessionListProps {
   className?: string
 }
 
-/** Sessions, most recently active first, 50 a page, filterable by address, start date and errors. */
+/** Sessions, most recently active first, 50 a page, filterable by recipient identity, start date and errors. */
 export function SessionList({
   endpoint = '/api/session-log',
   params: controlled,
@@ -110,7 +112,7 @@ export function SessionList({
             data-lpignore="true"
             value={params.email}
             onChange={e => set({ email: e.target.value })}
-            placeholder="address contains…"
+            placeholder="name, address or grant ID…"
             size={22}
           />
         </label>

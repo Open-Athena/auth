@@ -27,8 +27,9 @@ export interface FromGateOptions {
 
 /**
  * `identify` and `requireAdmin` from an `@open-athena/auth` gate. A link
- * session is logged under its bound address when it has one (`via: 'grant'`),
- * else with no address; an SSO session under its email (`via: 'sso'`).
+ * session carries its grant ID and recipient subject name (`via: 'grant'`),
+ * plus its bound address when present; an SSO session uses its email (`via: 'sso'`).
+ * Private grant memos are never identity fields.
  */
 export function fromGate(gate: Gate, opts: FromGateOptions = {}) {
   const { adminScope = 'admin', anonymous = false } = opts
@@ -38,7 +39,14 @@ export function fromGate(gate: Gate, opts: FromGateOptions = {}) {
     async identify(req: Request): Promise<SessionLogWho | null> {
       const a = (await auth(req)).auth
       if (!a) return anonymous ? { email: null, via: 'public' } : null
-      return a.kind === 'sso' ? { email: a.email, via: 'sso' } : { email: a.grant.email, via: 'grant' }
+      if (a.kind === 'sso') return { email: a.email, via: 'sso' }
+      const subjectName = a.grant.subject?.name?.trim()
+      return {
+        email: a.grant.email,
+        via: 'grant',
+        grantId: a.grant.id,
+        ...(subjectName ? { subjectName } : {}),
+      }
     },
     async requireAdmin(req: Request): Promise<{ who: string } | Response> {
       const result = await auth(req)

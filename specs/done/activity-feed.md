@@ -2,6 +2,8 @@
 
 *(Requested from `jobs.oa.dev`, `~/c/oa/jobs`, 2026-11-06.)*
 
+Status: library implementation complete, 2026-11-07. Consumer rollout is tracked in `docs/activity-adoption.md`; no consumer deployment or production migration is claimed.
+
 ## Context
 
 The user wants what disky does in its `#*-admin` Slack channels across projects, starting with `jobs.oa.dev`: when someone we shared with shows up, staff hear about it, and can read what they looked at.
@@ -43,6 +45,10 @@ The backend phase is implemented as optional `/activity`, `/activity/d1`, `/acti
 
 Actor labels use recipient subject/address, never private memo. The sink contract requires an explicit staff-only acknowledgement, which is not proof of channel membership/privacy. Applications must enforce staff authorization around any reads or settings. A remote message create can succeed before its response is lost: retry may duplicate a message, and no exactly-once guarantee is claimed. Recording policies are captured at ingestion; changes are not retroactive.
 
-Still pending after the backend phase: React admin surface and authorized read/settings routes, first-class persisted grant identity/filtering in `SessionLogWho`, reconciliation with disky's private session logger, jobs adoption and deployment. No dist SHA is available for these uncommitted changes. This spec remains active until those acceptance items are met.
+Completed next: `activityRoutes` staff-only list/detail/settings with exact-origin mutation protection and bounded JSON; React `ActivityAdmin`/list/settings; trusted grant/recipient identity in session logs, recipient-first rendering and filtering. Apply session-log `0002_actor.sql` once before deploying this version. The demo adds a staff-only `/admin/activity`, with record-only source hooks opt-in after its migrations. No public demo sandbox gains access to staff activity.
+
+Disky's root owner confirmed its private logger, feed and staged-deletion hooks remain app-owned and unchanged until its reconciliation/adoption step. Jobs adoption and both deployments remain downstream work, not a missing library implementation. No production flags or external notification sinks were enabled here. Follow `docs/activity-adoption.md` and the final CI-verified dist handoff.
 
 Verification: 15 activity tests cover real SQLite grouping/transactions/replay/retention, concurrent delivery fencing and retry, recipient-vs-memo identity, session/access bridges and mocked Slack/Discord create/edit payloads. The SQLite shim serializes transaction boundaries to model D1; this is not a live Workers concurrency test. Slack's public block validator accepted the message layout; no real Slack or Discord messages were sent.
+
+Further tests cover authorization before storage, invalid admin-hook returns failing closed, CSRF, settings validation/body limits, filter/detail behavior and React loading/error/empty/settings states. Playwright exercises real activity routes with local SQLite, filters, details and policy writes on desktop/light/mobile. Screenshots caught the initial dark-text-on-dark-host bug; paired surface/text themes were fixed and screenshots rechecked. User Chrome transport was unavailable; Playwright screenshots are the browser evidence, not a claim of checking the signed-in production UI.

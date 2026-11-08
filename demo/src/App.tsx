@@ -8,12 +8,14 @@ import { Privacy } from './pages/Privacy.js'
 import { AddAccount } from './pages/AddAccount.js'
 import { Profile } from './pages/Profile.js'
 import { Sessions } from './pages/Sessions.js'
+import { Activity } from './pages/Activity.js'
 import { Link, Router, useNavigate, usePath } from './router.js'
 
 const ROUTES: Record<string, () => ReactElement> = {
   '/': Home,
   '/dashboard': Dashboard,
   '/admin': Admin,
+  '/admin/activity': Activity,
   '/privacy': Privacy,
   '/profile': Profile,
   '/signin': AddAccount,

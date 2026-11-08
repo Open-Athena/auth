@@ -15,6 +15,8 @@ import type { RetainedLimits } from '@open-athena/auth'
 
 export interface Env {
   DB: D1Database
+  /** Opt in after applying migrations/activity/; the public demo never posts to external sinks. */
+  ACTIVITY_ENABLED?: string
   SESSION_SECRET?: string
   /** Sending-only Resend key. Absent = the demo shows codes and links instead of mailing them. */
   RESEND_API_KEY?: string

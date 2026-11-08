@@ -6,7 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FOREVER_MS, type SessionPage, type SwitchState } from '../../src/core/session-log-shape.js'
-import { SessionList, SessionLogSwitch, SessionLogSwitchView, type SessionLogSwitchViewProps } from '../../src/react/session-log/index.js'
+import { DefaultViewer, SessionList, SessionLogSwitch, SessionLogSwitchView, type SessionLogSwitchViewProps, SessionView } from '../../src/react/session-log/index.js'
 import { renderWithQuery, stubFetch } from './helpers.js'
 
 const realFetch = globalThis.fetch
@@ -90,6 +90,28 @@ describe('SessionLogSwitch', () => {
   })
 })
 
+describe('DefaultViewer identity', () => {
+  it('prefers the actual recipient, then address/ID and legacy anonymous fallbacks, never the private memo', () => {
+    const render = (identity: Parameters<typeof DefaultViewer>[0]['s']) =>
+      renderToStaticMarkup(createElement(DefaultViewer, { s: { ...identity, ...{ name: 'Private staff memo' } } }))
+    const label = (recipient: string) => `<span class="oa-slog-who"><span>${recipient}</span><span class="oa-slog-dim"> · </span><span class="oa-slog-guest">share link</span></span>`
+    expect([
+      render({ email: null, via: 'grant', grant_id: 'link-123', subject_name: 'Ada Recipient' }),
+      render({ email: 'bound@example.test', via: 'grant', grant_id: 'link-123', subject_name: 'Ada Recipient' }),
+      render({ email: 'bound@example.test', via: 'grant', grant_id: 'link-123', subject_name: '   ' }),
+      render({ email: null, via: 'grant', grant_id: 'link-123' }),
+      render({ email: null, via: 'grant' }),
+      render({ email: 'ops@example.test', via: 'sso' }),
+      render({ email: null, via: 'public' }),
+    ]).toEqual([
+      label('Ada Recipient'), label('Ada Recipient'), label('bound@example.test'), label('grant:link-123'),
+      '<span class="oa-slog-who"><span class="oa-slog-guest">share link, no address</span></span>',
+      '<span class="oa-slog-who"><span>ops@example.test</span></span>',
+      '<span class="oa-slog-who"><em>anonymous</em></span>',
+    ])
+  })
+})
+
 describe('SessionList', () => {
   const T = Date.UTC(2026, 9, 12, 15)
   const row = (sid: string, email: string | null, via: string, errors = 0) => ({
@@ -133,5 +155,26 @@ describe('SessionList', () => {
     ])
     await userEvent.click(screen.getByRole('checkbox', { name: 'with errors' }))
     await waitFor(() => expect(calls.map(c => c.url)).toEqual(['/api/session-log/sessions', '/api/session-log/sessions?errors=1']))
+  })
+
+  it('renders the named recipient for list and detail and sends the viewer search through the existing email parameter', async () => {
+    const session = { ...row('sid-namedaa', 'bound@example.test', 'grant'), grant_id: 'link-123', subject_name: 'Ada Recipient' }
+    const calls = stubFetch({
+      '/api/session-log/sessions': { status: 200, body: { ...page, sessions: [session], total: 1 } },
+      '/api/session-log/sessions/sid-namedaa': { status: 200, body: { session, events: [] } },
+    })
+    renderWithQuery(<><SessionList sessionHref={sid => `/admin/sessions/${sid}`} /><SessionView sid="sid-namedaa" /></>)
+    const heading = await screen.findByRole('heading', { level: 1 })
+    const table = screen.getAllByRole('table')[0]!
+    expect([within(table).getAllByRole('cell')[0]!.textContent, heading.textContent]).toEqual([
+      'Ada Recipient · share link', 'Ada Recipient · share link',
+    ])
+    const search = screen.getByRole('searchbox', { name: 'viewer' })
+    expect(search.getAttribute('placeholder')).toBe('name, address or grant ID…')
+    await userEvent.click(search)
+    await userEvent.paste('Ada Recipient')
+    await waitFor(() => expect(calls.map(c => c.url)).toEqual([
+      '/api/session-log/sessions', '/api/session-log/sessions/sid-namedaa', '/api/session-log/sessions?email=Ada+Recipient',
+    ]))
   })
 })
