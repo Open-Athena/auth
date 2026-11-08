@@ -130,6 +130,8 @@ export default {
       case '/signin': {
         const next = authorizeNext(url.searchParams.get('next'))
         if (!next) return page('Nothing to sign in to', '<p>This page is reached from an app\'s sign-in.</p>', 400)
+        const prompts = new Set((url.searchParams.get('prompt') ?? '').split(' ').filter(Boolean))
+        if (prompts.has('login')) return new Response('Verified authentication freshness is not supported.\n', { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
         const back = `/signin/return?next=${encodeURIComponent(next)}`
         if (devSignin) return redirect(`/dev/signin?next=${encodeURIComponent(back)}`)
         if (!google()) return page('Sign-in is not configured', '<p class="muted">GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set.</p>', 503)
@@ -137,8 +139,7 @@ export default {
         start.searchParams.set('next', back)
         const hint = url.searchParams.get('login_hint')
         if (hint) start.searchParams.set('login_hint', hint)
-        // A forced sign-in or an account choice: Google's chooser either way.
-        if (url.searchParams.has('prompt')) start.searchParams.set('account', 'choose')
+        if (prompts.has('select_account')) start.searchParams.set('account', 'choose')
         return redirect(`${start.pathname}${start.search}`)
       }
       case '/signin/return': {

@@ -293,43 +293,28 @@ describe('sign-in through the broker', () => {
 })
 
 describe('prompt and max_age', () => {
-  it('prompt=login sends a signed-in person to sign in again, and an older session can\'t satisfy it', async () => {
+  it('prompt=login fails closed without verified reauthentication evidence', async () => {
     const w = await world()
     const b = w.browser()
     await w.signInAtBroker(b, 'ada@openathena.ai')
     const { challenge } = await pkce()
     at(10)
     const first = await b.request(authorizeUrl({ code_challenge: challenge, code_challenge_method: 'S256', prompt: 'login' }))
-    const login = new URL(first.headers.get('location')!)
-    expect(`${login.origin}${login.pathname}`).toBe('https://login.test/signin')
-    expect(login.searchParams.get('prompt')).toBe('login')
-    const next = new URL(login.searchParams.get('next')!, ISSUER)
-    expect([next.searchParams.get('prompt'), next.searchParams.get('oa_login_after')]).toEqual([null, String(T0 / 1000 + 10)])
-
-    // Back without signing in again: still the sign-in page.
-    const again = await b.request(next.toString())
-    expect(new URL(again.headers.get('location')!).pathname).toBe('/signin')
-
-    at(20)
-    await w.signInAtBroker(b, 'ada@openathena.ai')
-    const done = await b.request(next.toString())
-    const { to, params } = queryOf(done)
-    expect([to, Object.keys(params).sort()]).toEqual(['https://a.test/auth/cb', ['code', 'iss', 'state']])
+    expect(queryOf(first)).toEqual({ to: 'https://a.test/auth/cb', params: { error: 'login_required', error_description: 'Verified authentication freshness is not supported', state: 's1', iss: ISSUER } })
   })
 
-  it('max_age past the sign-in is login_required when silent, and its auth_time is the sign-in\'s', async () => {
+  it('max_age refuses both old and recent local sessions without authentication-time evidence', async () => {
     const w = await world()
     const b = w.browser()
     await w.signInAtBroker(b, 'ada@openathena.ai')
-    const { verifier, challenge } = await pkce()
+    const { challenge } = await pkce()
     at(100)
     const stale = await b.request(authorizeUrl({ code_challenge: challenge, code_challenge_method: 'S256', prompt: 'none', max_age: '60' }))
-    expect(queryOf(stale)).toEqual({ to: 'https://a.test/auth/cb', params: { error: 'login_required', state: 's1', iss: ISSUER } })
+    const expected = { to: 'https://a.test/auth/cb', params: { error: 'login_required', error_description: 'Verified authentication freshness is not supported', state: 's1', iss: ISSUER } }
+    expect(queryOf(stale)).toEqual(expected)
 
     const fresh = await b.request(authorizeUrl({ code_challenge: challenge, code_challenge_method: 'S256', prompt: 'none', max_age: '120' }))
-    const code = queryOf(fresh).params.code!
-    const res = await w.provider(tokenRequest({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret' }))
-    expect(claimsOf(((await res!.json()) as { id_token: string }).id_token).auth_time).toBe(T0 / 1000)
+    expect(queryOf(fresh)).toEqual(expected)
   })
 
   it('select_account goes to the chooser once, then on with whoever was chosen', async () => {
@@ -389,7 +374,6 @@ describe('tokens', () => {
       aud: 'app-a',
       iat: nowS,
       exp: nowS + 300,
-      auth_time: nowS,
       nonce: 'n-1',
     })
     const ui = await w.provider(new Request(`${ISSUER}/oidc/userinfo`, { headers: { authorization: `Bearer ${body.access_token}` } }))
@@ -407,7 +391,7 @@ describe('tokens', () => {
     const res = await b.request(authorizeUrl({ code_challenge: challenge, code_challenge_method: 'S256', scope: 'openid groups' }))
     const tok = await w.provider(tokenRequest({ grant_type: 'authorization_code', code: queryOf(res).params.code!, code_verifier: verifier, redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret' }))
     const claims = claimsOf(((await tok!.json()) as { id_token: string }).id_token)
-    expect(Object.keys(claims).sort()).toEqual(['aud', 'auth_time', 'exp', 'groups', 'iat', 'iss', 'sub'])
+    expect(Object.keys(claims).sort()).toEqual(['aud', 'exp', 'groups', 'iat', 'iss', 'sub'])
   })
 
   it('the same person has the same sub at every app, and different people differ', async () => {
@@ -670,7 +654,7 @@ describe('the picture claim', () => {
     await w.brokerProfiles.put(brokerRow(DATA_URI))
     const { idToken, accessToken } = await tokens(w)
 
-    expect(Object.keys(idToken).sort()).toEqual(['aud', 'email', 'email_verified', 'exp', 'iat', 'iss', 'name', 'picture', 'sub', 'auth_time'].sort())
+    expect(Object.keys(idToken).sort()).toEqual(['aud', 'email', 'email_verified', 'exp', 'iat', 'iss', 'name', 'picture', 'sub'].sort())
     expect(idToken.name).toBe('Ada Lovelace')
     expect(idToken.picture).toMatch(URL_SHAPE)
     expect(await fetched(w, idToken.picture as string)).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })

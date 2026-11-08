@@ -2,6 +2,8 @@
 
 Status: first cut implemented, 2026-10-25 (`src/provider/`, `test/provider.test.ts`, demo `/oidc` + `/rp`, `test-browser/live/broker.spec.ts`). This is the build-it-ourselves option for the broker in `specs/cross-service-sso.md`. It was built in parallel with a trial of Better Auth's OAuth 2.1 provider plugin; this one was chosen (2026-10-27, reasons in `cross-service-sso.md`, "Provider decision").
 
+November 7 security correction: authentication freshness is explicitly unsupported rather than inferred from local cookie issuance. The source fix fails closed for `prompt=login`/`max_age`; the historical hosted result does not describe this modified implementation. See [conformance investigation].
+
 ## Why this can be small
 
 The broker serves a fixed list of OA's own apps. It needs no dynamic client registration, no third-party consent screens, no implicit or hybrid flows, no public clients, and no refresh tokens. Each app is a confidential server-side client that wants one identity per sign-in. The broker's own sign-in already exists: a gate with Google OIDC and emailed codes, sessions, and (`retained` mode) several accounts per browser with a chooser. So the provider is a thin layer over a gate: it turns "this browser is signed in at the broker as X" into an ID token for a registered app.
@@ -18,8 +20,9 @@ The broker serves a fixed list of OA's own apps. It needs no dynamic client regi
   - `state` is passed through; `nonce` goes into the ID token.
   - `prompt` handling:
     - `none`: no UI, ever. Success, or the error `login_required` / `account_selection_required` / `access_denied`.
-    - `login`: sign in again.
+    - `login`: unsupported; fail closed with `login_required` until verified active-authentication evidence can be propagated.
     - `select_account`: show the chooser.
+  - Any valid `max_age`, including zero, is currently unsupported and returns `login_required` without starting a reauthentication loop. Local session issuance is not accepted as upstream authentication time.
   - `login_hint` is passed on to the sign-in page.
   - The response includes `iss`, per RFC 9207.
 - `POST <base>/token`:
@@ -35,7 +38,8 @@ The broker serves a fixed list of OA's own apps. It needs no dynamic client regi
 **Identity**:
 - Only an SSO login at the broker (`auth.kind === 'sso'`, a verified email) can sign in to an app. A share-link session at the broker never can.
 - `sub` is a stable, opaque value derived from the principal (`HMAC(subjectKey, "e:" + email)`), the same for every client. Make it pairwise later if ever needed.
-- Claims are `email`, `email_verified: true`, plus `name` / `picture` from the gate's profile when `profile` is requested (`picture` for a stored `data:` / `asset://` face is a short-lived `/oidc/picture/<ticket>` URL; see [`broker-picture-claim.md`](done/broker-picture-claim.md)), plus whatever an optional `claims({ email, client, scopes })` hook returns (e.g. `groups` from the directory snapshots). `policy({ email, client })` can refuse a person for one app (`access_denied`).
+- Claims are `email`, `email_verified: true` when `email` is requested, plus `name` / `picture` from the gate's profile when `profile` is requested (`picture` for a stored `data:` / `asset://` face is a short-lived `/oidc/picture/<ticket>` URL; see [`broker-picture-claim.md`](done/broker-picture-claim.md)), plus whatever an optional `claims({ email, client, scopes })` hook returns (e.g. `groups` from the directory snapshots). `policy({ email, client })` can refuse a person for one app (`access_denied`).
+- `auth_time` is not emitted or advertised: the current session model has local issuance time, not verified upstream active-authentication evidence. A claims hook cannot set it. Discovery advertises only the `none` and `select_account` prompts.
 
 **Clients** are a static registry in config (`id`, a hash of the secret, exact `redirectUris`, `postLogoutRedirectUris`, an optional per-client policy). This deliberately has no admin UI or database table: adding an app is a reviewed config change.
 
@@ -74,11 +78,12 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
   - `state` passthrough must hold; the RP must refuse a nonce mismatch.
   - A token signed with another key or another `alg`; an expired code.
   - A share-link session at the broker.
-- A **black-box probe** (`scripts/oidc-probe.mjs <issuer>`) runs the same checks over HTTP against any provider, ours or the Better Auth trial, for a like-for-like comparison. Later, run the OpenID Foundation conformance suite's Basic OP plan, which needs Docker.
+  - Caller-supplied continuation markers cannot satisfy forced login; same-second `max_age=0` fails closed; ordinary tokens omit unverified `auth_time`. These source regressions do not prove upstream UI behavior.
+- A **black-box probe** (`scripts/oidc-probe.mjs <issuer>`) runs checks over HTTP against any provider, ours or the Better Auth trial, for a like-for-like comparison. A historical hosted OpenID Foundation Basic OP run is recorded in [conformance results]; a new run requires separate authorization and cannot replace manual UI evidence.
 
 ## As built
 
-- `AuthenticationResult.issuedAt` (the session's `iat`, or a retained login's `issuedAt`) gives `auth_time`, `max_age` and an honest `prompt=login`: `/authorize` sends the browser to sign in with `oa_login_after=<now>` added to `next`, and only a session minted at or after that satisfies it, so neither an older session nor a dropped `prompt` loops or slips through.
+- Freshness is deliberately unsupported after the November 7 investigation: caller-controlled `oa_login_after` bypassed forced login, same-second issuance satisfied `max_age=0`, and the Google chooser did not establish active reauthentication. The unsigned continuation mechanism is removed. `prompt=login` and any valid `max_age` fail closed; local `AuthenticationResult.issuedAt` is not emitted as `auth_time`. The broker's `/signin` refuses forced login rather than turning it into account selection. Ordinary sign-in and `select_account` remain distinct.
 - Any token-endpoint attempt spends the code (taken before the checks), so a stolen code is worth one guess, and the right client can't use it afterwards either.
 - The access token is a short-lived `at+jwt` whose `aud` is the userinfo endpoint; `/userinfo` re-checks the provider and client policy.
 - Logout signs out of the broker (`gate.signOutCookies`: the active retained account, or the single session). It redirects only with a valid `id_token_hint` (expired is fine) and a registered `post_logout_redirect_uri`; otherwise it answers `Signed out.` in place.
@@ -90,3 +95,8 @@ The suite runs in process, with `oidcStart` / `oidcCallback` (the real RP) again
 ## Follow-ups (not in the first cut)
 
 - Back-channel logout, and how revocation reaches downstream apps.
+- Restore authentication freshness only with verified authentication time/provenance carried through the session model and a browser/request-bound, expiring, replay-protected continuation. Do not assume Google supports `prompt=login` or that selecting an account actively reauthenticates it.
+- The hosted Basic OP result is historical; all four manual reviews remain open, and current source needs separately authorized hosted rerun/UI evidence after the freshness gap is resolved. See [conformance results] and [conformance investigation] for per-test dispositions and TFFP evidence. This fail-closed change is not a conformance pass.
+
+[conformance results]: ../docs/conformance-results.md
+[conformance investigation]: ../docs/conformance-investigation.md
