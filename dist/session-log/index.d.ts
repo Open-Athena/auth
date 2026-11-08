@@ -23,8 +23,9 @@ export interface FromGateOptions {
 }
 /**
  * `identify` and `requireAdmin` from an `@open-athena/auth` gate. A link
- * session is logged under its bound address when it has one (`via: 'grant'`),
- * else with no address; an SSO session under its email (`via: 'sso'`).
+ * session carries its grant ID and recipient subject name (`via: 'grant'`),
+ * plus its bound address when present; an SSO session uses its email (`via: 'sso'`).
+ * Private grant memos are never identity fields.
  */
 export declare function fromGate(gate: Gate, opts?: FromGateOptions): {
     identify(req: Request): Promise<SessionLogWho | null>;

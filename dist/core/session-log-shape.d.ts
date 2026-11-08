@@ -160,6 +160,10 @@ export interface SessionRow {
     sid: string;
     email: string | null;
     via: string | null;
+    /** Trusted share-link ID; omitted when absent (including rows predating actor logging). */
+    grant_id?: string;
+    /** Trusted recipient name, never a private grant memo; omitted when absent. */
+    subject_name?: string;
     build: string | null;
     ua: string | null;
     started_ms: number;

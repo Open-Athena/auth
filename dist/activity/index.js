@@ -15,6 +15,7 @@ import { activityInteger, activityText, checkActivityEvent, checkActivityKind, c
 import { BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS } from './types.js';
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
+export { activityRoutes } from './routes.js';
 export function activityFeed(options) {
     const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options;
     const defaults = { ...DEFAULT_ACTIVITY_KINDS, ...options.kinds };

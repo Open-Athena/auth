@@ -2,6 +2,7 @@ import { type ActivityEvent, type ActivityKind, type ActivityKinds, type Activit
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js';
+export { activityRoutes, type ActivityRoutesOptions } from './routes.js';
 export interface ActivityFeedOptions {
     store: ActivityStore;
     /** Custom kinds and overrides for the generic defaults. Undeclared kinds are off. */

@@ -2,8 +2,7 @@ import type { SelectionContext } from './selection-context.js';
 /** The retained-login registry behind a gate's opt-in `retained` mode.
  * Caller owns gate IDs, random selectors and a stable >=256-bit HttpOnly handle;
  * handleHash must be a keyed hash, never the cookie value. All times are seconds.
- * Gate-wide admission/rate limiting and atomic email-proof completion are not here:
- * the gate consumes an email code, then adds the login (see the spec).
+ * Gate-wide rate admission remains the deployment's responsibility.
  */
 export interface RetainedBinding {
     gateId: string;
@@ -79,6 +78,28 @@ export interface AddSession extends RetainedBinding {
     /** Make it the active selection (a normal sign-in does). */
     select: boolean;
 }
+/** Hashed evidence from the email flow, never a pending ID or email alone. */
+export type EmailProof = {
+    pendingId: string;
+    email: string;
+} & ({
+    kind: 'link';
+    hash: string;
+} | {
+    kind: 'code';
+    hash: string;
+    maxAttempts: number;
+});
+export interface CommitEmail extends Omit<AddSession, 'sub'> {
+    proof: EmailProof;
+}
+export type CommitEmailResult = {
+    ok: true;
+    selection: SelectionContext;
+} | {
+    ok: false;
+    error: 'email-proof-invalid' | 'selection_context_conflict' | 'retained-login-capacity';
+};
 /** Change the active selection (`sessionId` null = signed out here, keeping the others), or remove one login. */
 export interface SelectSession extends RetainedBinding {
     expected: SelectionContext;
@@ -95,6 +116,14 @@ export interface RetainedStore {
     pendings(binding: RetainedBinding, nowS: number): Promise<RetainedPending[]>;
     /** null: a stale `expected`, a dead set, or no room (`limits.sessions`, not counting the login it replaces). */
     addSession(input: AddSession, nowS: number): Promise<SelectionContext | null>;
+    /**
+     * Consume email proof and create/replace/select its login in one transaction.
+     * Rechecks proof hash, email, expiry and (for codes) guess cap inside the write
+     * boundary. A refusal leaves proof, sessions and selection untouched; faults
+     * throw. `pending_auth` must live in this store's database. No replay minting.
+     * The gate applies live email policy before calling, outside the transaction.
+     */
+    commitEmail(input: CommitEmail, nowS: number): Promise<CommitEmailResult>;
     /** Select a live member login, or none. null: stale `expected`, or not a live member. Never extends evidence. */
     select(input: SelectSession, nowS: number): Promise<SelectionContext | null>;
     /**

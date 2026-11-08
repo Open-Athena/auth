@@ -145,20 +145,24 @@ export function emailCodeAuth(opts) {
         const fail = () => new Response(null, { status: 302, headers: { location: next, 'cache-control': 'no-store' } });
         if (!token)
             return fail();
-        const row = usable(await store.byTokenHash(await hashToken(token)), nowS);
+        const tokenHash = await hashToken(token);
+        const row = usable(await store.byTokenHash(tokenHash), nowS);
         if (!row)
             return fail();
-        const claimed = await store.consume(row.id, sec(nowMs()));
-        if (!claimed)
+        if (!gate.retained && !(await store.consume(row.id, sec(nowMs()))))
             return fail();
         let signedIn;
         try {
-            signedIn = await gate.signIn(row.email, request);
+            signedIn = await gate.signIn(row.email, request, nowMs(), gate.retained
+                ? { pendingId: row.id, email: row.email, kind: 'link', hash: tokenHash }
+                : undefined);
         }
         catch (e) {
             // The browser holds as many logins as the gate retains: back to the app to make room.
             if (!(e instanceof RetainedLoginError))
                 throw e;
+            if (e.code === 'email-proof-invalid')
+                return fail();
             return new Response(null, { status: 302, headers: { location: `${defaultNext}?accounts=${e.code}`, 'cache-control': 'no-store' } });
         }
         if (!signedIn) {
@@ -187,20 +191,24 @@ export function emailCodeAuth(opts) {
         const row = usable(await store.byId(id), nowS);
         if (!row || row.attempts >= maxAttempts)
             return invalid;
-        if ((await hashCode(row.email, code)) !== row.codeHash) {
+        const codeHash = await hashCode(row.email, code);
+        if (codeHash !== row.codeHash) {
             await store.bumpAttempts(id);
             return invalid;
         }
-        const claimed = await store.consume(id, sec(nowMs()));
-        if (!claimed)
+        if (!gate.retained && !(await store.consume(id, sec(nowMs()))))
             return invalid;
         let signedIn;
         try {
-            signedIn = await gate.signIn(row.email, request);
+            signedIn = await gate.signIn(row.email, request, nowMs(), gate.retained
+                ? { pendingId: id, email: row.email, kind: 'code', hash: codeHash, maxAttempts }
+                : undefined);
         }
         catch (e) {
             if (!(e instanceof RetainedLoginError))
                 throw e;
+            if (e.code === 'email-proof-invalid')
+                return invalid;
             return json({ ok: false, error: e.code }, 409);
         }
         if (!signedIn)

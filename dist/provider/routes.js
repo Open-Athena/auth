@@ -19,8 +19,6 @@ const RESERVED = new Set(['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce
 /** RFC 7636: 43–128 unreserved characters. */
 const VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/;
 const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/;
-/** The marker `/authorize` adds when it sends someone to sign in afresh. */
-const LOGIN_AFTER = 'oa_login_after';
 const PICTURE_PATH = '/picture/';
 const enc = new TextEncoder();
 const sec = (ms) => Math.floor(ms / 1000);
@@ -81,8 +79,8 @@ export function oidcProviderRoutes(opts) {
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
         code_challenge_methods_supported: ['S256'],
         scopes_supported: scopesSupported,
-        claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'email', 'email_verified', 'name', 'picture'],
-        prompt_values_supported: ['none', 'login', 'select_account'],
+        claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture'],
+        prompt_values_supported: ['none', 'select_account'],
         authorization_response_iss_parameter_supported: true,
         request_parameter_supported: false,
         request_uri_parameter_supported: false,
@@ -163,20 +161,19 @@ export function oidcProviderRoutes(opts) {
         const maxAge = q.has('max_age') ? Number(q.get('max_age')) : null;
         if (maxAge !== null && !(Number.isInteger(maxAge) && maxAge >= 0))
             return fail('invalid_request', 'bad max_age');
+        // A newly minted local session is not evidence of active upstream
+        // authentication. Refuse freshness constraints until that proof is carried
+        // through sign-in; redirecting to a chooser would only manufacture freshness.
+        if (prompts.has('login') || maxAge !== null)
+            return fail('login_required', 'Verified authentication freshness is not supported');
         const nowMs = Date.now();
         const nowS = sec(nowMs);
         const result = await gate.authenticateResult(req, nowMs, { logView: false });
         // Only a verified person at the broker vouches for anyone: a share-link
         // session here is a guest, and an app must never take it for an account.
         const email = result.auth?.kind === 'sso' ? result.auth.email : null;
-        const authTime = email && result.issuedAt ? result.issuedAt : null;
-        // A sign-in this flow sent someone to must have happened after it did.
-        const after = Number(q.get(LOGIN_AFTER) ?? NaN);
-        const freshEnough = (!Number.isFinite(after) || (authTime !== null && authTime >= Math.min(after, nowS))) &&
-            (maxAge === null || (authTime !== null && nowS - authTime <= maxAge));
-        const wantLogin = prompts.has('login') && !Number.isFinite(after);
         const wantChooser = prompts.has('select_account');
-        if (!email || !freshEnough || wantLogin || wantChooser) {
+        if (!email || wantChooser) {
             // No one selected (or a guest), but the browser holds verified accounts
             // here: a choice is what's missing, not a sign-in.
             const choosable = !email && gate.retained
@@ -184,18 +181,13 @@ export function oidcProviderRoutes(opts) {
                 : false;
             if (prompts.has('none'))
                 return fail(choosable ? 'account_selection_required' : 'login_required');
-            // Back here afterwards, without the prompt that sent them (or this loops),
-            // and with the time it sent them, so an older session can't satisfy it.
+            // Account selection is not reauthentication; don't repeat the chooser.
             const next = new URL(url);
             next.searchParams.delete('prompt');
-            if (wantLogin || (email && !freshEnough))
-                next.searchParams.set(LOGIN_AFTER, String(nowS));
             const to = new URL(loginUrl, origin);
             to.searchParams.set('next', `${next.pathname}${next.search}`);
-            if (wantChooser || (choosable && !wantLogin))
+            if (wantChooser || choosable)
                 to.searchParams.set('prompt', 'select_account');
-            else if (wantLogin || email)
-                to.searchParams.set('prompt', 'login');
             const hint = q.get('login_hint');
             if (hint)
                 to.searchParams.set('login_hint', hint);
@@ -213,7 +205,7 @@ export function oidcProviderRoutes(opts) {
             nonce: q.get('nonce'),
             email,
             scope: granted.join(' '),
-            authTime,
+            authTime: null,
             expiresAt: nowS + codeTtlS,
         });
         return back({ code });
@@ -314,7 +306,6 @@ export function oidcProviderRoutes(opts) {
             aud: client.id,
             iat: nowS,
             exp: nowS + tokenTtlS,
-            ...(rec.authTime !== null ? { auth_time: rec.authTime } : {}),
             ...(rec.nonce !== null ? { nonce: rec.nonce } : {}),
         });
         const accessToken = await ks().sign({ iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, jti: codeHash, iat: nowS, exp: nowS + tokenTtlS }, 'at+jwt');

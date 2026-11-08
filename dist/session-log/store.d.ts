@@ -5,6 +5,10 @@ export interface SessionLogWho {
     email: string | null;
     /** How they got in: `'sso'`, `'grant'`, `'public'`, … (shown in the viewer). */
     via: string;
+    /** Server-verified share-link ID, never a field supplied by the logging client. */
+    grantId?: string;
+    /** The recipient's name from the trusted grant subject, never its private memo. */
+    subjectName?: string;
 }
 export type IngestResult = 'stored' | 'duplicate' | 'capped';
 /** The switch's row: `until_ms` null = off. `who` and `ts` (epoch s) are the last change's. */
@@ -14,7 +18,7 @@ export interface SwitchRow {
     ts: number;
 }
 export interface SessionFilter {
-    /** Substring of the address, case-insensitive. */
+    /** Substring of the address, recipient name or grant ID, case-insensitive. */
     email?: string;
     /** Epoch ms: sessions active since then. */
     since?: number;

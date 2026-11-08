@@ -6,12 +6,13 @@ export type RenderLink = (p: {
     className?: string;
     children: ReactNode;
 }) => ReactNode;
-/** Who a session was, by default: the address, else "anonymous", and a share-link session is tagged as such. */
+/** Recipient name, then address, then grant ID; a share-link session is tagged as such. */
 export declare function DefaultViewer({ s }: {
-    s: Pick<SessionRow, 'email' | 'via'>;
+    s: Pick<SessionRow, 'email' | 'via' | 'grant_id' | 'subject_name'>;
 }): import("react").JSX.Element;
 /** The list's filters and page, as its URL would hold them (`u`, `since`, `err`, `after` / `before`). */
 export interface SessionListParams {
+    /** Address, recipient name or grant ID substring (the API's `email` parameter). */
     email: string;
     since: string;
     errors: boolean;
@@ -34,7 +35,7 @@ export interface SessionListProps {
     renderViewer?: (s: SessionRow) => ReactNode;
     className?: string;
 }
-/** Sessions, most recently active first, 50 a page, filterable by address, start date and errors. */
+/** Sessions, most recently active first, 50 a page, filterable by recipient identity, start date and errors. */
 export declare function SessionList({ endpoint, params: controlled, onParams, sessionHref, renderLink, renderViewer, className, }: SessionListProps): import("react").JSX.Element;
 export interface SessionViewProps {
     sid: string;

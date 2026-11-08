@@ -193,6 +193,8 @@ const gate = createGate({
 
 It needs migrations `0003` and `0004`. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
 
+Retained email-code/link sign-in now consumes proof and adds/selects the login in one transaction: a full roster or stale selection no longer burns a valid email proof. The D1 adapter implements `commitEmail`; custom retained adapters must implement that atomic operation as well. This does not add recoverable response replay or gate-wide bootstrap rate admission; see `specs/retained-hardening.md` for those remaining limits.
+
 - **Signing in** (Google, an emailed code, One Tap) adds the address and selects it. The browser's other logins stay.
 - **A share link** opened while signed in is held, unspent, as an account to switch to (`incoming: 'keep'`, the default), so a member following a guest link stays the member. `'switch'` changes to it at once, or a function decides per link. With no login, a link signs in as before.
 - **Routes** (with `authRoutes`): `GET /accounts`, `POST /accounts/select|remove|incoming` and `POST /logout-all`. `POST /logout` signs out of the active account only.
@@ -231,11 +233,11 @@ slog('movie.queued', { query, format })
 
 The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
 
-The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
+The migrations are a track of their own (`migrations/session-log/`), so apps that don't use the session log carry no tables for it. Apply the track in order through your migration system (or copy into your app's sequence). `0002_actor.sql` adds nullable `grant_id`/`subject_name`: apply it once after `0001_session_log.sql` before deploying this version, including existing disky-shaped databases. Do not blindly re-run the ALTER statements. `fromGate` attaches trusted recipient identity, and the viewer's filter matches email, recipient name and grant ID; the private grant memo is never used. Old rows are not retrospectively attributed. The summary row tracks the tab's latest identity, not immutable per-event identity evidence.
 
 ## Staff Activity Feed (Backend)
 
-`/activity` is an optional backend feed with a separate `migrations/activity/` track. It groups one actor's events on one origin into bursts (15-minute gap by default), deduplicates stable event IDs, and independently controls each kind's recording and notification detail (`off`, `count`, `line`). Slack and Discord sinks are separate imports; without sinks, it only records. These APIs do not mount public routes or supply an admin UI yet.
+`/activity` is an optional feed with a separate `migrations/activity/` track. It groups one actor's events on one origin into bursts (15-minute gap by default), deduplicates stable event IDs, and independently controls each kind's recording and notification detail (`off`, `count`, `line`). Slack and Discord sinks are separate imports; without sinks, it only records. `activityRoutes` mounts staff-authorized reads and settings, never public event ingestion. `/react/activity` supplies `ActivityAdmin`, `ActivityList` and `ActivityKindSettings` (TanStack Query provider required); styles are an optional `/react/activity.css` import.
 
 ```ts
 import { activityFeed } from '@open-athena/auth/activity'
@@ -254,7 +256,7 @@ await feed.record({
 
 `sessionLogActivity` provides `onStored`/`onPurge` hooks with an explicit trusted actor resolver; `accessLogActivity` accepts persisted access rows and their stable IDs. `activityActorFromAuth` resolves a gate identity without exposing the grant memo. Use only one source for overlapping browser/page observations unless you deliberately want both. Hook failures need application-level retry/replay; recording a source row and bridging it are not one database transaction.
 
-For posting, import `slackActivitySink` from `/activity/slack` or `discordActivitySink` from `/activity/discord`, supply a stable destination ID and `staffOnly: true`, and pass the sinks to `activityFeed`. That flag acknowledges a privacy requirement; it cannot verify channel privacy. Explicitly await `feed.flush()` (or use `waitUntil`), schedule retries yourself, and protect all `store.list`/`get` and `feed.setKind` calls with staff authorization. Delivery leases prevent simultaneous database acknowledgements, not exactly-once remote API calls: a crash after posting may duplicate a message. `feed.purge(cutoffS)` incrementally removes old inactive bursts; it does not delete already-posted remote messages. See `specs/activity-feed.md` for remaining UI/adoption work.
+For posting, import `slackActivitySink` from `/activity/slack` or `discordActivitySink` from `/activity/discord`, supply a stable destination ID and `staffOnly: true`, and pass the sinks to `activityFeed`. That flag acknowledges a privacy requirement; it cannot verify channel privacy. Explicitly await `feed.flush()` (or use `waitUntil`), schedule retries yourself, and protect all `store.list`/`get` and `feed.setKind` calls with staff authorization. Delivery leases prevent simultaneous database acknowledgements, not exactly-once remote API calls: a crash after posting may duplicate a message. `feed.purge(cutoffS)` incrementally removes old inactive bursts; it does not delete already-posted remote messages. Mount `activityRoutes({ feed, store, requireAdmin })` with an application callback returning `{ who }` only after staff authorization (or a refusing Response); mutations require this site's Origin header. See [Activity Adoption][activity-adoption] for migration and integration steps.
 
 ## Signing In Through a Broker (OIDC Provider)
 
@@ -284,6 +286,8 @@ Only a verified person at the broker vouches for anyone: a share-link session th
 ### Conformance Testing (Not Certification)
 
 Tested against the OpenID Foundation's **Basic OP** conformance plan, suite **v5.3.4**, in November 2026: **20 passed, 6 warnings, 4 awaiting review, 5 skipped; no failures**. These are historical results for the demo deployment at `auth.oa.dev`, not a separate conformance run against `login.oa.dev`, a security audit, or OpenID certification. Manual reviews and warning dispositions remain open. See [results, limitations and follow-ups][conformance-evidence].
+
+**Cross-app logout is not enabled.** Optional `/backchannel` and `/backchannel/d1` exports provide a strict signed logout-token receiver, replay receipts and SID revocation tombstones (`migrations/backchannel/`). This is a foundation, not automatic logout: the broker does not yet issue correlated SIDs or fan out events, and existing app sessions do not consult these tombstones. Never advertise these exports alone as global sign-out. See `specs/broker-revocation.md` for the remaining provider/RP correlation, enforcement and durable-delivery work.
 
 ## Minimal Demo Routes
 
@@ -584,3 +588,4 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 [demo-react]: https://auth.oa.dev/react
 [clear-site-data]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data
 [conformance-evidence]: docs/conformance-results.md
+[activity-adoption]: docs/activity-adoption.md

@@ -19,6 +19,7 @@ import type { GrantListOpts, GrantStore, ProfileStore, RequestListOpts, RequestS
 import { type DecisionLinkOptions, type DecisionView } from './decisions.js';
 import { ALL_SCOPES, type Auth, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js';
 import { type RetainedOptions } from './retained.js';
+import type { EmailProof } from './retained-store.js';
 export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
@@ -240,7 +241,7 @@ export declare function createGate(opts: GateOptions): {
     }) => Promise<AuthenticationResult>;
     unauthenticated: (req: Request, result?: AuthenticationResult) => Promise<Response>;
     redeem: (token: string, req: Request, nowMs?: number) => Promise<RedeemResult>;
-    signIn: (email: string, req: Request, nowMs?: number) => Promise<{
+    signIn: (email: string, req: Request, nowMs?: number, proof?: EmailProof) => Promise<{
         auth: Auth;
         cookie: string;
         cookies: string[];
@@ -259,7 +260,7 @@ export declare function createGate(opts: GateOptions): {
             issuedAt: number | null;
         }>;
         selection(req: Request, nowMs: number): Promise<string | null>;
-        signIn(req: Request, email: string, nowMs: number): Promise<string[]>;
+        signIn(req: Request, email: string, nowMs: number, proof?: EmailProof): Promise<string[]>;
         incoming(req: Request, grant: Grant, tokenHash: string, nowMs: number): Promise<{
             ok: true;
             switched: true;

@@ -7,7 +7,7 @@
 import { fmtCursor, isErrorEvent, LIMITS, SESSIONS_MAX_LIMIT, SESSIONS_PAGE, } from '../core/session-log-shape.js';
 import { SessionLogNotSetUp } from '../session-log/store.js';
 const missingTable = (e) => /no such table/.test(String(e?.message));
-/** Run `fn`, turning a missing table into `SessionLogNotSetUp`. */
+/** Run `fn`, distinguishing a missing track from an unapplied actor migration. */
 async function tables(fn) {
     try {
         return await fn();
@@ -15,6 +15,9 @@ async function tables(fn) {
     catch (e) {
         if (missingTable(e))
             throw new SessionLogNotSetUp();
+        if (/(?:no such column:\s*(?:session_log\.)?|has no column named\s*)(?:grant_id|subject_name)\b/i.test(String(e?.message))) {
+            throw new Error('session log schema is outdated: apply migrations/session-log/0002_actor.sql', { cause: e });
+        }
         throw e;
     }
 }
@@ -28,12 +31,18 @@ const AHEAD = '(last_ms > ? OR (last_ms = ? AND sid < ?))';
 const BEHIND = '(last_ms < ? OR (last_ms = ? AND sid > ?))';
 const keyArgs = (c) => [c.lastMs, c.lastMs, c.sid];
 const whereSql = (w) => (w.length ? ` WHERE ${w.join(' AND ')}` : '');
+const SESSION_COLUMNS = 'sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts, grant_id, subject_name';
+/** Keep absent actor fields out of the wire shape, preserving older JSON fixtures. */
+function sessionRow({ grant_id, subject_name, ...row }) {
+    return { ...row, ...(grant_id === null ? {} : { grant_id }), ...(subject_name === null ? {} : { subject_name }) };
+}
 function filterSql(f) {
     const where = [];
     const args = [];
     if (f.email) {
-        where.push("LOWER(COALESCE(email, '')) LIKE ?");
-        args.push(`%${f.email.toLowerCase()}%`);
+        where.push("(LOWER(COALESCE(email, '')) LIKE ? OR LOWER(COALESCE(subject_name, '')) LIKE ? OR LOWER(COALESCE(grant_id, '')) LIKE ?)");
+        const pattern = `%${f.email.toLowerCase()}%`;
+        args.push(pattern, pattern, pattern);
     }
     if (f.since !== undefined) {
         where.push('last_ms >= ?');
@@ -80,16 +89,17 @@ export function d1SessionLogStore(db, opts = {}) {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
                     .bind(b.sid, b.pid, b.seq, nowS, first, last, b.events.length, JSON.stringify(b.events)),
                 db
-                    .prepare(`INSERT INTO session_log (sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts)
-               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11 WHERE changes() > 0
+                    .prepare(`INSERT INTO session_log (sid, email, via, build, ua, started_ms, last_ms, n_events, n_errors, n_batches, first_url, received_ts, grant_id, subject_name)
+               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13 WHERE changes() > 0
                ON CONFLICT (sid) DO UPDATE SET
-                 email = COALESCE(excluded.email, email), via = excluded.via, build = excluded.build,
+                 email = excluded.email, via = excluded.via, build = excluded.build,
+                 grant_id = excluded.grant_id, subject_name = excluded.subject_name,
                  ua = COALESCE(excluded.ua, ua),
                  started_ms = MIN(started_ms, excluded.started_ms), last_ms = MAX(last_ms, excluded.last_ms),
                  n_events = n_events + excluded.n_events, n_errors = n_errors + excluded.n_errors,
                  n_batches = n_batches + 1,
                  first_url = COALESCE(first_url, excluded.first_url), received_ts = excluded.received_ts`)
-                    .bind(b.sid, who.email, who.via, b.build || null, ua ? ua.slice(0, 300) : null, first, last, b.events.length, errors, firstUrl(b.events), nowS),
+                    .bind(b.sid, who.email, who.via, b.build || null, ua ? ua.slice(0, 300) : null, first, last, b.events.length, errors, firstUrl(b.events), nowS, who.grantId ?? null, who.subjectName ?? null),
             ]);
             return ins?.meta.changes ? 'stored' : 'duplicate';
         }),
@@ -139,10 +149,11 @@ export function d1SessionLogStore(db, opts = {}) {
                 const w = c ? [...where, dir === 'after' ? BEHIND : AHEAD] : where;
                 const order = dir === 'after' ? 'last_ms DESC, sid ASC' : 'last_ms ASC, sid DESC';
                 const r = await db
-                    .prepare(`SELECT * FROM session_log${whereSql(w)} ORDER BY ${order} LIMIT ${limit}`)
+                    .prepare(`SELECT ${SESSION_COLUMNS} FROM session_log${whereSql(w)} ORDER BY ${order} LIMIT ${limit}`)
                     .bind(...args, ...(c ? keyArgs(c) : []))
                     .all();
-                return dir === 'after' ? r.results : r.results.reverse();
+                const rows = r.results.map(sessionRow);
+                return dir === 'after' ? rows : rows.reverse();
             };
             let rows = f.before ? await page(f.before, 'before') : await page(f.after, 'after');
             if (f.before && rows.length < limit)
@@ -170,7 +181,8 @@ export function d1SessionLogStore(db, opts = {}) {
         }),
         /** A session's row and its events, flattened across batches: by `t`, ties by page load, batch and position. */
         sessionDetail: sid => tables(async () => {
-            const session = await db.prepare('SELECT * FROM session_log WHERE sid = ?').bind(sid).first();
+            const stored = await db.prepare(`SELECT ${SESSION_COLUMNS} FROM session_log WHERE sid = ?`).bind(sid).first();
+            const session = stored ? sessionRow(stored) : null;
             if (!session)
                 return null;
             const rows = await db
