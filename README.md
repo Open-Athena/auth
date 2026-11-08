@@ -233,9 +233,32 @@ The identity on every batch is the request's (`identify`), never the client's. A
 
 The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
 
+## Staff Activity Feed (Backend)
+
+`/activity` is an optional backend feed with a separate `migrations/activity/` track. It groups one actor's events on one origin into bursts (15-minute gap by default), deduplicates stable event IDs, and independently controls each kind's recording and notification detail (`off`, `count`, `line`). Slack and Discord sinks are separate imports; without sinks, it only records. These APIs do not mount public routes or supply an admin UI yet.
+
+```ts
+import { activityFeed } from '@open-athena/auth/activity'
+import { d1ActivityStore } from '@open-athena/auth/activity/d1'
+
+const store = d1ActivityStore(env.DB)
+const feed = activityFeed({ store })
+await feed.record({
+  id: 'access-row:123', // stable retry key, never a token
+  actor: { id: 'grant:abc', name: 'Guest recipient', via: 'grant' },
+  origin: 'https://app.example.org',
+  ts: Math.floor(Date.now() / 1000),
+  kind: 'view', path: '/report',
+})
+```
+
+`sessionLogActivity` provides `onStored`/`onPurge` hooks with an explicit trusted actor resolver; `accessLogActivity` accepts persisted access rows and their stable IDs. `activityActorFromAuth` resolves a gate identity without exposing the grant memo. Use only one source for overlapping browser/page observations unless you deliberately want both. Hook failures need application-level retry/replay; recording a source row and bridging it are not one database transaction.
+
+For posting, import `slackActivitySink` from `/activity/slack` or `discordActivitySink` from `/activity/discord`, supply a stable destination ID and `staffOnly: true`, and pass the sinks to `activityFeed`. That flag acknowledges a privacy requirement; it cannot verify channel privacy. Explicitly await `feed.flush()` (or use `waitUntil`), schedule retries yourself, and protect all `store.list`/`get` and `feed.setKind` calls with staff authorization. Delivery leases prevent simultaneous database acknowledgements, not exactly-once remote API calls: a crash after posting may duplicate a message. `feed.purge(cutoffS)` incrementally removes old inactive bursts; it does not delete already-posted remote messages. See `specs/activity-feed.md` for remaining UI/adoption work.
+
 ## Signing In Through a Broker (OIDC Provider)
 
-Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: sign in once at the broker (Google, an emailed code, any of its retained accounts), and every other app gets you with no page in between. It's deliberately narrow: authorization code with PKCE S256 only, confidential clients from a static registry, exact redirect URIs, no consent screen, no refresh tokens. What it leaves out it refuses.
+Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: a valid, unambiguous broker login can admit you to another app without another sign-in click, subject to that app's policy. It's deliberately narrow: authorization code with PKCE S256 by default, confidential clients from a static or D1-backed registry, exact redirect URIs, no consent screen, no refresh tokens. OA's deployed `login.oa.dev` uses Google Workspace sign-in and the D1 client registry. It does not share app cookies or revoke all app sessions when its own cookie is cleared.
 
 ```ts
 // the broker: discovery at /.well-known/openid-configuration, endpoints under /oidc
@@ -257,6 +280,10 @@ oidcCallback(rp)  // a refusal comes back as `?sso=login_required` (or `access_d
 ```
 
 Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. For an organization-only broker, give its own Google sign-in `hostedDomain: 'example.org'` (and `authParams: { hd: 'example.org' }`): an address at the domain isn't proof of a managed account, `hd` is. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
+
+### Conformance Testing (Not Certification)
+
+Tested against the OpenID Foundation's **Basic OP** conformance plan, suite **v5.3.4**, in November 2026: **20 passed, 6 warnings, 4 awaiting review, 5 skipped; no failures**. These are historical results for the demo deployment at `auth.oa.dev`, not a separate conformance run against `login.oa.dev`, a security audit, or OpenID certification. Manual reviews and warning dispositions remain open. See [results, limitations and follow-ups][conformance-evidence].
 
 ## Minimal Demo Routes
 
@@ -441,7 +468,27 @@ A link can put its recipient on the list too. `POST <basePath>/grants` with `ema
 
 If you only learn the address after sending the link, bind it later: `PATCH <basePath>/grants/:id` with `email` (and optionally `allowlist: true`, with the same `allowed` result). Nothing is re-sent. A link session re-reads its grant on every request, so the holder's existing session is email-bound from its next request: `whoami` carries the address, and with `allowGrantSelfEdit` they can edit their own profile. `email: null` (or blank) unbinds it and leaves any allowlist row alone. A revoked link refuses with 409. The access log's `update` row names what changed, and a rebind also names the address it replaced (`email; was old@x.org`).
 
-**Google groups, synced.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), and nothing pushes a group change to a custom app (Google's Shared Signals role is *receiver*, session-revocation only). So "gate this to `board@`" is a periodic pull into the table above, and `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`:
+**Freshness-bounded Google Groups authorization.** For security-sensitive permissions, use `/groups` with its optional `migrations/groups/` track. Unlike the legacy allowlist sync below, snapshots keep overlapping memberships independent and expire after 15 minutes by default, even if Google or the sync job is unavailable. Apply the policy at each authorization request, not only when issuing an OAuth token. Missing, future-dated and stale snapshots contribute no scopes. Snapshot writes are monotonic per group, not one transaction across all groups; authorize a union of the independently fresh groups, not an all-or-nothing directory revision.
+
+```ts
+import { groupPolicy } from '@open-athena/auth/groups'
+import { d1GroupSnapshots } from '@open-athena/auth/groups/d1'
+import { syncGroupSnapshots } from '@open-athena/auth/google-directory'
+
+const groups = { 'owners@example.org': ['admin', 'view'] }
+const snapshots = d1GroupSnapshots(env.DB)
+const policy = groupPolicy(snapshots, { groups })
+// Pass `policy` to createGate. Run the sync in a cron every 5 minutes:
+await syncGroupSnapshots(snapshots, {
+  key: env.GOOGLE_SA_KEY,
+  groups: Object.keys(groups),
+  api: 'directory',
+})
+```
+
+Directory mode requires a service account with Workspace directory read privileges (prefer Groups Reader, not group ownership). No new credentials are included or provisioned by this library. The policy does not revoke independent share-link grants or bypass other policies an app deliberately composes with it. A central broker's membership claim alone cannot revoke app sessions that never consult current membership. See `specs/group-snapshots.md` for the rollout boundary.
+
+**Google groups, synced into the legacy allowlist.** Google's OIDC id_token carries no Workspace group membership. For a simple periodically maintained address list, `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`. This older path retains previous rows indefinitely after sync failures and has one row per email, so overlapping groups can overwrite each other's scopes; use snapshots above for group-based admin decisions:
 
 ```ts
 import { syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
@@ -536,3 +583,4 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 [demo-vue]: https://auth.oa.dev/vue
 [demo-react]: https://auth.oa.dev/react
 [clear-site-data]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data
+[conformance-evidence]: docs/conformance-results.md
