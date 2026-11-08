@@ -3,6 +3,13 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
+    "paths": {
+      "@open-athena/auth": ["./src/index.ts"],
+      "@open-athena/auth/d1": ["./src/adapters/d1.ts"],
+      "@open-athena/auth/oidc": ["./src/adapters/oidc.ts"],
+      "@open-athena/auth/provider": ["./src/provider/index.ts"],
+      "@open-athena/auth/provider/d1": ["./src/adapters/d1-provider.ts"]
+    },
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types", "node"],
     "strict": true,

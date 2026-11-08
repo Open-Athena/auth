@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "migrations",
+    "docs",
     "src"
   ],
   "exports": {

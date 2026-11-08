@@ -54,7 +54,7 @@ jobs:
           # directory (npm-dist `cp -r`s a dir entry) rather than a hand-kept
           # file list, which silently drops any migration added after it;
           # `verify-dist` fails the publish if the shipped set diverges from source.
-          extra_files: migrations,README.md
+          extra_files: migrations,docs,README.md
 
   # Install the published branch exactly as a consumer would, and use it.
   # The `test` job runs against `src/`, which says nothing about whether the

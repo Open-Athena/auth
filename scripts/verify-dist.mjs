@@ -28,6 +28,9 @@ const REF = process.argv[3] ?? 'dist'
 const sourceMigrations = readdirSync(new URL('../migrations/', import.meta.url), { recursive: true })
   .filter(f => f.endsWith('.sql'))
   .sort()
+const sourceDocs = readdirSync(new URL('../docs/', import.meta.url), { recursive: true })
+  .filter(f => f.endsWith('.md'))
+  .sort()
 
 /** Capture stdout. */
 const capture = (cmd, args, opts = {}) =>
@@ -80,6 +83,9 @@ const manifest = JSON.parse(readFileSync(new URL('./node_modules/@open-athena/au
 const migrationsDir = new URL('./node_modules/@open-athena/auth/migrations/', import.meta.url)
 const shippedMigrations = readdirSync(migrationsDir, { recursive: true }).filter(f => f.endsWith('.sql')).sort()
 const expectedMigrations = ${JSON.stringify(sourceMigrations)}
+const docsDir = new URL('./node_modules/@open-athena/auth/docs/', import.meta.url)
+const shippedDocs = readdirSync(docsDir, { recursive: true }).filter(f => f.endsWith('.md')).sort()
+const expectedDocs = ${JSON.stringify(sourceDocs)}
 const initDdl = shippedMigrations.includes('0001_init.sql')
   ? readFileSync(new URL('0001_init.sql', migrationsDir), 'utf8')
   : ''
@@ -117,6 +123,7 @@ const checks = {
   'Vue entrypoint shipped':       manifest.exports['./vue']?.default === './dist/vue/index.js' && readFileSync(new URL('./node_modules/@open-athena/auth/dist/vue/index.js', import.meta.url), 'utf8').length > 0,
   'all entrypoints callable':     [createGate, authRoutes, d1GrantStore, d1RequestStore, d1AuditSink, d1AuditQuery, rollupAccessLog, googleAccessToken, listGroupMembers, syncGroupsToAllowlist].every(f => typeof f === 'function'),
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
+  'docs match source':            JSON.stringify(shippedDocs) === JSON.stringify(expectedDocs),
   'baseline migration shipped':  initDdl.includes('CREATE TABLE grants') && initDdl.includes('CREATE TABLE profiles'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,

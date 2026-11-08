@@ -5,6 +5,9 @@ export default defineConfig({
   // `broker/`'s tests run from source, before CI's build makes `dist/`.
   resolve: {
     alias: [
+      { find: /^@open-athena\/auth$/, replacement: fileURLToPath(new URL('./src/index.ts', import.meta.url)) },
+      { find: /^@open-athena\/auth\/d1$/, replacement: fileURLToPath(new URL('./src/adapters/d1.ts', import.meta.url)) },
+      { find: /^@open-athena\/auth\/oidc$/, replacement: fileURLToPath(new URL('./src/adapters/oidc.ts', import.meta.url)) },
       { find: /^@open-athena\/auth\/provider$/, replacement: fileURLToPath(new URL('./src/provider/index.ts', import.meta.url)) },
       { find: /^@open-athena\/auth\/provider\/d1$/, replacement: fileURLToPath(new URL('./src/adapters/d1-provider.ts', import.meta.url)) },
     ],
