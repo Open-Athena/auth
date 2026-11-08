@@ -1,5 +1,5 @@
 import type {
-  AddSession, CommitIncoming, IncomingResult, PendingIncoming, RetainedBinding, RetainedBrowser, RetainedLimits,
+  AddSession, CommitEmail, CommitEmailResult, CommitIncoming, IncomingResult, PendingIncoming, RetainedBinding, RetainedBrowser, RetainedLimits,
   RetainedPending, RetainedSession, RetainedStore, SelectSession,
 } from '../core/retained-store.js'
 import { type SelectionContext, serializeSelectionContext } from '../core/selection-context.js'
@@ -122,6 +122,83 @@ export function d1RetainedStore(db: D1Database, suppliedLimits: RetainedLimits):
         context(i.browserSetId),
       ])
       return results[0]!.meta.changes === 1 ? (results[3]!.results[0] ?? null) : null
+    },
+
+    async commitEmail(i: CommitEmail, now) {
+      expectedFor(i, now)
+      id(i.sessionId)
+      id(i.proof.pendingId)
+      id(i.proof.hash)
+      const sub = `e:${i.proof.email}`
+      principal(sub)
+      if (i.proof.kind !== 'link' && i.proof.kind !== 'code') throw new TypeError('Invalid email proof kind')
+      if (i.proof.kind === 'code') integer(i.proof.maxAttempts, true)
+      integer(i.issuedAt)
+      integer(i.expiresAt)
+      integer(now + limits.retryTtlS)
+      if (typeof i.select !== 'boolean') throw new TypeError('Invalid selection mode')
+      if (i.expiresAt <= now || i.issuedAt > now) return { ok: false, error: 'email-proof-invalid' }
+      const proofGuard = `p.id = ? AND p.email = ? AND p.consumed_at IS NULL AND p.expires_at > ?
+        AND ${i.proof.kind === 'link' ? 'p.token_hash = ?' : 'p.code_hash = ? AND p.attempts < ?'}`
+      const proofArgs = [i.proof.pendingId, i.proof.email, now, i.proof.hash,
+        ...(i.proof.kind === 'code' ? [i.proof.maxAttempts] : [])]
+      const room = `(SELECT COUNT(*) FROM retained_sessions WHERE browser_set_id = ?
+        AND revoked_at IS NULL AND expires_at > ? AND sub != ?) < ?`
+      const roomArgs = [i.browserSetId, now, sub, limits.sessions]
+      const attempt = crypto.randomUUID()
+      const own = `attempt_id = ?`
+      const op = `SELECT * FROM retained_operations WHERE ${own}`
+      const stage = (n: number) => sql(`UPDATE retained_operations
+        SET stage = CASE WHEN changes() = 1 THEN ? ELSE -1 END WHERE ${own}`, n, attempt)
+      const results = await db.batch<SelectionContext & { error: Extract<CommitEmailResult, { ok: false }>['error'] | null }>([
+        // Diagnose under the same transaction as the claim: a proof race is not
+        // capacity, and a refused claim cannot burn proof or change selection.
+        sql(`SELECT CASE
+          WHEN NOT EXISTS (SELECT 1 FROM pending_auth p WHERE ${proofGuard}) THEN 'email-proof-invalid'
+          WHEN NOT EXISTS (SELECT 1 FROM retained_browser_sets b WHERE ${expectedBrowser}) THEN 'selection_context_conflict'
+          WHEN NOT (${room}) THEN 'retained-login-capacity' ELSE NULL END AS error`,
+        ...proofArgs, ...contextArgs(i, now), ...roomArgs),
+        sql(`INSERT INTO retained_operations
+          (id, browser_set_id, gate_id, input_json, attempt_id, session_id, minted, committed_version, expires_at, stage)
+          SELECT ?, b.id, b.gate_id, ?, ?, ?, 1, b.selection_version + 1, ?, 0
+          FROM retained_browser_sets b WHERE ${expectedBrowser}
+          AND EXISTS (SELECT 1 FROM pending_auth p WHERE ${proofGuard}) AND ${room}`,
+        attempt, JSON.stringify(['email', i.proof.pendingId]), attempt, i.sessionId, now + limits.retryTtlS,
+        ...contextArgs(i, now), ...proofArgs, ...roomArgs),
+        sql(`UPDATE pending_auth AS p SET consumed_at = ? WHERE ${proofGuard} AND EXISTS (${op})`,
+        now, ...proofArgs, attempt),
+        stage(1),
+        sql(`INSERT INTO retained_sessions (id, browser_set_id, grant_id, issued_at, expires_at, sub)
+          SELECT session_id, browser_set_id, NULL, ?, ?, ? FROM retained_operations WHERE ${own}`,
+        i.issuedAt, i.expiresAt, sub, attempt),
+        stage(2),
+        sql(`UPDATE retained_browser_sets AS b SET
+          active_session_id = CASE WHEN ? = 1 OR active_session_id IN (SELECT id FROM retained_sessions
+            WHERE browser_set_id = b.id AND sub = ? AND id != ?) THEN ? ELSE active_session_id END,
+          selection_version = selection_version + 1 WHERE ${expectedBrowser} AND EXISTS (${op})`,
+        i.select ? 1 : 0, sub, i.sessionId, i.sessionId, ...contextArgs(i, now), attempt),
+        stage(3),
+        sql(`UPDATE retained_sessions SET revoked_at = ? WHERE browser_set_id = ? AND sub = ? AND id != ?
+          AND revoked_at IS NULL AND EXISTS (${op})`, now, i.browserSetId, sub, i.sessionId, attempt),
+        sql(`UPDATE retained_operations SET stage = 5 WHERE ${own} AND stage = 3
+          AND EXISTS (SELECT 1 FROM pending_auth WHERE id = ? AND consumed_at = ?)
+          AND EXISTS (SELECT 1 FROM retained_sessions WHERE id = retained_operations.session_id
+            AND browser_set_id = retained_operations.browser_set_id AND sub = ? AND revoked_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM retained_sessions WHERE browser_set_id = retained_operations.browser_set_id
+            AND sub = ? AND id != retained_operations.session_id AND revoked_at IS NULL)
+          AND EXISTS (SELECT 1 FROM retained_browser_sets WHERE id = retained_operations.browser_set_id
+            AND selection_version = retained_operations.committed_version)`,
+        attempt, i.proof.pendingId, now, sub, sub),
+        stage(5),
+        sql(`SELECT b.id AS browserSetId, b.active_session_id AS sessionId, b.selection_version AS version
+          FROM retained_operations o JOIN retained_browser_sets b ON b.id = o.browser_set_id
+          WHERE o.attempt_id = ? AND o.stage = 5 AND ${liveBrowser}`, attempt, ...browserArgs(i, now)),
+      ])
+      const error = results[0]!.results[0]!.error
+      if (error) return { ok: false, error }
+      const selection = results[11]!.results[0]
+      if (!selection) throw new Error('Email completion did not commit')
+      return { ok: true, selection }
     },
 
     async select(i: SelectSession, now) {

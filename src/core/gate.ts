@@ -62,6 +62,7 @@ import {
 import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 import { type RetainedOptions, retainedMode } from './retained.js'
+import type { EmailProof } from './retained-store.js'
 
 export interface GateOptions {
   store: GrantStore
@@ -567,6 +568,7 @@ export function createGate(opts: GateOptions) {
     email: string,
     req: Request,
     nowMs = Date.now(),
+    proof?: EmailProof,
   ): Promise<{ auth: Auth; cookie: string; cookies: string[] } | null> {
     const nowS = sec(nowMs)
     const scopes = await policy(email)
@@ -576,7 +578,7 @@ export function createGate(opts: GateOptions) {
     }
     // Retained mode adds the login to this browser and selects it, keeping its others.
     const cookies = retained
-      ? await retained.signIn(req, email, nowMs)
+      ? await retained.signIn(req, email, nowMs, proof)
       : [cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)]
     await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS)
     const auth: Auth = { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) }

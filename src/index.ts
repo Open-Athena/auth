@@ -107,6 +107,9 @@ export { RetainedLoginError, selectionConflict } from './core/retained.js'
 export type { IncomingDecision, IncomingPolicy, RetainedOptions } from './core/retained.js'
 export type {
   AddSession,
+  EmailProof,
+  CommitEmail,
+  CommitEmailResult,
   RetainedBinding,
   RetainedBrowser,
   RetainedLimits,
