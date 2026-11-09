@@ -81,10 +81,24 @@ export declare const TRUNC: {
     readonly msg: 300;
     readonly stack: 1500;
 };
-/** Kinds (and api statuses) that count as errors in the session summary. */
+/** Chrome's ResizeObserver scheduling warnings are not application exceptions. */
+export declare const benignError: (msg: unknown) => boolean;
+/** A client-classified cancellation, not proof that server-side work was cancelled. */
+export declare const isCancelled: (e: {
+    k?: unknown;
+    s?: unknown;
+    err?: unknown;
+}) => boolean;
+export declare const isFailedApi: (e: {
+    k?: unknown;
+    s?: unknown;
+    err?: unknown;
+}) => boolean;
+/** Kinds and API statuses that count as errors; intentional cancellations do not. */
 export declare const isErrorEvent: (e: {
     k: Kind;
     s?: unknown;
+    err?: unknown;
 }) => boolean;
 /** The end (exclusive) of the UTC day `days` after `now`'s. */
 export declare const endOfUtcDay: (now: number, days: number) => number;

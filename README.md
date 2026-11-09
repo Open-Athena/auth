@@ -191,9 +191,9 @@ const gate = createGate({
 })
 ```
 
-It needs migrations `0003` and `0004`. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
+It needs root migrations `0003` and `0004`, followed by `migrations/retained-login/0001_admission.sql` **before deploying this adapter**. The nested track is not applied by a root-directory migration run: copy it into your app's ordered sequence under a unique filename or use separate migration history. No live retained-mode migration has been performed for this release, including the demo. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
 
-Retained email-code/link sign-in now consumes proof and adds/selects the login in one transaction: a full roster or stale selection no longer burns a valid email proof. The D1 adapter implements `commitEmail`; custom retained adapters must implement that atomic operation as well. This does not add recoverable response replay or gate-wide bootstrap rate admission; see `specs/retained-hardening.md` for those remaining limits.
+Retained email-code/link sign-in consumes proof and adds/selects the login in one transaction: a full roster or stale selection no longer burns valid proof. The D1 adapter implements `commitEmail`; custom retained adapters must implement that atomic operation as well. New browser and pending-link allocations also have atomic gate-wide fixed-window admission: defaults are 120 browser sets and 240 pending links per 60 seconds. Optional `admissionWindowS`, `gateBootstrapsPerWindow` and `gatePendingsPerWindow` overrides must be positive integers and identical across writers. Cookie churn cannot reset these counters. Global rate pressure returns `429`, hard storage pressure `503`, and browser capacity/context conflicts remain `409`; custom handlers should honor `RetainedLoginError.status`. This is not a general request/email limiter or recoverable response replay; see `specs/retained-hardening.md` for boundaries.
 
 - **Signing in** (Google, an emailed code, One Tap) adds the address and selects it. The browser's other logins stay.
 - **A share link** opened while signed in is held, unspent, as an account to switch to (`incoming: 'keep'`, the default), so a member following a guest link stays the member. `'switch'` changes to it at once, or a function decides per link. With no login, a link signs in as before.
@@ -214,6 +214,7 @@ It's off by default. An admin turns it on for a few days (default 7, at most 31,
 | `@open-athena/auth/session-log` | `sessionLogRoutes({ store, identify, requireAdmin, appEvents? })` and `fromGate(gate, { adminScope })`; the shared shapes |
 | `@open-athena/auth/session-log/d1` | `d1SessionLogStore(db)`; schema in `migrations/session-log/` |
 | `@open-athena/auth/session-log/client` | `bootSessionLog({ build })` and `slog(kind, fields)`; the logger itself is a lazily imported chunk |
+| `@open-athena/auth/session-log/model` | framework-free timeline/formatting helpers, also usable by non-React viewers |
 | `@open-athena/auth/react/session-log` | `SessionLogSwitch`, `SessionList`, `SessionView` (needs a `QueryClientProvider`) |
 | `@open-athena/auth/react/session-log.css` | optional styles |
 
@@ -232,6 +233,8 @@ slog('movie.queued', { query, format })
 ```
 
 The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
+
+Fetch cancellations remain visible as `cancelled` without inflating error counts. Explicit `AbortError` is classified immediately; other network failures wait up to five seconds so an intervening `pagehide` can classify them as navigation cancellations. That is a client heuristic, not proof that backend work stopped. Failures on a surviving page remain errors. Benign ResizeObserver scheduling reports are dropped by the client. Anonymous config reads never trigger retention writes, including opted-in public viewers.
 
 The migrations are a track of their own (`migrations/session-log/`), so apps that don't use the session log carry no tables for it. Apply the track in order through your migration system (or copy into your app's sequence). `0002_actor.sql` adds nullable `grant_id`/`subject_name`: apply it once after `0001_session_log.sql` before deploying this version, including existing disky-shaped databases. Do not blindly re-run the ALTER statements. `fromGate` attaches trusted recipient identity, and the viewer's filter matches email, recipient name and grant ID; the private grant memo is never used. Old rows are not retrospectively attributed. The summary row tracks the tab's latest identity, not immutable per-event identity evidence.
 
@@ -492,7 +495,7 @@ await syncGroupSnapshots(snapshots, {
 })
 ```
 
-Directory mode requires a service account with Workspace directory read privileges (prefer Groups Reader, not group ownership). No new credentials are included or provisioned by this library. The policy does not revoke independent share-link grants or bypass other policies an app deliberately composes with it. A central broker's membership claim alone cannot revoke app sessions that never consult current membership. See `specs/group-snapshots.md` for the rollout boundary.
+Directory mode requires a service account with Workspace directory read privileges (prefer Groups Reader, not group ownership). No new credentials are included or provisioned by this library. The policy does not revoke independent share-link grants or bypass other policies an app deliberately composes with it. A central broker's membership claim alone cannot revoke app sessions that never consult current membership. See [the setup and unsent Workspace-admin request](docs/group-authorization-setup.md) for the GCP/Workspace permission split, and `specs/group-snapshots.md` for the rollout boundary.
 
 **Google groups, synced into the legacy allowlist.** Google's OIDC id_token carries no Workspace group membership. For a simple periodically maintained address list, `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`. This older path retains previous rows indefinitely after sync failures and has one row per email, so overlapping groups can overwrite each other's scopes; use snapshots above for group-based admin decisions:
 

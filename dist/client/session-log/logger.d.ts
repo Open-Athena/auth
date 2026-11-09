@@ -10,6 +10,7 @@ import { type AppEvents, bodySummary, type Kind, type SlogEvent } from '../../co
 export { bodySummary };
 export declare const DEFAULT_ENDPOINT = "/api/session-log";
 export declare const FLUSH_MS = 10000;
+export declare const LEAVE_MS = 5000;
 export declare const FILTER_DEBOUNCE_MS = 800;
 export declare const RESIZE_DEBOUNCE_MS = 500;
 type Fields = Record<string, unknown>;

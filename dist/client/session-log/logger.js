@@ -6,10 +6,11 @@
  * pickers, fetches, errors, console errors, viewport and visibility) and
  * returns its undo.
  */
-import { bodySummary, BUILTIN_FIELDS, LIMITS, TRUNC } from '../../core/session-log-shape.js';
+import { benignError, bodySummary, BUILTIN_FIELDS, LIMITS, TRUNC } from '../../core/session-log-shape.js';
 export { bodySummary };
 export const DEFAULT_ENDPOINT = '/api/session-log';
 export const FLUSH_MS = 10_000;
+export const LEAVE_MS = 5_000;
 export const FILTER_DEBOUNCE_MS = 800;
 export const RESIZE_DEBOUNCE_MS = 500;
 export const tr = (s, n) => {
@@ -60,6 +61,8 @@ export class Logger {
      */
     push(e) {
         if (this.stopped)
+            return;
+        if (e.k === 'error' && benignError(e.msg))
             return;
         if (!Object.hasOwn(BUILTIN_FIELDS, e.k)) {
             const fields = Object.hasOwn(this.appEvents, e.k) ? this.appEvents[e.k] : null;
@@ -273,6 +276,17 @@ export function install(p, logger, opts = {}) {
         logger.log('pick', { n: tr(n, TRUNC.label), v: tr(t.value ?? '', TRUNC.label) });
     }), true);
     // API requests: route, status, duration, cache / engine headers, the error body's code.
+    // A page exit can reject requests before pagehide. Hold failures briefly;
+    // an exit in that window classifies them as cancellations, not server faults.
+    const held = new Map();
+    const release = (leaving) => {
+        for (const [event, timer] of held) {
+            clearTimeout(timer);
+            logger.push(leaving ? { ...event, err: 'abort' } : event);
+        }
+        held.clear();
+    };
+    offs.push(() => release(false));
     const origFetch = win.fetch;
     const wrapped = (async (input, init) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -290,7 +304,18 @@ export function install(p, logger, opts = {}) {
             res = await origFetch.call(win, input, init);
         }
         catch (e) {
-            safe(() => logger.push({ t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0), err: tr(e?.name === 'AbortError' ? 'abort' : errMsg(e), TRUNC.msg) }))();
+            safe(() => {
+                const event = { t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0) };
+                if (e?.name === 'AbortError')
+                    logger.push({ ...event, err: 'abort' });
+                else {
+                    const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) };
+                    if (held.size >= LIMITS.flushEvents)
+                        logger.push(failed);
+                    else
+                        held.set(failed, setTimeout(safe(() => { held.delete(failed); logger.push(failed); }), LEAVE_MS));
+                }
+            })();
             throw e;
         }
         safe(() => {
@@ -349,7 +374,7 @@ export function install(p, logger, opts = {}) {
         if (doc.visibilityState === 'hidden')
             logger.flush(true);
     }));
-    on(win, 'pagehide', safe(() => logger.flush(true)));
+    on(win, 'pagehide', safe(() => { release(true); logger.flush(true); }));
     return () => { for (const off of offs.splice(0).reverse())
         off(); };
 }

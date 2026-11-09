@@ -258,6 +258,11 @@ export function oidcCallback(opts) {
         const full = (e) => {
             if (!(e instanceof RetainedLoginError))
                 throw e;
+            if (e.status !== 409)
+                return new Response(JSON.stringify({ ok: false, error: e.code }) + '\n', {
+                    status: e.status,
+                    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+                });
             const headers = new Headers({ location: `/?accounts=${e.code}`, 'cache-control': 'no-store' });
             headers.append('set-cookie', clearCookie({ name: nonceCookie, secure: isSecureRequest(request) }));
             return new Response(null, { status: 302, headers });
@@ -382,7 +387,7 @@ export function googleOneTapVerify(opts) {
             if (!(e instanceof RetainedLoginError))
                 throw e;
             return new Response(JSON.stringify({ ok: false, error: e.code }) + '\n', {
-                status: 409,
+                status: e.status,
                 headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
             });
         }

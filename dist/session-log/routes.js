@@ -61,13 +61,15 @@ export function sessionLogRoutes(opts) {
     }
     async function config(req, ctx) {
         const now = Date.now();
-        await purgeLater(ctx, now);
+        const viewer = await identify(req);
+        if (viewer && viewer.via !== 'public')
+            await purgeLater(ctx, now);
         const u = await current(now);
         const shared = { on: isOn(u), retainDays, appEvents };
         const off = (reason) => json({ enabled: false, until: u.until, reason, ...shared }, 200, NO_STORE);
         if (!isOn(u))
             return off(u.reason);
-        if (!(await identify(req)))
+        if (!viewer)
             return off('no viewer identity');
         return json({ enabled: true, until: u.until, reason: null, ...shared }, 200, NO_STORE);
     }

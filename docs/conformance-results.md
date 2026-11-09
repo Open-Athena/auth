@@ -12,7 +12,9 @@ The November 7 [source investigation][investigation] reproduced two freshness by
 
 The source fix deliberately fails closed: `prompt=login` and any valid `max_age` return `login_required` without a sign-in loop; local issuance is no longer emitted as `auth_time`; and discovery no longer advertises that claim or the login prompt. Normal sign-in and account selection remain supported. This is not complete reauthentication support and does not establish Basic OP conformance. Restoring that capability requires verified authentication evidence propagated through the session model, not an assumption that Google's chooser or `prompt=login` forces authentication.
 
-All four historical reviews remain open. The current source needs a separately authorized deployment, hosted rerun and actual UI review after the capability gap is addressed; neither source tests nor this fail-closed change turn those reviews into passes. No deployment or hosted rerun was performed for this change, and the old 20/6/4/5 tally does not describe the modified source.
+The bounded security fix was deployed with authorization to `login.oa.dev` on 2026-11-09 from committed source `49b60c9` (fix `4c375c4`), Worker version `40a53e1b-dbc5-4731-834a-9d7565a839fc`. Read-only before/after probes verified discovery/JWKS, the exact `login_required` callback for `prompt=login` and `max_age=0`, unchanged ordinary sign-in redirection, and local rejection of an unregistered callback. No database migration, credential rotation or management-API enablement was performed. This does not establish the same deployment on `auth.oa.dev`.
+
+All four historical reviews remain open. A hosted rerun and actual UI review are still needed after the capability gap is addressed; neither source tests nor this fail-closed change turn those reviews into passes. No hosted rerun was performed, and the old 20/6/4/5 tally does not describe the deployed broker.
 
 ## Preserving and Sharing
 

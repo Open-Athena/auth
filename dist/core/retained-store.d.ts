@@ -2,7 +2,8 @@ import type { SelectionContext } from './selection-context.js';
 /** The retained-login registry behind a gate's opt-in `retained` mode.
  * Caller owns gate IDs, random selectors and a stable >=256-bit HttpOnly handle;
  * handleHash must be a keyed hash, never the cookie value. All times are seconds.
- * Gate-wide rate admission remains the deployment's responsibility.
+ * Gate IDs must be trusted, stable configuration, never request-controlled.
+ * D1 admission is gate-wide and transactional with allocation.
  */
 export interface RetainedBinding {
     gateId: string;
@@ -18,6 +19,12 @@ export interface RetainedLimits {
     pendingTtlS: number;
     retryTtlS: number;
     defaultSessionTtlS: number;
+    /** Epoch-aligned fixed window (default 60 seconds); keep consistent across writers. */
+    admissionWindowS?: number;
+    /** Successful browser allocations per gate/window (default 120). Positive safe integer; no disable value. */
+    gateBootstrapsPerWindow?: number;
+    /** Successful pending-link allocations per gate/window (default 240). */
+    gatePendingsPerWindow?: number;
 }
 export interface PendingIncoming extends RetainedBinding {
     expected: SelectionContext;
@@ -106,7 +113,10 @@ export interface SelectSession extends RetainedBinding {
     sessionId: string | null;
 }
 export interface RetainedStore {
-    /** Empty bootstrap only. Caller must establish the cookie before completion. */
+    /** Empty bootstrap only. Caller must establish the cookie before completion.
+     * D1 atomically admits allocation or throws RetainedLoginError: global rate
+     * pressure (429) / hard storage pressure (503). Legacy false means storage.
+     */
     bootstrap(binding: RetainedBinding, nowS: number): Promise<boolean>;
     /** The live browser set this handle names in this gate, or null. */
     browser(binding: Omit<RetainedBinding, 'browserSetId'>, nowS: number): Promise<RetainedBrowser | null>;
@@ -143,6 +153,9 @@ export interface RetainedStore {
      * whether or not this runs. Returns how many rows went.
      */
     cleanup(nowS: number, limit?: number): Promise<number>;
+    /** Atomic admission + allocation. null preserves browser capacity/context/proof
+     * refusals (409); global pressure throws as for bootstrap, without redemption.
+     */
     createPending(input: PendingIncoming, nowS: number): Promise<SelectionContext | null>;
     /** null: rejected guards/input mismatch/expired replay; SQL/storage faults throw.
      * All grant, pending and retained rows must reside in this same database.

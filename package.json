@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.7d23eb9",
+  "version": "0.1.0-dist.ded8fb7",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -87,6 +87,10 @@
     "./session-log/d1": {
       "types": "./dist/adapters/d1-session-log.d.ts",
       "default": "./dist/adapters/d1-session-log.js"
+    },
+    "./session-log/model": {
+      "types": "./dist/react/session-log/model.d.ts",
+      "default": "./dist/react/session-log/model.js"
     },
     "./session-log/client": {
       "types": "./dist/client/session-log/index.d.ts",

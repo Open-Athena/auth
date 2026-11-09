@@ -163,6 +163,8 @@ export function emailCodeAuth(opts) {
                 throw e;
             if (e.code === 'email-proof-invalid')
                 return fail();
+            if (e.status !== 409)
+                return json({ ok: false, error: e.code }, e.status);
             return new Response(null, { status: 302, headers: { location: `${defaultNext}?accounts=${e.code}`, 'cache-control': 'no-store' } });
         }
         if (!signedIn) {
@@ -209,7 +211,7 @@ export function emailCodeAuth(opts) {
                 throw e;
             if (e.code === 'email-proof-invalid')
                 return invalid;
-            return json({ ok: false, error: e.code }, 409);
+            return json({ ok: false, error: e.code }, e.status);
         }
         if (!signedIn)
             return json({ ok: false }, 403);

@@ -25,6 +25,9 @@ export class RetainedLoginError extends Error {
         this.code = code;
         this.name = 'RetainedLoginError';
     }
+    get status() {
+        return this.code === 'retained-rate-limit' ? 429 : this.code === 'retained-storage-capacity' ? 503 : 409;
+    }
 }
 const enc = new TextEncoder();
 export function retainedMode(opts, deps) {
@@ -72,7 +75,7 @@ export function retainedMode(opts, deps) {
         const handle = b64uEncode(crypto.getRandomValues(new Uint8Array(32)));
         const binding = { gateId, browserSetId: generateId(), handleHash: await handleHash(handle) };
         if (!(await store.bootstrap(binding, nowS)))
-            throw new RetainedLoginError('retained-login-capacity');
+            throw new RetainedLoginError('retained-storage-capacity');
         let browser = (await store.browser(binding, nowS));
         if (legacy !== null) {
             const claims = await inspectSessionClaims(legacy, deps.secret, nowMs);

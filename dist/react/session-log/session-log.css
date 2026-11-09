@@ -161,6 +161,12 @@
       font-size: 12px;
     }
   }
+  .oa-slog-timeline {
+    min-width: 760px;
+    .oa-slog-ev {
+      min-width: 280px;
+    }
+  }
   .oa-slog-dot {
     display: inline-block;
     width: 8px;

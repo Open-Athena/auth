@@ -25,12 +25,13 @@ export interface RetainedOptions {
 }
 /** A retained-mode refusal; invalid email proof keeps the email flow's uniform failure. */
 export declare class RetainedLoginError extends Error {
-    readonly code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid'
+    readonly code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid' | 'retained-rate-limit' | 'retained-storage-capacity'
     /** A held link that can't become a login now: the browser is full, the link used up, or the offer lapsed. */
      | 'incoming-unavailable';
-    constructor(code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid'
+    constructor(code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid' | 'retained-rate-limit' | 'retained-storage-capacity'
     /** A held link that can't become a login now: the browser is full, the link used up, or the offer lapsed. */
      | 'incoming-unavailable');
+    get status(): 409 | 429 | 503;
 }
 /** The gate's side of a retained login: turn a principal into a live identity (or not). */
 export type ResolveSub = (req: Request, claims: {

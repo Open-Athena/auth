@@ -1,4 +1,5 @@
 import { serializeSelectionContext } from '../core/selection-context.js';
+import { RetainedLoginError } from '../core/retained.js';
 function integer(value, positive = false) {
     if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < (positive ? 1 : 0)) {
         throw new TypeError('Invalid retained integer');
@@ -31,18 +32,21 @@ function pending(input, now) {
     id(input.grantId);
     id(input.tokenHash);
 }
-/** The retained-login registry on D1: requires migrations 0003 and 0004 and transactional D1 batch.
+/** The retained-login registry on D1: requires root migrations 0003/0004 plus
+ * migrations/retained-login/0001_admission.sql and transactional D1 batch.
  * No read/independent-write completion, compensations or network policy callbacks.
- * Caller must enforce deployment rate admission before bootstrap/pending creation.
  * Hard storage quotas count expired rows too until `cleanup` removes them.
+ * Admission counts successful allocations only; its two rows per trusted gate
+ * persist independently of cleanup. All writers must use the same configuration.
  */
 export function d1RetainedStore(db, suppliedLimits) {
-    const limits = { ...suppliedLimits };
+    const limits = { admissionWindowS: 60, gateBootstrapsPerWindow: 120, gatePendingsPerWindow: 240, ...suppliedLimits };
     for (const value of Object.values(limits))
         integer(value, true);
     // Validate required fields even when an untyped caller omits them.
     for (const key of ['sessions', 'pending', 'gateBrowserSets', 'gatePending', 'browserTtlS',
-        'pendingTtlS', 'retryTtlS', 'defaultSessionTtlS'])
+        'pendingTtlS', 'retryTtlS', 'defaultSessionTtlS', 'admissionWindowS',
+        'gateBootstrapsPerWindow', 'gatePendingsPerWindow'])
         integer(limits[key], true);
     const sql = (text, ...args) => db.prepare(text).bind(...args);
     const liveBrowser = `b.id = ? AND b.gate_id = ? AND b.handle_hash = ? AND b.expires_at > ?`;
@@ -55,6 +59,37 @@ export function d1RetainedStore(db, suppliedLimits) {
     AND (g.expiry_ends_sessions = 0 OR g.expires_at IS NULL OR g.expires_at > ?)`;
     const context = (browserSetId) => sql(`SELECT id AS browserSetId, active_session_id AS sessionId,
     selection_version AS version FROM retained_browser_sets WHERE id = ?`, browserSetId);
+    // Used only inside the allocation batches below. A single row is overwritten
+    // on forward rollover, never reset on backward clock movement or cleanup.
+    const admission = (gateId, kind, now) => {
+        const start = now - now % limits.admissionWindowS;
+        const max = kind === 'bootstrap' ? limits.gateBootstrapsPerWindow : limits.gatePendingsPerWindow;
+        const attempt = crypto.randomUUID();
+        const room = `NOT EXISTS (SELECT 1 FROM retained_admission WHERE gate_id = ? AND kind = ?
+      AND (window_start > ? OR (window_start = ? AND used >= ?)))`;
+        const args = [gateId, kind, start, start, max];
+        const own = `gate_id = ? AND kind = ? AND attempt_id = ?`;
+        const ownArgs = [gateId, kind, attempt];
+        return {
+            room, args, own, ownArgs,
+            claim: (eligible, eligibleArgs) => sql(`INSERT INTO retained_admission
+        (gate_id, kind, window_start, used, attempt_id, stage)
+        SELECT ?, ?, ?, 1, ?, 0 WHERE (${eligible}) AND ${room}
+        ON CONFLICT(gate_id, kind) DO UPDATE SET window_start = excluded.window_start,
+          used = CASE WHEN retained_admission.window_start = excluded.window_start THEN retained_admission.used + 1 ELSE 1 END,
+          attempt_id = excluded.attempt_id, stage = 0`, gateId, kind, start, attempt, ...eligibleArgs, ...args),
+            finish: () => sql(`UPDATE retained_admission SET stage = CASE WHEN changes() = 1 THEN 1 ELSE -1 END
+        WHERE ${own}`, ...ownArgs),
+            // A scalar assertion still aborts the batch if a trigger unexpectedly
+            // suppresses the final stage UPDATE itself. CASE evaluates only its arm.
+            verify: () => sql(`SELECT CASE WHEN EXISTS (SELECT 1 FROM retained_admission WHERE ${own} AND stage != 1)
+        THEN json('retained admission incomplete') ELSE 1 END AS complete`, ...ownArgs),
+        };
+    };
+    const refuseAdmission = (error) => {
+        if (error && error !== 'unavailable')
+            throw new RetainedLoginError(error);
+    };
     return {
         async browser(i, now) {
             id(i.gateId);
@@ -239,33 +274,68 @@ export function d1RetainedStore(db, suppliedLimits) {
         async bootstrap(i, now) {
             binding(i, now);
             integer(now + limits.browserTtlS);
-            const result = await sql(`INSERT INTO retained_browser_sets (id, gate_id, handle_hash, created_at, expires_at)
-        SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM retained_browser_sets WHERE gate_id = ?) < ?`, i.browserSetId, i.gateId, i.handleHash, now, now + limits.browserTtlS, i.gateId, limits.gateBrowserSets).run();
-            return result.meta.changes === 1;
+            const a = admission(i.gateId, 'bootstrap', now);
+            const storage = `(SELECT COUNT(*) FROM retained_browser_sets WHERE gate_id = ?) < ?`;
+            const storageArgs = [i.gateId, limits.gateBrowserSets];
+            const results = await db.batch([
+                sql(`SELECT CASE WHEN NOT (${storage}) THEN 'retained-storage-capacity'
+          WHEN NOT (${a.room}) THEN 'retained-rate-limit' ELSE NULL END AS error`, ...storageArgs, ...a.args),
+                a.claim(storage, storageArgs),
+                sql(`INSERT INTO retained_browser_sets (id, gate_id, handle_hash, created_at, expires_at)
+          SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM retained_admission WHERE ${a.own} AND stage = 0)`, i.browserSetId, i.gateId, i.handleHash, now, now + limits.browserTtlS, ...a.ownArgs),
+                a.finish(),
+                a.verify(),
+            ]);
+            refuseAdmission(results[0].results[0].error);
+            if (results[2].meta.changes !== 1)
+                throw new Error('Browser allocation did not commit');
+            return true;
         },
         async createPending(i, now) {
             pending(i, now);
             integer(now + limits.pendingTtlS);
+            const a = admission(i.gateId, 'pending', now);
+            const eligible = `EXISTS (SELECT 1 FROM retained_browser_sets b JOIN grants g ON g.id = ?
+        WHERE ${expectedBrowser} AND g.token_hash = ? AND g.revoked_at IS NULL
+        AND g.disabled_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > ?)
+        AND (SELECT COUNT(*) FROM retained_pending WHERE browser_set_id = b.id
+          AND consumed_operation_id IS NULL AND expires_at > ?) < ?)`;
+            const eligibleArgs = [i.grantId, ...contextArgs(i, now), i.tokenHash, now, now, limits.pending];
+            const storage = `(SELECT COUNT(*) FROM retained_pending WHERE gate_id = ?) < ?`;
+            const storageArgs = [i.gateId, limits.gatePending];
             const results = await db.batch([
+                // Local capacity/context/proof refusals remain null/409, even while the
+                // gate is under global pressure. Neither path can spend a redemption.
+                sql(`SELECT CASE WHEN NOT (${eligible}) THEN 'unavailable'
+          WHEN NOT (${storage}) THEN 'retained-storage-capacity'
+          WHEN NOT (${a.room}) THEN 'retained-rate-limit' ELSE NULL END AS error`, ...eligibleArgs, ...storageArgs, ...a.args),
+                a.claim(`${eligible} AND ${storage}`, [...eligibleArgs, ...storageArgs]),
                 sql(`INSERT INTO retained_pending (id, browser_set_id, gate_id, grant_id, token_hash, expires_at, ready)
           SELECT ?, b.id, b.gate_id, g.id, g.token_hash, MIN(?, COALESCE(g.expires_at, ?)), 0
           FROM retained_browser_sets b JOIN grants g ON g.id = ?
           WHERE ${expectedBrowser} AND g.token_hash = ? AND g.revoked_at IS NULL
           AND g.disabled_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > ?)
-          AND (SELECT COUNT(*) FROM retained_pending WHERE browser_set_id = b.id
-            AND consumed_operation_id IS NULL AND expires_at > ?) < ?
-          AND (SELECT COUNT(*) FROM retained_pending WHERE gate_id = b.gate_id) < ?`, i.pendingId, now + limits.pendingTtlS, now + limits.pendingTtlS, i.grantId, ...contextArgs(i, now), i.tokenHash, now, now, limits.pending, limits.gatePending),
+          AND EXISTS (SELECT 1 FROM retained_admission WHERE ${a.own} AND stage = 0)`, i.pendingId, now + limits.pendingTtlS, now + limits.pendingTtlS, i.grantId, ...contextArgs(i, now), i.tokenHash, now, ...a.ownArgs),
                 sql(`UPDATE retained_browser_sets AS b SET selection_version = selection_version + 1
-          WHERE ${expectedBrowser} AND EXISTS (SELECT 1 FROM retained_pending WHERE id = ? AND ready = 0)`, ...contextArgs(i, now), i.pendingId),
+          WHERE ${expectedBrowser} AND EXISTS (SELECT 1 FROM retained_pending WHERE id = ? AND ready = 0)
+          AND EXISTS (SELECT 1 FROM retained_admission WHERE ${a.own} AND stage = 0)`, ...contextArgs(i, now), i.pendingId, ...a.ownArgs),
                 sql(`UPDATE retained_pending SET ready = CASE WHEN changes() = 1 THEN 1 ELSE -1 END
-          WHERE id = ? AND ready = 0`, i.pendingId),
+          WHERE id = ? AND ready = 0 AND EXISTS (SELECT 1 FROM retained_admission WHERE ${a.own} AND stage = 0)`, i.pendingId, ...a.ownArgs),
+                a.finish(),
+                a.verify(),
                 sql(`SELECT b.id AS browserSetId, b.active_session_id AS sessionId, b.selection_version AS version
           FROM retained_browser_sets b JOIN retained_pending p ON p.browser_set_id = b.id
-          WHERE p.id = ? AND p.ready = 1 AND ${liveBrowser}`, i.pendingId, ...browserArgs(i, now)),
+          WHERE p.id = ? AND p.ready = 1 AND ${liveBrowser}
+          AND EXISTS (SELECT 1 FROM retained_admission WHERE ${a.own} AND stage = 1)`, i.pendingId, ...browserArgs(i, now), ...a.ownArgs),
             ]);
-            if (results[0].meta.changes !== 1)
+            const error = results[0].results[0].error;
+            refuseAdmission(error);
+            if (error === 'unavailable')
                 return null;
-            return results[3].results[0] ?? null;
+            const result = results[7].results[0];
+            if (!result)
+                throw new Error('Pending allocation did not commit');
+            return { browserSetId: result.browserSetId, sessionId: result.sessionId, version: result.version };
         },
         async commitIncoming(i, now) {
             pending(i, now);
