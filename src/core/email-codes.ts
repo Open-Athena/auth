@@ -238,6 +238,7 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
       // The browser holds as many logins as the gate retains: back to the app to make room.
       if (!(e instanceof RetainedLoginError)) throw e
       if (e.code === 'email-proof-invalid') return fail()
+      if (e.status !== 409) return json({ ok: false, error: e.code }, e.status)
       return new Response(null, { status: 302, headers: { location: `${defaultNext}?accounts=${e.code}`, 'cache-control': 'no-store' } })
     }
     if (!signedIn) {
@@ -281,7 +282,7 @@ export function emailCodeAuth(opts: EmailCodeOptions) {
     } catch (e) {
       if (!(e instanceof RetainedLoginError)) throw e
       if (e.code === 'email-proof-invalid') return invalid
-      return json({ ok: false, error: e.code }, 409)
+      return json({ ok: false, error: e.code }, e.status)
     }
     if (!signedIn) return json({ ok: false }, 403)
     const res = json({ ok: true }, 200)

@@ -236,7 +236,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
       try {
         res = await gate.redeem(token, req)
       } catch (e) {
-        if (e instanceof RetainedLoginError) return json({ error: e.code }, 409)
+        if (e instanceof RetainedLoginError) return json({ error: e.code }, e.status)
         throw e
       }
       if (!res.ok) return json({ error: 'invalid link', reason: res.reason }, 401)
@@ -298,7 +298,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         }
       } catch (e) {
         if (e instanceof RetainedLoginError) {
-          return e.code === 'selection_context_conflict' ? selectionConflict() : json({ error: e.code }, 409)
+          return e.code === 'selection_context_conflict' ? selectionConflict() : json({ error: e.code }, e.status)
         }
         throw e
       }

@@ -7,11 +7,12 @@
  * tests exercise the same `verifyRs256Jwt` a production sign-in runs, so a
  * signature check that stops checking fails here.
  */
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GOOGLE, googleOneTapNonce, googleOneTapVerify, oidcCallback, oidcStart } from '../src/adapters/oidc.js'
 import { createGate } from '../src/core/gate.js'
 import { domainPolicy } from '../src/core/policy.js'
 import type { Profile } from '../src/core/profile.js'
+import { RetainedLoginError } from '../src/core/retained.js'
 import { type MemoryProfileStore, memoryProfileStore } from '../src/testing/index.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
@@ -152,6 +153,24 @@ describe('oidcStart', () => {
 })
 
 describe('oidcCallback', () => {
+  it.each([
+    ['retained-rate-limit', 429],
+    ['retained-storage-capacity', 503],
+  ] as const)('maps %s to %i without cookies or clearing the nonce', async (error, status) => {
+    const { state, cookie } = await start('/reports')
+    const nonce = cookie.split('=')[1]!
+    const signIn = vi.spyOn(gate, 'signIn').mockRejectedValueOnce(new RetainedLoginError(error))
+    const res = await callback(state, cookie, await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }))
+
+    expect(signIn.mock.calls.map(([email]) => email)).toEqual(['staff@openathena.ai'])
+    expect([res.status, await res.json(), Object.fromEntries(res.headers), setCookies(res)]).toEqual([
+      status,
+      { ok: false, error },
+      { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' },
+      [],
+    ])
+  })
+
   it('signs in a verified address and lands on the requested path', async () => {
     const { state, cookie } = await start('/reports')
     const nonce = cookie.split('=')[1]!
@@ -351,6 +370,23 @@ describe('googleOneTap', () => {
         body: JSON.stringify({ credential, nonce }),
       }),
     })
+
+  it.each([
+    ['retained-rate-limit', 429],
+    ['retained-storage-capacity', 503],
+  ] as const)('maps %s to %i without cookies', async (error, status) => {
+    const nonce = await mintNonce()
+    const signIn = vi.spyOn(gate, 'signIn').mockRejectedValueOnce(new RetainedLoginError(error))
+    const res = await verify(await idToken({ email: 'staff@openathena.ai', email_verified: true, nonce }), nonce)
+
+    expect(signIn.mock.calls.map(([email]) => email)).toEqual(['staff@openathena.ai'])
+    expect([res.status, await res.json(), Object.fromEntries(res.headers), setCookies(res)]).toEqual([
+      status,
+      { ok: false, error },
+      { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' },
+      [],
+    ])
+  })
 
   it('mints a nonce that is inert as a session cookie', async () => {
     // Handed to the browser, so it must not double as a sign-in — same property

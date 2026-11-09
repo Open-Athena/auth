@@ -2,7 +2,7 @@
 // one browser, switching without signing in again, an incoming share link
 // that doesn't demote a member, the selection-context guard, sign-out of one
 // login versus all, and the import of a pre-retention cookie. Over the real D1
-// schema (migrations 0001–0004).
+// schema (root migrations 0001–0004 plus the retained-login track).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { d1GrantStore } from '../src/adapters/d1.js'
 import { d1RetainedStore } from '../src/adapters/d1-retained.js'
@@ -51,7 +51,7 @@ class Browser {
 }
 
 function setup(o: { limits?: Partial<RetainedLimits>; incoming?: IncomingPolicy; delisted?: string[] } = {}) {
-  const { db, raw } = testDbRaw()
+  const { db, raw } = testDbRaw(['retained-login'])
   const delisted = new Set(o.delisted ?? [])
   const gate = createGate({
     store: d1GrantStore(db),

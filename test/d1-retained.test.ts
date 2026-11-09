@@ -22,7 +22,8 @@ function fixture(overrides: Partial<RetainedLimits> = {}) {
   const sqlite = new DatabaseSync(':memory:')
   databases.push(sqlite)
   sqlite.exec('PRAGMA foreign_keys = ON')
-  for (const name of ['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql']) {
+  for (const name of ['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql',
+    'retained-login/0001_admission.sql']) {
     sqlite.exec(readFileSync(fileURLToPath(new URL(`../migrations/${name}`, import.meta.url).href), 'utf8'))
   }
   const executions = new WeakMap<D1PreparedStatement, () => D1Result>()
@@ -441,7 +442,7 @@ describe('optional D1 retained incoming completion', () => {
     f.grant()
     f.sqlite.exec('UPDATE grants SET expires_at = 200')
     expect(await f.store.bootstrap(browser, 100)).toBe(true)
-    expect(await f.store.bootstrap({ ...browser, browserSetId: 'extra', handleHash: 'extra' }, 100)).toBe(false)
+    await expect(f.store.bootstrap({ ...browser, browserSetId: 'extra', handleHash: 'extra' }, 100)).rejects.toThrow('retained-storage-capacity')
     await f.create()
     expect(f.rows('retained_pending').map(p => p.expires_at)).toEqual([200])
     const before = f.snapshot()
@@ -456,7 +457,7 @@ describe('optional D1 retained incoming completion', () => {
     const f = await ready({ gatePending: 1 })
     f.sqlite.exec('UPDATE retained_pending SET expires_at = 100')
     const before = f.snapshot()
-    expect(await f.store.createPending({ ...f.input, pendingId: 'extra' }, 101)).toBeNull()
+    await expect(f.store.createPending({ ...f.input, pendingId: 'extra' }, 101)).rejects.toThrow('retained-storage-capacity')
     expect(f.snapshot()).toEqual(before)
   })
 

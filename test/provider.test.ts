@@ -96,7 +96,7 @@ interface WorldOptions {
 }
 
 async function world(o: WorldOptions = {}) {
-  const db = o.retained ? testDbRaw().db : null
+  const db = o.retained ? testDbRaw(['retained-login']).db : null
   const brokerProfiles = memoryProfileStore()
   const brokerAssets = memoryAssetStore()
   const broker = createGate({

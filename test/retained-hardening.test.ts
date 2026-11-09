@@ -29,7 +29,7 @@ afterEach(() => {
 })
 
 function fixture() {
-  const { raw } = testDbRaw()
+  const { raw } = testDbRaw(['retained-login'])
   close.push(() => raw.close())
   // Execute every batch synchronously, including reads, so concurrent promises
   // cannot interleave inside SQLite's transaction (matching D1's boundary).

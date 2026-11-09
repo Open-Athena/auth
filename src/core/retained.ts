@@ -51,11 +51,17 @@ export class RetainedLoginError extends Error {
       | 'pending-link-capacity'
       | 'selection_context_conflict'
       | 'email-proof-invalid'
+      | 'retained-rate-limit'
+      | 'retained-storage-capacity'
       /** A held link that can't become a login now: the browser is full, the link used up, or the offer lapsed. */
       | 'incoming-unavailable',
   ) {
     super(code)
     this.name = 'RetainedLoginError'
+  }
+
+  get status(): 409 | 429 | 503 {
+    return this.code === 'retained-rate-limit' ? 429 : this.code === 'retained-storage-capacity' ? 503 : 409
   }
 }
 
@@ -133,7 +139,7 @@ export function retainedMode(opts: RetainedOptions, deps: Deps) {
     }
     const handle = b64uEncode(crypto.getRandomValues(new Uint8Array(32)))
     const binding: RetainedBinding = { gateId, browserSetId: generateId(), handleHash: await handleHash(handle) }
-    if (!(await store.bootstrap(binding, nowS))) throw new RetainedLoginError('retained-login-capacity')
+    if (!(await store.bootstrap(binding, nowS))) throw new RetainedLoginError('retained-storage-capacity')
     let browser = (await store.browser(binding, nowS))!
     if (legacy !== null) {
       const claims = await inspectSessionClaims(legacy, deps.secret, nowMs)

@@ -55,7 +55,7 @@ Open **http://localhost:4187** — that's `wrangler pages dev`, which serves the
 
 With no `SESSION_SECRET` set, a fixed dev secret is used **only** for requests to localhost; a deployed instance without one fails loudly instead. To reach the dev server from another device (e.g. `m3:4187` over Tailscale — `pnpm dev` binds all interfaces), put a `SESSION_SECRET` in `demo/.dev.vars` (git-ignored): the non-localhost hostname doesn't get the fallback, on purpose.
 
-Migrations come straight from the package (`migrations_dir = "../migrations"`), so the demo can't drift from the schema it documents.
+Root migrations come straight from the package (`migrations_dir = "../migrations"`). Optional nested tracks are separate: retained mode also requires `migrations/retained-login/0001_admission.sql` after root `0003`/`0004`, before running this build. Apply it once through a separate migration history or copy it into an app-owned ordered sequence; the existing root-only commands below do not discover it. This release has not migrated the live demo, so do not deploy this build there until that explicit schema step is complete.
 
 ## Deploying
 
