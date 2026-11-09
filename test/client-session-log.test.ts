@@ -31,6 +31,13 @@ function rig(o: { until?: number; status?: number | null; appEvents?: Record<str
 const kinds = (b: SlogBatch) => b.events.map(e => e.k)
 
 describe('Logger', () => {
+  it('drops benign ResizeObserver reports without dropping real errors', () => {
+    const { logger } = rig()
+    logger.log('error', { msg: 'ResizeObserver loop completed with undelivered notifications.' })
+    logger.log('error', { msg: 'ResizeObserver loop limit exceeded' })
+    logger.log('error', { msg: 'TypeError: real failure' })
+    expect(logger.buffered).toEqual([{ t: T0, k: 'error', msg: 'TypeError: real failure' }])
+  })
   it('batches until the 10 s flush; each flush is the next seq', async () => {
     const { logger, sent } = rig()
     logger.begin()
@@ -206,6 +213,44 @@ function page() {
 }
 
 describe('install', () => {
+  it('records explicit aborts as cancellations and preserves the original rejection', async () => {
+    const { logger } = rig()
+    const { p, win, origFetch } = page()
+    const abort = new DOMException('cancelled', 'AbortError')
+    origFetch.mockRejectedValueOnce(abort)
+    const undo = install(p, logger)
+    await expect(win.fetch('/api/cancelled')).rejects.toBe(abort)
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', u: '/api/cancelled', s: 0, ms: 0, err: 'abort' }])
+    undo()
+  })
+
+  it('holds a network failure briefly, then records it as a real failure if the page stays', async () => {
+    const { logger } = rig()
+    const { p, win } = page()
+    const undo = install(p, logger)
+    await expect(win.fetch('/api/down')).rejects.toThrow('Failed to fetch')
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([])
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' }])
+    undo()
+  })
+
+  it('reclassifies a failed request followed by pagehide as cancellation in the beacon', async () => {
+    const { logger, sent } = rig()
+    const { p, win } = page()
+    const undo = install(p, logger)
+    await expect(win.fetch('/api/down')).rejects.toThrow('Failed to fetch')
+    vi.advanceTimersByTime(500)
+    fire(win, 'pagehide')
+    expect(sent.map(s => ({ beacon: s.beacon, api: s.batch.events.filter(e => e.k === 'api') }))).toEqual([
+      { beacon: true, api: [{ t: T0, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'abort' }] },
+    ])
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(logger.buffered).toEqual([])
+    undo()
+  })
   it('records nav, clicks, the filter (debounced), picks, fetches, errors and viewport/visibility; a hidden page beacons', async () => {
     const { logger, sent } = rig()
     const { p, win, doc, con, origError, tick } = page()
@@ -261,11 +306,11 @@ describe('install', () => {
       { dt: 1100, k: 'api', m: 'POST', u: '/api/actions', b: { items: 2, kind: 'assign', memo: 'string' }, s: 200, ms: 0 },
       { dt: 1100, k: 'api', u: '/api/diff?a=1', s: 503, ms: 0, err: 'phase2 timeout' },
       { dt: 1100, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' },
-      { dt: 1100, k: 'error', msg: 'Uncaught Error: kaboom', src: '/assets/index.js?key=…:1:2', st: err.stack },
-      { dt: 1100, k: 'reject', msg: 'nope' },
-      { dt: 1100, k: 'console', msg: 'Warning: Error: bad prop' },
-      { dt: 1600, k: 'viewport', w: 390, h: 844, dpr: 2 },
-      { dt: 1600, k: 'vis', s: 'hidden' },
+      { dt: 6100, k: 'error', msg: 'Uncaught Error: kaboom', src: '/assets/index.js?key=…:1:2', st: err.stack },
+      { dt: 6100, k: 'reject', msg: 'nope' },
+      { dt: 6100, k: 'console', msg: 'Warning: Error: bad prop' },
+      { dt: 6600, k: 'viewport', w: 390, h: 844, dpr: 2 },
+      { dt: 6600, k: 'vis', s: 'hidden' },
     ])
     expect(origError.mock.calls.length).toBe(1)
     // Undo restores every patch.

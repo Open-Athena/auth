@@ -17,6 +17,16 @@ const e = (dt: number, k: StoredEvent['k'], f: Record<string, unknown> = {}, pid
   ({ t: T + dt, k, pid, seq: 0, ...f }) as StoredEvent
 
 describe('session view model', () => {
+  it('labels cancellations separately from network failures in the API lane', () => {
+    const lines = timeline([
+      e(0, 'api', { u: '/api/old-selection', s: 0, ms: 3, err: 'abort' }),
+      e(1, 'api', { u: '/api/network', s: 0, ms: 4, err: 'TypeError: Failed to fetch' }),
+    ])
+    expect(lines.map(l => [l.lane, l.error, l.text])).toEqual([
+      ['api', false, 'GET /api/old-selection → cancelled · 3ms'],
+      ['error', true, 'GET /api/network → failed · 4ms · TypeError: Failed to fetch'],
+    ])
+  })
   it('renders each kind as a line, with the URL in effect per page load and errors flagged', () => {
     const events = [
       e(0, 'start', { u: '/?d=2026-10-10', ref: 'https://discord.com/channels' }),
@@ -92,16 +102,16 @@ describe('session view model', () => {
 
   it('formats durations, offsets and user agents', () => {
     expect([
-      [450, 12_000, 187_000, 3_720_000].map(fmtDuration),
-      [0, 62_345].map(fmtOffset),
+      [450, 12_000, 187_000, 3_720_000, 108 * 3_600_000 + 43 * 60_000].map(fmtDuration),
+      [0, 62_345, 108 * 3_600_000 + 43 * 60_000].map(fmtOffset),
       [
         'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
         null,
       ].map(uaLabel),
     ]).toEqual([
-      ['450ms', '12s', '3m 07s', '1h 02m'],
-      ['+0:00.000', '+1:02.345'],
+      ['450ms', '12s', '3m 07s', '1h 02m', '4d 12h'],
+      ['+0.000s', '+1m 02s', '+4d 12h'],
       ['Safari · iOS', 'Chrome · macOS', '—'],
     ])
   })

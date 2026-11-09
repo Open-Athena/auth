@@ -72,6 +72,7 @@ import { memoryAudit, memoryGrantStore, memoryRequestStore } from '@open-athena/
 import { fromGate, sessionLogRoutes, validateBatch } from '@open-athena/auth/session-log'
 import { d1SessionLogStore } from '@open-athena/auth/session-log/d1'
 import { bootSessionLog, slog } from '@open-athena/auth/session-log/client'
+import { summarize, fmtDuration } from '@open-athena/auth/session-log/model'
 import { brokerProvider, clientManagementRoutes, managementTokenAuth, generateSigningKey, memoryProviderStore, oidcProviderRoutes } from '@open-athena/auth/provider'
 import { d1ProviderStore } from '@open-athena/auth/provider/d1'
 import { createRequire } from 'node:module'
@@ -125,6 +126,7 @@ const checks = {
   'migrations match source':      JSON.stringify(shippedMigrations) === JSON.stringify(expectedMigrations),
   'docs match source':            JSON.stringify(shippedDocs) === JSON.stringify(expectedDocs),
   'client management exports':   [clientManagementRoutes, managementTokenAuth].every(f => typeof f === 'function'),
+  'pure session model':          summarize({ t: 0, pid: 'test-page', seq: 0, k: 'api', u: '/api/old', s: 0, ms: 3, err: 'abort' }) === 'GET /api/old → cancelled · 3ms' && fmtDuration(108 * 3_600_000) === '4d 12h',
   'baseline migration shipped':  initDdl.includes('CREATE TABLE grants') && initDdl.includes('CREATE TABLE profiles'),
   'token shape':                  /^[A-Za-z0-9_-]{32}$/.test(token),
   'token hashed to 43 chars':     (await hashToken(token)).length === 43,

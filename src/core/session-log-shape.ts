@@ -94,12 +94,17 @@ export const LIMITS = {
 /** Client-side truncation, per field family. */
 export const TRUNC = { label: 60, filter: 200, url: 300, msg: 300, stack: 1500 } as const
 
-/** Kinds (and api statuses) that count as errors in the session summary. */
-export const isErrorEvent = (e: { k: Kind; s?: unknown }): boolean =>
-  e.k === 'error' ||
-  e.k === 'reject' ||
-  e.k === 'console' ||
-  (e.k === 'api' && typeof e.s === 'number' && (e.s === 0 || e.s >= 500))
+/** Chrome's ResizeObserver scheduling warnings are not application exceptions. */
+export const benignError = (msg: unknown): boolean => typeof msg === 'string' && /^ResizeObserver loop /.test(msg)
+
+/** A client-classified cancellation, not proof that server-side work was cancelled. */
+export const isCancelled = (e: { k?: unknown; s?: unknown; err?: unknown }): boolean => e.k === 'api' && e.s === 0 && e.err === 'abort'
+export const isFailedApi = (e: { k?: unknown; s?: unknown; err?: unknown }): boolean =>
+  e.k === 'api' && typeof e.s === 'number' && (e.s >= 500 || (e.s === 0 && !isCancelled(e)))
+
+/** Kinds and API statuses that count as errors; intentional cancellations do not. */
+export const isErrorEvent = (e: { k: Kind; s?: unknown; err?: unknown }): boolean =>
+  e.k === 'error' || e.k === 'reject' || e.k === 'console' || isFailedApi(e)
 
 const ID = /^[A-Za-z0-9_-]{6,40}$/
 

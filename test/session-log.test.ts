@@ -12,6 +12,7 @@ import {
   FOREVER_MS,
   fmtCursor,
   isForever,
+  isErrorEvent,
   LIMITS,
   parseCursor,
   parseUntil,
@@ -158,6 +159,19 @@ describe('validateBatch', () => {
       'session log: app event movie.queued: bad field "t"',
       'session log: app event movie.queued: bad field "has space"',
     ])
+  })
+})
+
+describe('session log error classification', () => {
+  it('does not count explicit request cancellation as an application error', () => {
+    const events = [
+      { k: 'api', s: 0, err: 'abort' },
+      { k: 'api', s: 0, err: 'TypeError: Failed to fetch' },
+      { k: 'api', s: 503 },
+      { k: 'api', s: 200 },
+      { k: 'error', msg: 'real exception' },
+    ] as const
+    expect(events.map(isErrorEvent)).toEqual([false, true, true, false, true])
   })
 })
 
@@ -530,6 +544,17 @@ describe('POST <base>', () => {
 })
 
 describe('retention', () => {
+  it.each([false, true])('anonymous config reads do not trigger maintenance (anonymous logging=%s)', async anonymous => {
+    const cutoffs: number[] = []
+    const s = await setup({ on: null, anonymous, routes: { retainDays: 7, onPurge: c => void cutoffs.push(c) } })
+    const day = 86_400
+    s.raw.exec(`INSERT INTO session_log (sid, started_ms, last_ms, n_events, n_errors, n_batches, received_ts)
+      VALUES ('old', 0, 0, 1, 0, 1, ${NOW / 1000 - 8 * day})`)
+    await s.call('GET', '')
+    expect([s.raw.prepare('SELECT sid FROM session_log').all(), cutoffs]).toEqual([[{ sid: 'old' }], []])
+    await s.call('GET', '', { token: s.viewer })
+    expect([s.raw.prepare('SELECT sid FROM session_log').all(), cutoffs]).toEqual([[], [NOW / 1000 - 7 * day]])
+  })
   it('purges what was received before the cutoff from both tables, in bounded chunks that later calls continue', async () => {
     const { raw, db } = await setup()
     const store = d1SessionLogStore(db, { purgeChunk: 2, purgeChunks: 2 })
@@ -548,7 +573,7 @@ describe('retention', () => {
     ])
   })
 
-  it('the config GET purges past `retainDays` — with logging off — at most hourly, and calls `onPurge`; a missing table is a nop', async () => {
+  it('a signed-in config GET purges past `retainDays` with logging off, at most hourly; a missing table is a nop', async () => {
     const cutoffs: number[] = []
     const s = await setup({ on: null, routes: { retainDays: 7, onPurge: c => void cutoffs.push(c) } })
     const day = 86_400
@@ -556,12 +581,12 @@ describe('retention', () => {
       INSERT INTO session_log (sid, started_ms, last_ms, n_events, n_errors, n_batches, received_ts) VALUES
         ('old', 0, 0, 1, 0, 1, ${NOW / 1000 - 8 * day}), ('new', 0, 0, 1, 0, 1, ${NOW / 1000 - 6 * day});
     `)
-    await s.call('GET', '')
+    await s.call('GET', '', { token: s.viewer })
     expect(s.raw.prepare('SELECT sid FROM session_log').all()).toEqual([{ sid: 'new' }])
     vi.setSystemTime(NOW + 30 * 60_000)
-    await s.call('GET', '')
+    await s.call('GET', '', { token: s.viewer })
     vi.setSystemTime(NOW + 2 * day * 1000)
-    await s.call('GET', '')
+    await s.call('GET', '', { token: s.viewer })
     expect([s.raw.prepare('SELECT sid FROM session_log').all(), cutoffs]).toEqual([
       [],
       [NOW / 1000 - 7 * day, NOW / 1000 - 5 * day],

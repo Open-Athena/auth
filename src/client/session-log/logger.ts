@@ -6,12 +6,13 @@
  * pickers, fetches, errors, console errors, viewport and visibility) and
  * returns its undo.
  */
-import { type AppEvents, bodySummary, BUILTIN_FIELDS, type Kind, LIMITS, type SlogBatch, type SlogEvent, TRUNC } from '../../core/session-log-shape.js'
+import { type AppEvents, benignError, bodySummary, BUILTIN_FIELDS, type Kind, LIMITS, type SlogBatch, type SlogEvent, TRUNC } from '../../core/session-log-shape.js'
 
 export { bodySummary }
 
 export const DEFAULT_ENDPOINT = '/api/session-log'
 export const FLUSH_MS = 10_000
+export const LEAVE_MS = 5_000
 export const FILTER_DEBOUNCE_MS = 800
 export const RESIZE_DEBOUNCE_MS = 500
 
@@ -84,6 +85,7 @@ export class Logger {
    */
   push(e: SlogEvent): void {
     if (this.stopped) return
+    if (e.k === 'error' && benignError(e.msg)) return
     if (!Object.hasOwn(BUILTIN_FIELDS, e.k)) {
       const fields = Object.hasOwn(this.appEvents, e.k) ? this.appEvents[e.k]! : null
       if (!fields) return
@@ -285,6 +287,17 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
   }), true)
 
   // API requests: route, status, duration, cache / engine headers, the error body's code.
+  // A page exit can reject requests before pagehide. Hold failures briefly;
+  // an exit in that window classifies them as cancellations, not server faults.
+  const held = new Map<SlogEvent, ReturnType<typeof setTimeout>>()
+  const release = (leaving: boolean) => {
+    for (const [event, timer] of held) {
+      clearTimeout(timer)
+      logger.push(leaving ? { ...event, err: 'abort' } as SlogEvent : event)
+    }
+    held.clear()
+  }
+  offs.push(() => release(false))
   const origFetch = win.fetch
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -300,7 +313,15 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
     try {
       res = await origFetch.call(win, input, init)
     } catch (e) {
-      safe(() => logger.push({ t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0), err: tr((e as Error)?.name === 'AbortError' ? 'abort' : errMsg(e), TRUNC.msg) } as SlogEvent))()
+      safe(() => {
+        const event = { t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0) } as SlogEvent
+        if ((e as Error)?.name === 'AbortError') logger.push({ ...event, err: 'abort' } as SlogEvent)
+        else {
+          const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) } as SlogEvent
+          if (held.size >= LIMITS.flushEvents) logger.push(failed)
+          else held.set(failed, setTimeout(safe(() => { held.delete(failed); logger.push(failed) }), LEAVE_MS))
+        }
+      })()
       throw e
     }
     safe(() => {
@@ -355,7 +376,7 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
     logger.log('vis', { s: doc.visibilityState })
     if (doc.visibilityState === 'hidden') logger.flush(true)
   }))
-  on(win, 'pagehide', safe(() => logger.flush(true)))
+  on(win, 'pagehide', safe(() => { release(true); logger.flush(true) }))
 
   return () => { for (const off of offs.splice(0).reverse()) off() }
 }

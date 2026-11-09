@@ -94,6 +94,10 @@
       "types": "./dist/adapters/d1-session-log.d.ts",
       "default": "./dist/adapters/d1-session-log.js"
     },
+    "./session-log/model": {
+      "types": "./dist/react/session-log/model.d.ts",
+      "default": "./dist/react/session-log/model.js"
+    },
     "./session-log/client": {
       "types": "./dist/client/session-log/index.d.ts",
       "default": "./dist/client/session-log/index.js"
@@ -132,7 +136,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.vue.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:retained-runtime": "OA_D1_RUNTIME=1 vitest run test/d1-retained.test.ts test/retained-hardening.test.ts",
+    "test:retained-runtime": "OA_D1_RUNTIME=1 vitest run test/d1-retained.test.ts test/retained-hardening.test.ts test/retained-admission.test.ts",
     "test:browser": "pnpm --filter @open-athena/auth-demo build && playwright test",
     "test:browser:live": "playwright test -c playwright.live.config.ts"
   },
