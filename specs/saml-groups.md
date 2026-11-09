@@ -1,30 +1,31 @@
-# Groups, live from the directory: a SAML adapter
+# Groups at sign-in: a deferred SAML adapter
 
-*(RW + session, 2026-09-22. From the hccs-funds thread — "there must be a blessed way for apps to OAuth against Google with awareness of user groups?" — and the analysis that followed. This is the "real groups" tier: membership arrives signed, at each sign-in, with no standing directory credential and no out-of-band snapshot. **Not yet built** — a claimed design, to build when a consumer needs live directory groups. HCCS's twice-a-year board does not; [`allowlist-store.md`](./done/allowlist-store.md) covers it.)*
+Status (2026-11-09): **deferred, not built**. The original 2026-09-22 HCCS design below explored signed group attributes at sign-in without a standing directory credential. Its no-broker rationale is superseded: OA implemented and deployed `login.oa.dev`, using this package's OIDC provider ([broker design]). The current Groups direction is the implemented freshness-bounded [snapshot policy] and the pending [Groups setup draft], not SAML. Neither SAML assertions nor broker identity tokens provide ongoing revocation of existing app permissions without additional enforcement.
 
 ## The load-bearing fact
 
 Google's OIDC id_token **never carries Workspace group membership** — by design. "Sign in with Google" (`accounts.google.com`) returns `email`, `hd`, `name`, `picture`, `sub`, and nothing about groups. This is a Google-specific gap, not a gap in OIDC: enterprise IdPs (Okta, Entra, Auth0, Keycloak) *do* emit a `groups` claim when configured. Google just doesn't, over OIDC.
 
-So any group-awareness requires a directory lookup *somewhere*. The question is only where and when. Three honest tiers, by how "in-band" the membership is:
+So any group-awareness requires a directory lookup *somewhere*. The question is only where and when. The mechanisms differ in observation time and ongoing enforcement:
 
 | Tier | Mechanism | Freshness | Standing cred | Status |
 |---|---|---|---|---|
-| **allowlist table** | local rows, filled by hand or a periodic pull (`syncGroupsToAllowlist`) | sync interval | SA key (read-only group access, no DWD) | **shipped** ([`allowlist-store.md`](./done/allowlist-store.md), [`google-directory-sync.md`](./done/google-directory-sync.md)) |
-| **SAML assertion** | groups in Google's signed assertion, per sign-in | live | **none** | this spec |
+| **allowlist table** | local rows, filled by hand or a periodic pull (`syncGroupsToAllowlist`) | last successful sync; no hard expiry in the legacy helper | SA key | **shipped**, legacy sync ([`allowlist-store.md`](./done/allowlist-store.md), [`google-directory-sync.md`](./done/google-directory-sync.md)) |
+| **group snapshots** | independent timestamped memberships, checked per request | strict 15-minute default max age; planned 5-minute sync | SA key (read-only role, no DWD by default) | **implemented library; OA rollout pending** ([snapshot policy]) |
+| **SAML assertion** | groups in Google's signed assertion, per sign-in | sign-in time only; no ongoing permission revocation | **none** | deferred design |
 | **SCIM receiver** | IdP pushes users/groups to us | live (on change) | none (IdP-authed) | not planned (heavier; Google's SCIM is oriented at provisioning *into* SaaS) |
 
-## Why SAML is the "blessed" one
+## SAML Group Attributes
 
-In the Workspace Admin console, a **custom SAML app** has an Attribute Mapping step with a **"Group membership"** mapping: you pick which groups map to a SAML attribute you name, and Google-as-IdP then puts the user's membership **into the signed assertion at each sign-in**. No standing directory credential, no snapshot to age out — the membership is signed by Google, fresh, in the assertion. This is exactly how enterprises wire Google → third-party SaaS for group-based access, and it keeps us a **relying party** (we consume an assertion) rather than an IdP.
+In the Workspace Admin console, a **custom SAML app** has an Attribute Mapping step with a **"Group membership"** mapping: you pick which groups map to a SAML attribute you name, and Google-as-IdP puts membership into the SAML response ([Google group mapping], checked 2026-11-09). This avoids a standing directory credential for sign-in-time attributes. The resulting app session still holds an observation that ages: removal after sign-in is not pushed to that session. An SP-side adapter consumes assertions; it would not undo OA's separate decision to operate an OIDC broker.
 
-### The path we explicitly reject
+### Superseded No-Broker Rationale
 
-An **IdP proxy** (Dex, Keycloak, Pomerium) logs in via Google OIDC, does the Directory lookup once, and re-issues an OIDC token *with* a groups claim. Real and standard-ish — Dex's Google connector does exactly this — but it means **becoming an IdP**, which [`sessions-resources-idp.md`](./sessions-resources-idp.md) ("…and not becoming an IdP") rules out. It relocates the credential and complexity into a stateful service we'd run. The SAML adapter gets the same result (groups at sign-in) while we stay a relying party.
+The original rejection of an IdP proxy depended on not operating an IdP. That boundary no longer describes OA: `login.oa.dev` is implemented with `@open-athena/auth/provider`, Worker and D1. Central directory lookup is now an explicit rollout direction ([broker design]), not rejected architecture. A broker-issued groups claim would still be a login-time snapshot unless consumers enforce its original observation time and a freshness bound. The existing broker does not by itself establish central Groups distribution or fleet-wide group revocation.
 
 ## Shape (proposed)
 
-A new adapter beside `adapters/oidc.ts`, feeding the *same* scope-mapping `policy` seam — a SAML assertion resolves to `(email, groups[])`, and a `groupPolicy(map)` turns groups into scopes, exactly parallel to how `oidcCallback` resolves `(email)` and `policy` turns it into scopes.
+A possible future adapter beside `adapters/oidc.ts` could resolve a SAML assertion to `(email, groups[])` and map that evidence into app scopes. The following is the historical proposal, not the implemented `/groups` API: today's `groupPolicy(store, { groups, maxAgeS })` consumes timestamped snapshots, not SAML assertions. A SAML evidence contract would need a separate design before implementation.
 
 - **`adapters/saml.ts`** — SP-side SAML: build the AuthnRequest / redirect, receive the POST binding, **validate the assertion** (XML signature against Google's IdP cert, `Audience`/`Destination`, `NotBefore`/`NotOnOrAfter` with clock skew, and one-time `assertion ID` replay guard — the SAML analogues of the OIDC nonce/`aud`/`exp` checks already in `core/jwt.ts`). Extract `email` + the group attribute.
   - The hard, must-get-right parts are the signature validation and replay guard. Prefer a vetted XML-dsig verifier over hand-rolling; if none fits the WinterCG/no-Node-deps constraint of `core/`, the adapter (not `core/`) may carry the dependency, since adapters are already the place runtime-specific code lives.
@@ -52,8 +53,13 @@ A research spike answered the one gating question ("does XML-dsig verification r
 
 ## Why it's bounded, not scary
 
-Narrow surface: one request out, one signed assertion back, a fixed set of validations against a maintained, patched verifier. The costs are real but known — a first dependency + `nodejs_compat`, per-app SAML-app setup in the Workspace console (heavier than "create an OAuth client"), and ongoing patch vigilance on a dep tree with a repeated-CVE history. In exchange it's the one mechanism that makes the library genuinely *aware of upstream Google groups without a snapshot*, so it's a claimed, now-de-risked tier — not the "too hard" bucket, but also not free.
+The proposed surface is one request out, one signed assertion back, with a fixed set of validations against a maintained verifier. The historical spike identified costs rather than eliminating them: XML-signature dependencies, `nodejs_compat`, per-app Workspace SAML configuration and ongoing security maintenance. Dependency versions and runtime feasibility must be revalidated if work resumes. The benefit would be signed group evidence at sign-in without a directory-reader credential, not continuous membership observation or ongoing session revocation.
 
 ## Trigger to build
 
-A consumer that needs **live** directory-group membership (a group that changes often enough that the allowlist-table sync's staleness window matters, or an org that won't grant even a scheduled Directory read scope). Until then, `allowlist-store.md` + the package's `syncGroupsToAllowlist` cron ([`google-directory-sync.md`](./done/google-directory-sync.md)) is the right-sized answer, and this stays a design. Note the revocation math: this adapter refreshes groups only at sign-in, so it is *slower* to revoke than a 15-minute sync unless it also writes into the allowlist table. The spike above means that when the trigger comes, the path is concrete and the risks are named — not that we build it speculatively now.
+A concrete consumer requirement for SAML interoperability or an organization that cannot authorize a directory reader could justify revisiting this deferred design. Faster ongoing revocation is not a reason to choose login-only SAML: an already-issued app session does not observe a subsequent group change, and a sign-in-time write-through alone cannot fix that. It would require fresh evidence, reauthentication, bounded sessions or another explicit revocation mechanism. OA's current path is the [snapshot policy] with per-request checks and a hard freshness bound; central rollout prerequisites and the admin request are in the [Groups setup draft]. No SAML implementation or configuration is authorized by this spec.
+
+[broker design]: ./cross-service-sso.md
+[snapshot policy]: ./group-snapshots.md
+[Groups setup draft]: ../docs/group-authorization-setup.md
+[Google group mapping]: https://knowledge.workspace.google.com/admin/apps/about-group-membership-mapping

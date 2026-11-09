@@ -1,4 +1,6 @@
-# Sessions, resources, and not becoming an IdP
+# Sessions, resources, and identity providers
+
+**Current checkpoint (2026-11-09):** the no-IdP premise below is historical and superseded by the deployed OA broker at `login.oa.dev`; see [Cross-service SSO]. Optional retained mode now authenticates email/grant sessions, supplies account switching and per-browser removal, and atomically completes incoming links and email proof. Gate-wide allocation admission is implemented with an additional optional migration; see [Retained hardening]. This does not implement the separate registry-only `sessions?: SessionStore` sketch, resource-scoped grants, recoverable email response replay or cross-app global logout. Earlier dated phase descriptions below are design history, not the current completion checklist. No production retained migration is implied.
 
 Decisions from the 2026-08-19/21 thread, for the work that isn't built yet. The link-lifecycle half (`disable`/`enable`/`update`, `expiryEndsSessions`) shipped in `d886126`; this is what's left, in the order I'd build it.
 
@@ -62,7 +64,7 @@ This is the whole tie-in to the state-sharing work, and deliberately the only on
 
 *Both paths shipped: `adapters/oidc.ts` (`oidcStart`/`oidcCallback`, One Tap; `specs/done/google-oidc-idp.md`) and `core/email-codes.ts` (magic link + 6-digit code over `adapters/resend.ts`, with `scripts/provision-resend.mjs` for the domain). gcs is cutting over from Access on this basis. Kept below as written.*
 
-Two paths, neither of which makes this an IdP (no password store, no OAuth server — that stays out of scope):
+Two relying-party paths, neither of which alone makes this an IdP. The historical decision to keep an OAuth server out of scope was later superseded by the separate `/provider` implementation and OA broker; apps can still use either adapter without hosting a provider:
 
 - **Magic-link email sign-in as a first-class flow.** `anyEmailPolicy` + an emailed token already *is* passwordless sign-in: no CF Access, no Google, and a sign-in page the app styles completely. It's filed as a policy helper rather than as the feature it is. Needs the ESP from `auth-upstream-followups.md` §4 to be real.
 - **A generic OIDC adapter** (`adapters/oidc.ts`): code → token → email → `signIn(email)`. ~100 lines, covers Google/GitHub/anything, and removes CF Access from the path — which also removes its unstylable "choose auth method" chooser. `cf-access` stays as one adapter among several rather than the assumed one.
@@ -92,3 +94,5 @@ The current demo funnels into a sandbox, which buries the thing worth showing.
 
 [Multiple logins and account switching]: multiple-logins-and-account-switching.md
 [D1's batch API]: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch
+[Cross-service SSO]: cross-service-sso.md
+[Retained hardening]: retained-hardening.md

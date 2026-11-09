@@ -26,3 +26,9 @@ No credential provisioning, production migration or policy rollout is authorized
 `src/groups/index.ts`, `src/adapters/d1-groups.ts`, `migrations/groups/0001_snapshots.sql` and `syncGroupSnapshots` are implemented. The new sync defaults to Directory mode for role-assigned read-only credentials; the legacy `syncGroupsToAllowlist` keeps its existing Cloud Identity default. D1 refuses same-time as well as older writes, so an ambiguous concurrent completion cannot restore a removed member at the same epoch second. Tests exercise real SQLite, overlapping groups, expired/future/missing/empty snapshots, removal, failed listing with no writes, and expiry of an existing gate session.
 
 Remaining rollout: choose where OA's directory credential and scheduled sync live, obtain the read-only Workspace grant, migrate the chosen database, and have consumers check membership per request. Central distribution/back-channel revocation is not implemented by this phase; there is no claim of fleet-wide instant revocation. No production credentials or policies have changed.
+
+## Operational Next Steps (2026-11-09)
+
+The [Groups authorization setup draft] contains the copyable OA Workspace superadmin request, the GCP-versus-Workspace permission split, credential/API defaults, membership limits and freshness/rollout checks. The SA email is explicitly pending creation; no OA SA, Workspace grant or scheduled sync is established by that draft. Centralize the credential and sync, then define the distribution contract and each consumer's group-to-scope mapping with per-request enforcement; do not treat broker sign-in or login-time claims as ongoing revocation.
+
+[Groups authorization setup draft]: ../docs/group-authorization-setup.md
