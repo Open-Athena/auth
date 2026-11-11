@@ -8,6 +8,7 @@ import {
   FILTER_DEBOUNCE_MS,
   FLUSH_MS,
   install,
+  LEAVE_MS,
   Logger,
   type Page,
   redactUrl,
@@ -234,6 +235,20 @@ describe('install', () => {
     expect(logger.buffered.filter(e => e.k === 'api')).toEqual([])
     await vi.advanceTimersByTimeAsync(1)
     expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' }])
+    undo()
+  })
+
+  it('records connectivity and time since the tab became visible on a network failure', async () => {
+    const { logger } = rig()
+    const { p, win, doc } = page()
+    const undo = install({ ...p, win: Object.assign(win, { navigator: { onLine: false } }) }, logger)
+    fire(doc, 'visibilitychange')
+    await vi.advanceTimersByTimeAsync(250)
+    await expect(win.fetch('/api/down')).rejects.toThrow('Failed to fetch')
+    await vi.advanceTimersByTimeAsync(LEAVE_MS)
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([
+      { t: T0 + 250, k: 'api', u: '/api/down', s: 0, ms: 0, online: false, visibility: 'visible', visible_ms: 250, err: 'TypeError: Failed to fetch' },
+    ])
     undo()
   })
 

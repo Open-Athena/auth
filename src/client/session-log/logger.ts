@@ -203,6 +203,7 @@ export interface Page {
     innerHeight: number
     devicePixelRatio: number
     fetch: typeof fetch
+    navigator?: { onLine: boolean }
   }
   doc: EventTarget & { visibilityState: string; referrer: string }
   con: { error: (...a: unknown[]) => void }
@@ -298,6 +299,8 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
     held.clear()
   }
   offs.push(() => release(false))
+  // When the tab last became visible: a failure soon after a resume is likelier a network blip than an outage.
+  let visibleAt: number | null = null
   const origFetch = win.fetch
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -317,7 +320,10 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
         const event = { t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0) } as SlogEvent
         if ((e as Error)?.name === 'AbortError') logger.push({ ...event, err: 'abort' } as SlogEvent)
         else {
-          const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) } as SlogEvent
+          const context = win.navigator
+            ? { online: win.navigator.onLine, visibility: doc.visibilityState, ...(visibleAt === null ? {} : { visible_ms: Math.max(0, Date.now() - visibleAt) }) }
+            : {}
+          const failed = { ...event, ...context, err: tr(errMsg(e), TRUNC.msg) } as SlogEvent
           if (held.size >= LIMITS.flushEvents) logger.push(failed)
           else held.set(failed, setTimeout(safe(() => { held.delete(failed); logger.push(failed) }), LEAVE_MS))
         }
@@ -374,6 +380,7 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
   offs.push(() => { if (rz) clearTimeout(rz) })
   on(doc, 'visibilitychange', safe(() => {
     logger.log('vis', { s: doc.visibilityState })
+    if (doc.visibilityState === 'visible') visibleAt = Date.now()
     if (doc.visibilityState === 'hidden') logger.flush(true)
   }))
   on(win, 'pagehide', safe(() => { release(true); logger.flush(true) }))

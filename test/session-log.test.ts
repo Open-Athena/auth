@@ -100,6 +100,11 @@ describe('validateBatch', () => {
     expect([validateBatch(ok), validateBatch(withApp, APP)]).toEqual([{ batch: ok }, { batch: withApp }])
   })
 
+  it('accepts the connectivity context on a failed request', () => {
+    const failed = { ...ok, events: [ev(NOW, 'api', { u: '/api/down', s: 0, ms: 0, online: false, visibility: 'visible', visible_ms: 250, err: 'TypeError: Failed to fetch' })] }
+    expect(validateBatch(failed)).toEqual({ batch: failed })
+  })
+
   it('refuses bad ids, kinds, undeclared or non-scalar fields, and oversize batches / events', () => {
     const big = Array.from({ length: LIMITS.batchEvents + 1 }, (_, i) => ev(NOW + i, 'vis', { s: 'visible' }))
     expect([

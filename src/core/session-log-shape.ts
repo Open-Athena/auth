@@ -18,7 +18,7 @@ export const BUILTIN_FIELDS = {
   filter: ['n', 'q'],
   pick: ['n', 'v'],
   prefetch: ['w', 'p', 'd'],
-  api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b'],
+  api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b', 'online', 'visibility', 'visible_ms'],
   error: ['msg', 'src', 'st'],
   reject: ['msg', 'st'],
   console: ['msg'],
