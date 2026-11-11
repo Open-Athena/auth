@@ -39,6 +39,18 @@ describe('activity bridges', () => {
     })
   })
 
+  it('bridges a failure the user saw as an error, and one reported a minute late as nothing', async () => {
+    const { store, feed } = setup()
+    const hooks = sessionLogActivity(feed, { actor: () => actor, now: () => 1000 })
+    const fail = (t: number) => ({ t, k: 'api', u: '/api/x', s: 0, ms: 0, err: 'TypeError: Failed to fetch', online: true, visibility: 'visible' })
+    await hooks.onStored({
+      who: { email: null, via: 'grant' }, req: new Request('https://app.example/api/log'),
+      batch: { sid: 'tab-123', pid: 'page-123', seq: 0, build: 'test', events: [fail(999_000), fail(939_000)] },
+    })
+    const [burst] = await store.list()
+    expect({ counts: burst?.counts, lines: burst?.lines.map(e => [e.kind, e.line]) }).toEqual({ counts: { error: 1 }, lines: [['error', 'api 0']] })
+  })
+
   it('bridges persisted access rows idempotently, including non-browser views', async () => {
     const { store, feed } = setup()
     const bridge = accessLogActivity(feed, { origin: 'https://app.example', actor: () => actor })

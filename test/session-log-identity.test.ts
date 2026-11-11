@@ -99,7 +99,7 @@ describe('trusted share-link identity', () => {
     const detail = await handle(new Request(`${HOST}/api/session-log/sessions/sid-identity`, { headers: admin }))
     expect([list?.status, await list?.json(), detail?.status, await detail?.json(), stored]).toEqual([
       200, { sessions: [expected], total: 1, offset: 0, prev: null, next: null },
-      200, { session: expected, events: [{ t: NOW, k: 'start', u: '/report', pid: 'pid-identity', seq: 0 }] },
+      200, { session: expected, events: [{ t: NOW, k: 'start', u: '/report', pid: 'pid-identity', seq: 0, _received_ms: NOW }] },
       [{ email: null, via: 'grant', grantId: grant.id, subjectName: 'Ada Recipient' }],
     ])
   })
@@ -114,7 +114,7 @@ describe('D1 session actor storage', () => {
     expect(await store.ingest(next, null, batch(), NOW / 1000 + 1)).toBe('duplicate')
     expect(await store.sessionDetail('sid-identity')).toEqual({
       session: summary({ grant_id: 'grant-first', subject_name: 'First Recipient' }),
-      events: [{ t: NOW, k: 'start', u: '/report', pid: 'pid-identity', seq: 0 }],
+      events: [{ t: NOW, k: 'start', u: '/report', pid: 'pid-identity', seq: 0, _received_ms: NOW }],
     })
     expect(await store.ingest(next, null, batch({ seq: 1 }), NOW / 1000 + 1)).toBe('stored')
     expect(await store.listSessions({ email: 'NEXT RECIPIENT' })).toEqual({

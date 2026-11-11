@@ -27,6 +27,17 @@ describe('session view model', () => {
       ['error', true, 'GET /api/network → failed · 4ms · TypeError: Failed to fetch'],
     ])
   })
+  it('keeps a failure nobody saw (offline, or received over a minute late) out of the error lane', () => {
+    const fail = { u: '/api/x', s: 0, ms: 4, err: 'TypeError: Failed to fetch', online: true, visibility: 'visible' }
+    const lines = timeline([
+      e(0, 'api', { ...fail, _received_ms: T + 10_000 }),
+      e(1, 'api', { ...fail, online: false, _received_ms: T + 10_000 }),
+      e(2, 'api', { ...fail, _received_ms: T + 164_000 }),
+      e(3, 'api', fail),
+    ])
+    expect(lines.map(l => [l.lane, l.error])).toEqual([['error', true], ['api', false], ['api', false], ['error', true]])
+  })
+
   it('renders each kind as a line, with the URL in effect per page load and errors flagged', () => {
     const events = [
       e(0, 'start', { u: '/?d=2026-10-10', ref: 'https://discord.com/channels' }),

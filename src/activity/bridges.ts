@@ -19,14 +19,17 @@ export interface SessionActivityOptions {
   /** Required: core SessionLogWho has no stable identity for an unbound grant. Never trust batch fields for it. */
   actor: (input: StoredSession) => ActivityActor | null | Promise<ActivityActor | null>
   now?: () => number
-  /** Optional app-specific conversion. Null drops an event; no arbitrary client fields are copied by default. */
-  event?: (event: SlogEvent) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null
+  /**
+   * Optional app-specific conversion. Null drops an event; no arbitrary client fields are copied by default.
+   * `receivedMs` is when the server received the batch, for `isErrorEvent`'s offline-failure rule.
+   */
+  event?: (event: SlogEvent, receivedMs: number) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null
 }
 
-function sessionEvent(event: SlogEvent): Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null {
+function sessionEvent(event: SlogEvent, receivedMs: number): Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null {
   const { k } = event
   if (k === 'dropped') return null
-  if (isErrorEvent(event)) return { kind: 'error', line: String(event.msg ?? `${k} ${event.s ?? ''}`).slice(0, 2000) }
+  if (isErrorEvent(event, receivedMs)) return { kind: 'error', line: String(event.msg ?? `${k} ${event.s ?? ''}`).slice(0, 2000) }
   if (k === 'start' || k === 'nav') {
     const path = typeof event.u === 'string' ? activityPath(event.u) : undefined
     return { kind: k === 'start' ? 'view' : 'nav', line: path, path }
@@ -46,7 +49,7 @@ export function sessionLogActivity(feed: ActivityFeed, options: SessionActivityO
       const receipt = now()
       // Stable per-event keys allow safe retry after partially bridging a stored batch.
       for (const [index, event] of batch.events.entries()) {
-        const mapped = (options.event ?? sessionEvent)(event)
+        const mapped = (options.event ?? sessionEvent)(event, receipt * 1000)
         if (!mapped) continue
         await feed.record({
           ...mapped,

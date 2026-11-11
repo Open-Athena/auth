@@ -68,7 +68,7 @@ const BUILTIN = new Set<string>(KINDS)
 export const LANES = ['nav', 'input', 'app', 'api', 'error', 'page'] as const
 export type Lane = typeof LANES[number]
 export const laneOf = (e: StoredEvent): Lane =>
-  isErrorEvent(e) ? 'error'
+  isErrorEvent(e, e._received_ms) ? 'error'
     : e.k === 'start' || e.k === 'nav' ? 'nav'
     : e.k === 'click' || e.k === 'filter' || e.k === 'pick' || e.k === 'prefetch' ? 'input'
     : e.k === 'api' ? 'api'
@@ -95,7 +95,7 @@ export function timeline(events: readonly StoredEvent[]): Line[] {
   const urlBy = new Map<string, string>()
   return events.map((e, i) => {
     if ((e.k === 'start' || e.k === 'nav') && typeof e.u === 'string') urlBy.set(e.pid, e.u)
-    return { i, t: e.t, off: e.t - t0, k: e.k, text: summarize(e), error: isErrorEvent(e), lane: laneOf(e), url: urlBy.get(e.pid) ?? null, pid: e.pid }
+    return { i, t: e.t, off: e.t - t0, k: e.k, text: summarize(e), error: isErrorEvent(e, e._received_ms), lane: laneOf(e), url: urlBy.get(e.pid) ?? null, pid: e.pid }
   })
 }
 

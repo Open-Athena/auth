@@ -13,6 +13,8 @@ import {
   fmtCursor,
   isForever,
   isErrorEvent,
+  offlineFailure,
+  OFFLINE_LAG_MS,
   LIMITS,
   parseCursor,
   parseUntil,
@@ -176,7 +178,31 @@ describe('session log error classification', () => {
       { k: 'api', s: 200 },
       { k: 'error', msg: 'real exception' },
     ] as const
-    expect(events.map(isErrorEvent)).toEqual([false, true, true, false, true])
+    expect(events.map(e => isErrorEvent(e))).toEqual([false, true, true, false, true])
+  })
+
+  it('does not count a network failure nobody saw: offline, hidden tab, or reported over a minute late', () => {
+    const fail = (dt: number, f: Record<string, unknown> = {}) => ({ k: 'api', t: NOW - dt, s: 0, err: 'TypeError: Failed to fetch', ...f })
+    const cases = [
+      [fail(1000), NOW],
+      [fail(1000, { online: false }), NOW],
+      [fail(1000, { online: true, visibility: 'hidden' }), NOW],
+      [fail(OFFLINE_LAG_MS, { online: true, visibility: 'visible' }), NOW],
+      [fail(OFFLINE_LAG_MS + 1, { online: true, visibility: 'visible' }), NOW],
+      [fail(OFFLINE_LAG_MS + 1), undefined],
+      [fail(1000, { online: false, err: 'abort' }), NOW],
+      [{ k: 'api', t: NOW - 600_000, s: 503, online: false }, NOW],
+    ] as const
+    expect(cases.map(([e, rcv]) => [offlineFailure(e, rcv), isErrorEvent(e, rcv)])).toEqual([
+      [false, true],
+      [true, false],
+      [true, false],
+      [false, true],
+      [true, false],
+      [false, true],
+      [false, false],
+      [false, true],
+    ])
   })
 })
 
@@ -471,6 +497,19 @@ describe('POST <base>', () => {
     ])
   })
 
+  it('counts a failed request as an error only if someone could have seen it fail', async () => {
+    const { call, viewer, raw } = await setup()
+    const fail = (t: number, f: Record<string, unknown> = {}) => ev(t, 'api', { u: '/api/x', s: 0, ms: 0, err: 'TypeError: Failed to fetch', ...f })
+    const events = [
+      fail(NOW - 1000, { online: true, visibility: 'visible' }),
+      fail(NOW - 1000, { online: false, visibility: 'visible' }),
+      fail(NOW - 1000, { online: true, visibility: 'hidden' }),
+      fail(NOW - 164_000, { online: true, visibility: 'visible' }),
+    ]
+    expect(await call('POST', '', { token: viewer, body: batch({ events }) })).toEqual([204, null])
+    expect(raw.prepare('SELECT n_events, n_errors FROM session_log').all()).toEqual([{ n_events: 4, n_errors: 1 }])
+  })
+
   it('a repeated (sid, pid, seq) — a retried beacon — is ignored and counts nothing', async () => {
     const { call, viewer, raw } = await setup()
     await call('POST', '', { token: viewer, body: batch() })
@@ -741,9 +780,9 @@ describe('admin reads', () => {
           received_ts: NOW / 1000,
         },
         events: [
-          { t: NOW - 5000, k: 'start', u: '/', pid: 'pid-111111', seq: 0 },
-          { t: NOW - 3000, k: 'error', msg: 'x', pid: 'pid-222222', seq: 0 },
-          { t: NOW - 1000, k: 'nav', u: '/a', pid: 'pid-111111', seq: 0 },
+          { t: NOW - 5000, k: 'start', u: '/', pid: 'pid-111111', seq: 0, _received_ms: NOW },
+          { t: NOW - 3000, k: 'error', msg: 'x', pid: 'pid-222222', seq: 0, _received_ms: NOW },
+          { t: NOW - 1000, k: 'nav', u: '/a', pid: 'pid-111111', seq: 0, _received_ms: NOW },
         ],
       },
     ])

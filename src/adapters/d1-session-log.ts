@@ -105,7 +105,7 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
         const ts = b.events.map(e => e.t)
         const first = Math.min(...ts)
         const last = Math.max(...ts)
-        const errors = b.events.filter(isErrorEvent).length
+        const errors = b.events.filter(e => isErrorEvent(e, nowS * 1000)).length
         // One transaction: the batch row, then the session's counters only if
         // that row was new (`changes()`), so a retried beacon counts nothing and
         // a failure leaves neither half behind.
@@ -237,11 +237,11 @@ export function d1SessionLogStore(db: D1Database, opts: D1SessionLogOptions = {}
         const session = stored ? sessionRow(stored) : null
         if (!session) return null
         const rows = await db
-          .prepare('SELECT pid, seq, events FROM session_log_batches WHERE sid = ? ORDER BY first_ms, pid, seq')
+          .prepare('SELECT pid, seq, received_ts, events FROM session_log_batches WHERE sid = ? ORDER BY first_ms, pid, seq')
           .bind(sid)
-          .all<{ pid: string; seq: number; events: string }>()
+          .all<{ pid: string; seq: number; received_ts: number; events: string }>()
         const tagged = rows.results.flatMap(r =>
-          (JSON.parse(r.events) as SlogEvent[]).map((e, i) => ({ e: { ...e, pid: r.pid, seq: r.seq } as StoredEvent, i })),
+          (JSON.parse(r.events) as SlogEvent[]).map((e, i) => ({ e: { ...e, pid: r.pid, seq: r.seq, _received_ms: r.received_ts * 1000 } as StoredEvent, i })),
         )
         tagged.sort(
           (a, b) => a.e.t - b.e.t || (a.e.pid < b.e.pid ? -1 : a.e.pid > b.e.pid ? 1 : 0) || a.e.seq - b.e.seq || a.i - b.i,
