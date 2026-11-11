@@ -287,6 +287,8 @@ export function install(p, logger, opts = {}) {
         held.clear();
     };
     offs.push(() => release(false));
+    // When the tab last became visible: a failure soon after a resume is likelier a network blip than an outage.
+    let visibleAt = null;
     const origFetch = win.fetch;
     const wrapped = (async (input, init) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -309,7 +311,10 @@ export function install(p, logger, opts = {}) {
                 if (e?.name === 'AbortError')
                     logger.push({ ...event, err: 'abort' });
                 else {
-                    const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) };
+                    const context = win.navigator
+                        ? { online: win.navigator.onLine, visibility: doc.visibilityState, ...(visibleAt === null ? {} : { visible_ms: Math.max(0, Date.now() - visibleAt) }) }
+                        : {};
+                    const failed = { ...event, ...context, err: tr(errMsg(e), TRUNC.msg) };
                     if (held.size >= LIMITS.flushEvents)
                         logger.push(failed);
                     else
@@ -371,6 +376,8 @@ export function install(p, logger, opts = {}) {
         clearTimeout(rz); });
     on(doc, 'visibilitychange', safe(() => {
         logger.log('vis', { s: doc.visibilityState });
+        if (doc.visibilityState === 'visible')
+            visibleAt = Date.now();
         if (doc.visibilityState === 'hidden')
             logger.flush(true);
     }));

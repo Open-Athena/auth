@@ -17,7 +17,7 @@ export declare const BUILTIN_FIELDS: {
     readonly filter: readonly ["n", "q"];
     readonly pick: readonly ["n", "v"];
     readonly prefetch: readonly ["w", "p", "d"];
-    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b"];
+    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b", "online", "visibility", "visible_ms"];
     readonly error: readonly ["msg", "src", "st"];
     readonly reject: readonly ["msg", "st"];
     readonly console: readonly ["msg"];

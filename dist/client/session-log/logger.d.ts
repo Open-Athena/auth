@@ -96,6 +96,9 @@ export interface Page {
         innerHeight: number;
         devicePixelRatio: number;
         fetch: typeof fetch;
+        navigator?: {
+            onLine: boolean;
+        };
     };
     doc: EventTarget & {
         visibilityState: string;
