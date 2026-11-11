@@ -6,11 +6,11 @@ export function activityActorFromAuth(auth) {
         ? { id: `email:${auth.email}`, name: auth.subject?.name?.trim() || auth.email, via: 'sso' }
         : { id: `grant:${auth.grant.id}`, name: auth.grant.subject?.name?.trim() || auth.grant.email || 'Unnamed recipient', via: 'grant' };
 }
-function sessionEvent(event) {
+function sessionEvent(event, receivedMs) {
     const { k } = event;
     if (k === 'dropped')
         return null;
-    if (isErrorEvent(event))
+    if (isErrorEvent(event, receivedMs))
         return { kind: 'error', line: String(event.msg ?? `${k} ${event.s ?? ''}`).slice(0, 2000) };
     if (k === 'start' || k === 'nav') {
         const path = typeof event.u === 'string' ? activityPath(event.u) : undefined;
@@ -32,7 +32,7 @@ export function sessionLogActivity(feed, options) {
             const receipt = now();
             // Stable per-event keys allow safe retry after partially bridging a stored batch.
             for (const [index, event] of batch.events.entries()) {
-                const mapped = (options.event ?? sessionEvent)(event);
+                const mapped = (options.event ?? sessionEvent)(event, receipt * 1000);
                 if (!mapped)
                     continue;
                 await feed.record({

@@ -63,7 +63,7 @@ export function summarize(e) {
 const BUILTIN = new Set(KINDS);
 /** The strip chart's lanes, top to bottom; `app` is the app's own declared events. */
 export const LANES = ['nav', 'input', 'app', 'api', 'error', 'page'];
-export const laneOf = (e) => isErrorEvent(e) ? 'error'
+export const laneOf = (e) => isErrorEvent(e, e._received_ms) ? 'error'
     : e.k === 'start' || e.k === 'nav' ? 'nav'
         : e.k === 'click' || e.k === 'filter' || e.k === 'pick' || e.k === 'prefetch' ? 'input'
             : e.k === 'api' ? 'api'
@@ -76,7 +76,7 @@ export function timeline(events) {
     return events.map((e, i) => {
         if ((e.k === 'start' || e.k === 'nav') && typeof e.u === 'string')
             urlBy.set(e.pid, e.u);
-        return { i, t: e.t, off: e.t - t0, k: e.k, text: summarize(e), error: isErrorEvent(e), lane: laneOf(e), url: urlBy.get(e.pid) ?? null, pid: e.pid };
+        return { i, t: e.t, off: e.t - t0, k: e.k, text: summarize(e), error: isErrorEvent(e, e._received_ms), lane: laneOf(e), url: urlBy.get(e.pid) ?? null, pid: e.pid };
     });
 }
 /** Ticks across `width` px: x by time (a zero-length session puts all at 0). */

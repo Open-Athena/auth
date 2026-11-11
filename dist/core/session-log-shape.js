@@ -67,9 +67,29 @@ export const TRUNC = { label: 60, filter: 200, url: 300, msg: 300, stack: 1500 }
 export const benignError = (msg) => typeof msg === 'string' && /^ResizeObserver loop /.test(msg);
 /** A client-classified cancellation, not proof that server-side work was cancelled. */
 export const isCancelled = (e) => e.k === 'api' && e.s === 0 && e.err === 'abort';
-export const isFailedApi = (e) => e.k === 'api' && typeof e.s === 'number' && (e.s >= 500 || (e.s === 0 && !isCancelled(e)));
-/** Kinds and API statuses that count as errors; intentional cancellations do not. */
-export const isErrorEvent = (e) => e.k === 'error' || e.k === 'reject' || e.k === 'console' || isFailedApi(e);
+/** Batches normally arrive within ~16 s (the logger flushes every 10 s); a failure received later than this was reported by a device that went to sleep or offline. */
+export const OFFLINE_LAG_MS = 60_000;
+/**
+ * A network failure nobody saw fail: the browser was offline, the tab hidden,
+ * or its batch arrived over `OFFLINE_LAG_MS` after the request (a laptop closed
+ * mid-request reports `online: true` on wake). It counts as a request, not an
+ * error. Without `receivedMs` (epoch ms the server received the batch), only
+ * the client's own context decides.
+ */
+export const offlineFailure = (e, receivedMs) => e.k === 'api' &&
+    e.s === 0 &&
+    e.err !== 'abort' &&
+    (e.online === false ||
+        e.visibility === 'hidden' ||
+        (receivedMs !== undefined && typeof e.t === 'number' && receivedMs - e.t > OFFLINE_LAG_MS));
+/** A request that failed: a 5xx, or no response other than a cancellation or an `offlineFailure`. */
+export const isFailedApi = (e, receivedMs) => e.k === 'api' && typeof e.s === 'number' && (e.s >= 500 || (e.s === 0 && !isCancelled(e) && !offlineFailure(e, receivedMs)));
+/**
+ * Kinds and API statuses that count as errors; cancellations and offline
+ * failures do not. Pass `receivedMs` explicitly: not as a bare `filter` / `map`
+ * callback, whose index would land there.
+ */
+export const isErrorEvent = (e, receivedMs) => e.k === 'error' || e.k === 'reject' || e.k === 'console' || isFailedApi(e, receivedMs);
 const ID = /^[A-Za-z0-9_-]{6,40}$/;
 /** The end (exclusive) of the UTC day `days` after `now`'s. */
 export const endOfUtcDay = (now, days) => {

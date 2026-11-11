@@ -89,17 +89,34 @@ export declare const isCancelled: (e: {
     s?: unknown;
     err?: unknown;
 }) => boolean;
-export declare const isFailedApi: (e: {
+/** Batches normally arrive within ~16 s (the logger flushes every 10 s); a failure received later than this was reported by a device that went to sleep or offline. */
+export declare const OFFLINE_LAG_MS = 60000;
+type ApiFields = {
     k?: unknown;
+    t?: unknown;
     s?: unknown;
     err?: unknown;
-}) => boolean;
-/** Kinds and API statuses that count as errors; intentional cancellations do not. */
-export declare const isErrorEvent: (e: {
+    online?: unknown;
+    visibility?: unknown;
+};
+/**
+ * A network failure nobody saw fail: the browser was offline, the tab hidden,
+ * or its batch arrived over `OFFLINE_LAG_MS` after the request (a laptop closed
+ * mid-request reports `online: true` on wake). It counts as a request, not an
+ * error. Without `receivedMs` (epoch ms the server received the batch), only
+ * the client's own context decides.
+ */
+export declare const offlineFailure: (e: ApiFields, receivedMs?: number) => boolean;
+/** A request that failed: a 5xx, or no response other than a cancellation or an `offlineFailure`. */
+export declare const isFailedApi: (e: ApiFields, receivedMs?: number) => boolean;
+/**
+ * Kinds and API statuses that count as errors; cancellations and offline
+ * failures do not. Pass `receivedMs` explicitly: not as a bare `filter` / `map`
+ * callback, whose index would land there.
+ */
+export declare const isErrorEvent: (e: ApiFields & {
     k: Kind;
-    s?: unknown;
-    err?: unknown;
-}) => boolean;
+}, receivedMs?: number) => boolean;
 /** The end (exclusive) of the UTC day `days` after `now`'s. */
 export declare const endOfUtcDay: (now: number, days: number) => number;
 /** Turning the switch on with no date: through the UTC day `LIMITS.defaultDays` from now. */
@@ -213,9 +230,11 @@ export interface SessionPage {
     next: string | null;
 }
 /** A stored event with where it came from (the page load and batch), as the session view gets it. */
+/** An event as the viewer gets it: tagged with its page load, batch, and when the server received that batch (`_`: no client field can take the name). */
 export type StoredEvent = SlogEvent & {
     pid: string;
     seq: number;
+    _received_ms?: number;
 };
 /** `GET <base>/sessions/:sid`. */
 export interface SessionDetail {

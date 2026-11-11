@@ -15,8 +15,11 @@ export interface SessionActivityOptions {
     /** Required: core SessionLogWho has no stable identity for an unbound grant. Never trust batch fields for it. */
     actor: (input: StoredSession) => ActivityActor | null | Promise<ActivityActor | null>;
     now?: () => number;
-    /** Optional app-specific conversion. Null drops an event; no arbitrary client fields are copied by default. */
-    event?: (event: SlogEvent) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null;
+    /**
+     * Optional app-specific conversion. Null drops an event; no arbitrary client fields are copied by default.
+     * `receivedMs` is when the server received the batch, for `isErrorEvent`'s offline-failure rule.
+     */
+    event?: (event: SlogEvent, receivedMs: number) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null;
 }
 /** Structurally compatible with sessionLogRoutes' onStored/onPurge; session retention remains independent. */
 export declare function sessionLogActivity(feed: ActivityFeed, options: SessionActivityOptions): {
