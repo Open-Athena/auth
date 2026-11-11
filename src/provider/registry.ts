@@ -5,6 +5,7 @@
  * `d1ClientRegistry` in `@open-athena/auth/provider/d1`.
  */
 import { b64uEncode } from '../core/base64.js'
+import { previewPattern } from './redirects.js'
 import type { ProviderClient } from './routes.js'
 
 export interface RegisteredClient {
@@ -14,6 +15,8 @@ export interface RegisteredClient {
   secretHash: string
   redirectUris: string[]
   postLogoutRedirectUris: string[]
+  /** A PR-preview client (`ProviderClient.preview`). Fixed at creation. */
+  preview: boolean
   /** Epoch s, or null while active. */
   disabledAt: number | null
   createdAt: number
@@ -40,6 +43,8 @@ export interface NewClient {
   secretHash: string
   redirectUris: string[]
   postLogoutRedirectUris?: string[]
+  /** Default false. Can't be changed later: make a new client instead. */
+  preview?: boolean
 }
 
 export interface ClientChanges {
@@ -71,7 +76,14 @@ export const clientLookup =
   async (id: string): Promise<ProviderClient | null> => {
     const c = await registry.get(id)
     return c && c.disabledAt === null
-      ? { id: c.id, secretHash: c.secretHash, redirectUris: c.redirectUris, postLogoutRedirectUris: c.postLogoutRedirectUris }
+      ? {
+          id: c.id,
+          name: c.name,
+          secretHash: c.secretHash,
+          redirectUris: c.redirectUris,
+          postLogoutRedirectUris: c.postLogoutRedirectUris,
+          ...(c.preview ? { preview: true } : {}),
+        }
       : null
   }
 
@@ -92,8 +104,22 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1'])
  * under one of `domains`, or loopback for local development. This is the limit
  * on what a stolen admin session can do. Must already be in normal form,
  * because the provider compares it exactly with what the app sends.
+ *
+ * `previewSuffixes`, for a preview client only: the deployment's allowlist of
+ * hosts whose one-label subdomains a `https://*.<suffix>/<path>` pattern may
+ * cover (e.g. `oa-gcs-usage.pages.dev`). Without it, no pattern is accepted.
  */
-export function redirectUriProblem(raw: string, domains: string[]): string | null {
+export function redirectUriProblem(raw: string, domains: string[], { previewSuffixes = [] }: { previewSuffixes?: readonly string[] } = {}): string | null {
+  if (raw.startsWith('https://*.')) {
+    const p = previewPattern(raw)
+    if (!p) return `${raw}: a pattern is https://*.<host>/<path>, in normal form, with no port, query or fragment`
+    if (!previewSuffixes.includes(p.suffix)) {
+      return previewSuffixes.length
+        ? `${raw}: patterns are only allowed under ${previewSuffixes.join(', ')}`
+        : `${raw}: patterns are only for preview clients, under an allowlisted host`
+    }
+    return null
+  }
   let u: URL
   try {
     u = new URL(raw)

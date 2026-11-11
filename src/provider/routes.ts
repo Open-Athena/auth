@@ -5,24 +5,38 @@
  *
  * Deliberately narrow (see `specs/oidc-provider.md`): authorization code with
  * PKCE S256 only, confidential clients from a registry, exact redirect URIs, no consent screen (every client is first-party), no refresh tokens.
+ * The one exception to the last two is a PR-preview client (`ProviderClient.preview`): see `redirects.ts`.
  * What it leaves out it refuses, rather than half-supporting.
  */
-import { b64uEncode } from '../core/base64.js'
+import { b64uDecodeString, b64uEncode } from '../core/base64.js'
 import type { Gate } from '../core/gate.js'
 import { generateToken, hashToken } from '../core/tokens.js'
 import { type KeySet, keySet, type SigningJwk } from './keys.js'
 import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js'
+import { redirectAllowed } from './redirects.js'
 import type { ProviderStore } from './store.js'
 
 /** One app allowed to sign people in here. */
 export interface ProviderClient {
   id: string
+  /** For people: what this app is (the preview consent page names it). */
+  name?: string
   /** `hashClientSecret(secret)`: the secret itself never sits in config. */
   secretHash: string
-  /** Exact matches only: no prefixes, no wildcards, no normalizing. */
+  /** Exact matches only: no prefixes, no normalizing, and no wildcards except a preview client's patterns. */
   redirectUris: string[]
-  /** Where RP-initiated logout may send the browser afterwards (exact matches). */
+  /** Where RP-initiated logout may send the browser afterwards (exact matches, or a preview client's patterns). */
   postLogoutRedirectUris?: string[]
+  /**
+   * A PR-preview client: its URIs may include `https://*.<host>/<path>`
+   * patterns (one DNS label, `redirects.ts`), and since a preview is unreviewed
+   * code, it never signs anyone in silently. The first sign-in per preview
+   * host, account and client is one click on a page here naming the host,
+   * remembered for 7 days; `prompt=none` gets `interaction_required` until
+   * then. Give it its own id (so its tokens' `aud` differs from the app's)
+   * and its own secret, held only by the preview deployment.
+   */
+  preview?: boolean
   /** A per-app admission rule on top of the provider's `policy`. */
   allow?: (email: string) => boolean | Promise<boolean>
   /**
@@ -94,6 +108,21 @@ const PICTURE_PATH = '/picture/'
 const enc = new TextEncoder()
 const sec = (ms: number) => Math.floor(ms / 1000)
 
+/** How long one click on the preview consent page lasts, and how many hosts a browser remembers. */
+const PREVIEW_CONSENT_TTL_S = 7 * 86400
+const PREVIEW_CONSENT_MAX = 20
+
+/** One remembered preview consent: who (`sub`), which client, which host, until when (epoch s). */
+interface PreviewConsent {
+  s: string
+  c: string
+  h: string
+  x: number
+}
+
+const esc = (s: string): string =>
+  s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body) + '\n', {
     status,
@@ -103,6 +132,14 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 /** An error the browser sees here, because there's no trustworthy place to send it. */
 const page = (status: number, message: string): Response =>
   new Response(`${message}\n`, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
+
+function cookieValue(req: Request, name: string): string | null {
+  for (const part of (req.headers.get('cookie') ?? '').split(';')) {
+    const i = part.indexOf('=')
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim()
+  }
+  return null
+}
 
 const redirect = (location: string, cookies: string[] = []): Response => {
   const headers = new Headers({ location, 'cache-control': 'no-store' })
@@ -140,6 +177,67 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
   const ks = () => (keys ??= keySet(opts.keys))
   const scopesSupported = [...STANDARD_SCOPES, ...(opts.scopes ?? [])]
   const tickets = pictureTickets(subjectSecret)
+  const secure = new URL(issuer).protocol === 'https:'
+  const consentCookieName = `${secure ? '__Host-' : ''}oa_preview_ok`
+
+  /** The unexpired preview consents this browser carries, if its cookie is ours. */
+  async function previewConsents(req: Request, nowS: number): Promise<PreviewConsent[]> {
+    const raw = cookieValue(req, consentCookieName)
+    const dot = raw?.lastIndexOf('.') ?? -1
+    if (!raw || dot < 0) return []
+    const body = raw.slice(0, dot)
+    if (!same(raw.slice(dot + 1), await hmac(subjectSecret, `preview-consent:${body}`))) return []
+    try {
+      const list = JSON.parse(b64uDecodeString(body)) as PreviewConsent[]
+      return Array.isArray(list) ? list.filter(c => typeof c?.x === 'number' && c.x > nowS) : []
+    } catch {
+      return []
+    }
+  }
+
+  async function previewConsentCookie(list: PreviewConsent[]): Promise<string> {
+    const body = b64uEncode(enc.encode(JSON.stringify(list.slice(-PREVIEW_CONSENT_MAX))))
+    const value = `${body}.${await hmac(subjectSecret, `preview-consent:${body}`)}`
+    return `${consentCookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${PREVIEW_CONSENT_TTL_S}${secure ? '; Secure' : ''}`
+  }
+
+  /** The one click a preview client needs: posts back to this same `/authorize` request. */
+  function previewConsentPage(url: URL, client: ProviderClient, email: string, redirectUri: string): Response {
+    const target = new URL(redirectUri)
+    const app = client.name ?? client.id
+    const body = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to a preview?</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; padding: 16px; display: grid; place-items: center; min-height: 90vh; }
+main { max-width: 32rem; }
+.host { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.muted { opacity: 0.7; font-size: 0.9em; }
+button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
+</style></head>
+<body><main>
+<h1>Sign in to a preview?</h1>
+<p><strong class="host">${esc(target.host)}</strong> wants to sign you in as <strong>${esc(email)}</strong>.</p>
+<p>It's a preview of ${esc(app)}, built from a branch whose code may not have been reviewed. Continue only if you meant to open it.</p>
+<form method="post" action="${esc(`${url.pathname}${url.search}`)}">
+<button name="decision" value="allow">Continue</button><button name="decision" value="deny">Cancel</button>
+</form>
+<p class="muted">You won't be asked again for this address for 7 days.</p>
+</main></body></html>
+`
+    return new Response(body, {
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${target.origin}; frame-ancestors 'none'; base-uri 'none'`,
+        'x-frame-options': 'DENY',
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff',
+      },
+    })
+  }
 
   const discovery = () => ({
     issuer,
@@ -197,6 +295,13 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
   async function authorize(req: Request): Promise<Response> {
     const url = new URL(req.url)
     const q = url.searchParams
+    // A POST is only the preview consent page's answer, and only from that page.
+    let decision: string | null = null
+    if (req.method === 'POST') {
+      if (req.headers.get('origin') !== origin) return page(403, 'This form has to come from this site.')
+      decision = new URLSearchParams(await req.text()).get('decision')
+      if (decision !== 'allow' && decision !== 'deny') return page(400, 'bad decision')
+    }
     // Repeated parameters are ambiguous, and ambiguity is how parsers get split.
     for (const k of new Set(q.keys())) if (q.getAll(k).length > 1) return page(400, `repeated parameter: ${k}`)
 
@@ -205,13 +310,16 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const redirectUri = q.get('redirect_uri')
     // Exact, before anything is redirected: an unregistered URI must never
     // receive anything, an error included, or this is an open redirect.
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) return page(400, 'redirect_uri is not registered for this client')
+    if (!redirectUri || !redirectAllowed(client.redirectUris, redirectUri, client.preview === true)) {
+      return page(400, 'redirect_uri is not registered for this client')
+    }
+    if (decision !== null && !client.preview) return page(405, 'GET only')
 
     const state = q.get('state')
-    const back = (params: Record<string, string>): Response => {
+    const back = (params: Record<string, string>, cookies: string[] = []): Response => {
       const to = new URL(redirectUri)
       for (const [k, v] of Object.entries({ ...params, ...(state !== null ? { state } : {}), iss: issuer })) to.searchParams.set(k, v)
-      return redirect(to.toString())
+      return redirect(to.toString(), cookies)
     }
     const fail = (error: string, description?: string) => back({ error, ...(description ? { error_description: description } : {}) })
 
@@ -263,6 +371,20 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
 
     if (!(await admitted(email, client))) return fail('access_denied')
 
+    // A preview is unreviewed code: one click per host before it learns who this is.
+    const cookies: string[] = []
+    if (client.preview) {
+      const host = new URL(redirectUri).host
+      const sub = await subOf(email)
+      const held = await previewConsents(req, nowS)
+      const mine = (c: PreviewConsent) => c.s === sub && c.c === client.id && c.h === host
+      if (!held.some(mine)) {
+        if (decision === 'deny') return fail('access_denied')
+        if (decision !== 'allow') return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri)
+        cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, x: nowS + PREVIEW_CONSENT_TTL_S }]))
+      }
+    }
+
     const code = generateToken()
     await store.putCode({
       codeHash: await hashToken(code),
@@ -276,7 +398,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
       authTime: null,
       expiresAt: nowS + codeTtlS,
     })
-    return back({ code })
+    return back({ code }, cookies)
   }
 
   // ---- /token --------------------------------------------------------------
@@ -431,7 +553,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     const postLogout = params.get('post_logout_redirect_uri')
     const cookies = await gate.signOutCookies(req)
 
-    if (client && postLogout && (client.postLogoutRedirectUris ?? []).includes(postLogout)) {
+    if (client && postLogout && redirectAllowed(client.postLogoutRedirectUris ?? [], postLogout, client.preview === true)) {
       const to = new URL(postLogout)
       const state = params.get('state')
       if (state !== null) to.searchParams.set('state', state)
@@ -453,7 +575,7 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
       case '/jwks':
         return json(ks().jwks, 200, { 'cache-control': 'public, max-age=300' })
       case '/authorize':
-        return req.method === 'GET' ? authorize(req) : page(405, 'GET only')
+        return req.method === 'GET' || req.method === 'POST' ? authorize(req) : page(405, 'GET or POST only')
       case '/token':
         return token(req)
       case '/userinfo':

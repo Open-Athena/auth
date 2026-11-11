@@ -22,7 +22,7 @@ beforeAll(async () => {
   KEY = await generateSigningKey('k1')
 })
 
-function setup() {
+function setup({ previewSuffixes }: { previewSuffixes?: string[] } = {}) {
   const { db, raw } = testDbRaw(['provider'])
   const gate = createGate({
     store: d1GrantStore(db),
@@ -37,6 +37,7 @@ function setup() {
     staticClients: [{ id: 'in-code', secretHash: 'x', redirectUris: ['https://code.oa.dev/cb'] }],
     admins: parseAdmins(` ${ADMIN.toUpperCase()} , `),
     redirectDomains: ['oa.dev'],
+    ...(previewSuffixes ? { previewSuffixes } : {}),
     signInPath: '/signin-here',
   })
   const provider = oidcProviderRoutes({
@@ -160,6 +161,35 @@ describe('creating an app', () => {
     expect(await registry.list()).toEqual([])
   })
 
+  it('a preview client may use a pattern under an allowlisted host; nothing else may, and the flag never changes', async () => {
+    const { post, cookieFor, registry, authorize } = setup({ previewSuffixes: ['proj.pages.dev'] })
+    const cookie = await cookieFor(ADMIN)
+    const PATTERN = 'https://*.proj.pages.dev/auth/oa/callback'
+    const alert = async (res: Response) => /role="alert">([^<]*)</.exec(await res.text())?.[1] ?? null
+    const plain = await post('/admin/clients', { ...NEW, redirects: PATTERN }, cookie)
+    const elsewhere = await post('/admin/clients', { ...NEW, redirects: 'https://*.other.pages.dev/auth/oa/callback', preview: 'on' }, cookie)
+    expect([plain.status, await alert(plain), elsewhere.status, await alert(elsewhere)]).toEqual([
+      400, `${PATTERN}: patterns are only for preview clients, under an allowlisted host`,
+      400, 'https://*.other.pages.dev/auth/oa/callback: patterns are only allowed under proj.pages.dev',
+    ])
+
+    const created = await post('/admin/clients', { ...NEW, id: 'proj-preview', redirects: PATTERN, preview: 'on' }, cookie)
+    expect([created.status, /<strong>A preview client:<\/strong>/.test(await created.text())]).toEqual([200, true])
+    expect(await authorize('proj-preview', 'https://pr-7.proj.pages.dev/auth/oa/callback')).toBe(302)
+    // Saving without the box ticked leaves it a preview client, pattern and all.
+    expect((await post('/admin/clients/proj-preview', { action: 'save', name: 'Proj previews', redirects: PATTERN, postLogouts: '' }, cookie)).status).toBe(302)
+    const stored = (await registry.get('proj-preview'))!
+    expect([stored.preview, stored.name, stored.redirectUris]).toEqual([true, 'Proj previews', [PATTERN]])
+  })
+
+  it('without an allowlist there are no preview clients', async () => {
+    const { post, get, cookieFor, registry } = setup()
+    const cookie = await cookieFor(ADMIN)
+    const res = await post('/admin/clients', { ...NEW, preview: 'on' }, cookie)
+    expect([res.status, /role="alert">([^<]*)</.exec(await res.text())?.[1], await registry.list()]).toEqual([400, 'Preview clients are not enabled here.', []])
+    expect(/name="preview"/.test(await (await get(cookie)).text())).toBe(false)
+  })
+
   it('accepts loopback for local development', async () => {
     const { post, cookieFor, registry } = setup()
     expect((await post('/admin/clients', { ...NEW, redirects: 'http://localhost:4632/auth/oa/callback' }, await cookieFor(ADMIN))).status).toBe(200)
@@ -268,6 +298,7 @@ describe('oa-client.mjs', () => {
       secretHash: 'h1',
       redirectUris: [CB],
       postLogoutRedirectUris: [],
+      preview: false,
       disabledAt: null,
       createdAt: T,
       createdBy: 'cli:me',

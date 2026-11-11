@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "pnpm -w run build && pnpm db:local && wrangler dev --ip 0.0.0.0 --port 4191 --local-upstream localhost:4191",
     "typecheck": "tsc --noEmit",
-    "db:local": "wrangler d1 migrations apply oa-login --local && wrangler d1 execute oa-login --local --file ../migrations/provider/0001_provider.sql && wrangler d1 execute oa-login --local --file ../migrations/provider/0002_clients.sql && wrangler d1 execute oa-login --local --file ../migrations/provider/0003_spent_codes.sql",
-    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-login --remote && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0001_provider.sql && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0002_clients.sql && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0003_spent_codes.sql",
+    "db:local": "wrangler d1 migrations apply oa-login --local && wrangler d1 execute oa-login --local --file ../migrations/provider/0001_provider.sql && wrangler d1 execute oa-login --local --file ../migrations/provider/0002_clients.sql && wrangler d1 execute oa-login --local --file ../migrations/provider/0003_spent_codes.sql && wrangler d1 execute oa-login --local --file ../migrations/provider/0004_preview_clients.sql",
+    "db:remote": "CI=1 scripts/oa-wrangler.sh d1 migrations apply oa-login --remote && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0001_provider.sql && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0002_clients.sql && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0003_spent_codes.sql && CI=1 scripts/oa-wrangler.sh d1 execute oa-login --remote --file ../migrations/provider/0004_preview_clients.sql",
     "deploy": "pnpm -w run build && scripts/oa-wrangler.sh deploy"
   },
   "dependencies": {

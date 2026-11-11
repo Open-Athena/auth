@@ -62,7 +62,7 @@ if (!grant || grant.expiresAt <= now()) return error('machine authorization requ
 }
 
 const metadata = (c: RegisteredClient): Omit<RegisteredClient, 'secretHash'> => ({
-  id: c.id, name: c.name, redirectUris: c.redirectUris, postLogoutRedirectUris: c.postLogoutRedirectUris,
+  id: c.id, name: c.name, redirectUris: c.redirectUris, postLogoutRedirectUris: c.postLogoutRedirectUris, preview: c.preview,
   disabledAt: c.disabledAt, createdAt: c.createdAt, createdBy: c.createdBy, updatedAt: c.updatedAt, updatedBy: c.updatedBy,
 })
 const equalList = (a: string[], b: string[]): boolean => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())

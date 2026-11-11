@@ -19,5 +19,6 @@ export {
   redirectUriProblem,
   type RegisteredClient,
 } from './registry.js'
+export { previewPattern, redirectAllowed } from './redirects.js'
 export { type CodeRecord, memoryProviderStore, type ProviderStore } from './store.js'
 export { clientManagementRoutes, managementTokenAuth, type ClientManagementOptions, type ClientCallbackPolicy, type ManagementAction, type ManagementGrant, type ManagementPrincipal } from './management.js'

@@ -12,6 +12,7 @@ const CLIENT: RegisteredClient = {
   secretHash: 'test-only-original-hash',
   redirectUris: ['https://cas.oa.dev/callback'],
   postLogoutRedirectUris: ['https://cas.oa.dev/'],
+  preview: false,
   disabledAt: null,
   createdAt: CREATED_AT,
   createdBy: 'creator',

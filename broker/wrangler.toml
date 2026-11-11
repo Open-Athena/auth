@@ -23,6 +23,10 @@ WORKSPACE_DOMAIN = "openathena.ai"
 ADMIN_EMAILS = "ryan.williams@openathena.ai"
 # Callbacks /admin and scripts/oa-client.mjs accept must be https under this (or loopback).
 CLIENT_REDIRECT_DOMAIN = "oa.dev"
+# Hosts (comma-separated) whose one-label subdomains a preview client may cover with a
+# `https://*.<host>/<path>` callback: Cloudflare Pages projects' branch hosts, for PR previews.
+# Only that project's deployments serve under `<project>.pages.dev`. Adding one is a reviewed deploy.
+PREVIEW_HOST_SUFFIXES = ""
 
 # Secrets (`scripts/oa-wrangler.sh secret put <NAME>`):
 #   SESSION_SECRET        - HMAC key for the broker's session cookie, state and subject ids

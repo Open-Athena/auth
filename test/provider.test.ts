@@ -6,7 +6,7 @@
  * between" is asserted as the exact hops a browser makes.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { oidcCallback, oidcStart } from '../src/adapters/oidc.js'
+import { oidcCallback, oidcStart, redirectFromOrigin } from '../src/adapters/oidc.js'
 import { b64uDecodeBytes, b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
 import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
@@ -20,6 +20,9 @@ import { testDbRaw } from './d1-shim.js'
 import { memoryAudit, memoryStore } from './memory-store.js'
 
 const ISSUER = 'https://login.test'
+/** A Pages project's branch hosts, all one preview client (`app-p`). */
+const PREVIEW = 'proj.pages.dev'
+const PREVIEW_HOSTS = ['pr-1', 'pr-2', 'pr-3'].map(b => `${b}.${PREVIEW}`)
 const T0 = Date.UTC(2026, 9, 25, 12, 0, 0)
 const enc = new TextEncoder()
 
@@ -131,6 +134,14 @@ async function world(o: WorldOptions = {}) {
     clients: [
       { ...(await client('app-a', 'a.test')), ...(o.pkceOptionalA ? { requirePkce: false } : {}) },
       await client('app-b', 'b.test', o.allowB),
+      {
+        id: 'app-p',
+        name: 'Project',
+        secretHash: await hashClientSecret('app-p-secret'),
+        redirectUris: [`https://*.${PREVIEW}/auth/cb`],
+        postLogoutRedirectUris: [`https://*.${PREVIEW}/bye`],
+        preview: true,
+      },
     ],
     keys: [KEY],
     store,
@@ -141,10 +152,10 @@ async function world(o: WorldOptions = {}) {
     ...(o.policy ? { policy: o.policy } : {}),
   })
   const apps = new Map<string, { gate: Gate; start: ReturnType<typeof oidcStart>; callback: ReturnType<typeof oidcCallback> }>()
-  const appProfiles = new Map([['a.test', memoryProfileStore()], ['b.test', memoryProfileStore()]])
+  const appProfiles = new Map([['a.test', memoryProfileStore()], ['b.test', memoryProfileStore()], ...PREVIEW_HOSTS.map(h => [h, memoryProfileStore()] as const)])
   // Server-to-server calls (token, JWKS) carry no browser cookies.
   const serverFetch = (async (input: RequestInfo | URL, init?: RequestInit) => net(new Request(input, init))) as typeof fetch
-  for (const [host, id] of [['a.test', 'app-a'], ['b.test', 'app-b']] as const) {
+  for (const [host, id] of [['a.test', 'app-a'], ['b.test', 'app-b'], ...PREVIEW_HOSTS.map(h => [h, 'app-p'] as const)] as const) {
     const gate = createGate({
       store: memoryStore(),
       audit: memoryAudit(),
@@ -156,7 +167,8 @@ async function world(o: WorldOptions = {}) {
       gate,
       clientId: id,
       clientSecret: `${id}-secret`,
-      redirectUri: `https://${host}/auth/cb`,
+      // A preview deployment answers on every branch host: its callback follows the request.
+      redirectUri: id === 'app-p' ? redirectFromOrigin('/auth/cb') : `https://${host}/auth/cb`,
       provider: brokerProvider(ISSUER),
       accountHintCookie: false as const,
       fetch: serverFetch,
@@ -577,6 +589,130 @@ describe('refusals', () => {
     const [h, p] = forged.split('.')
     const none = `${b64uEncode(enc.encode(JSON.stringify({ alg: 'none', kid: 'k1' })))}.${p}.`
     expect([await ours.verify(none), await ours.verify(`${h}.${p}`)]).toEqual([null, null])
+  })
+})
+
+describe('PR-preview clients', () => {
+  const short = (h: string) => { const u = new URL(h); return `${u.host}${u.pathname}${u.pathname === '/home' ? u.search : ''}` }
+  /** The consent page's form, posted from the broker's own origin unless told otherwise. */
+  const consent = async (b: Browser, res: Response, decision: string, origin: string | null = ISSUER) => {
+    const action = /<form method="post" action="([^"]+)">/.exec(await res.text())![1]!.replace(/&amp;/g, '&')
+    const posted = await b.request(new URL(action, ISSUER).toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...(origin ? { origin } : {}) },
+      body: new URLSearchParams({ decision }).toString(),
+    })
+    if (posted.status !== 302) return { status: posted.status, hops: [] as string[] }
+    const { hops } = await b.follow(new URL(posted.headers.get('location')!).toString())
+    return { status: 302, hops }
+  }
+
+  it('one click per branch host, naming it; then that host signs in silently, and another asks again', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+
+    const first = await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)
+    expect([first.hops.map(short), first.res.status]).toEqual([[`${PREVIEW_HOSTS[0]}/auth/start`, 'login.test/oidc/authorize'], 200])
+    expect(Object.fromEntries([...first.res.headers].filter(([k]) => ['content-security-policy', 'x-frame-options', 'cache-control'].includes(k)))).toEqual({
+      'cache-control': 'no-store',
+      'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://${PREVIEW_HOSTS[0]}; frame-ancestors 'none'; base-uri 'none'`,
+      'x-frame-options': 'DENY',
+    })
+    const html = await first.res.clone().text()
+    expect(/<p><strong class="host">([^<]+)<\/strong> wants to sign you in as <strong>([^<]+)<\/strong>\.<\/p>/.exec(html)!.slice(1)).toEqual([PREVIEW_HOSTS[0], 'ada@openathena.ai'])
+    expect((await consent(b, first.res, 'allow')).hops.map(short)).toEqual([`${PREVIEW_HOSTS[0]}/auth/cb`, `${PREVIEW_HOSTS[0]}/home`])
+    expect(await w.whoAt(b, PREVIEW_HOSTS[0]!)).toBe('ada@openathena.ai')
+
+    // The same host again, silently: no page.
+    const again = await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=none`)
+    expect(again.hops.map(short)).toEqual([`${PREVIEW_HOSTS[0]}/auth/start`, 'login.test/oidc/authorize', `${PREVIEW_HOSTS[0]}/auth/cb`, `${PREVIEW_HOSTS[0]}/home`])
+
+    // Another branch: silent fails as interaction_required, and an interactive start asks.
+    const silent = await b.follow(`https://${PREVIEW_HOSTS[1]}/auth/start?next=/home&prompt=none`)
+    expect(silent.hops.map(short)).toEqual([`${PREVIEW_HOSTS[1]}/auth/start`, 'login.test/oidc/authorize', `${PREVIEW_HOSTS[1]}/auth/cb`, `${PREVIEW_HOSTS[1]}/home?sso=interaction_required`])
+    expect(await w.whoAt(b, PREVIEW_HOSTS[1]!)).toBe(null)
+    expect((await b.follow(`https://${PREVIEW_HOSTS[1]}/auth/start?next=/home`)).res.status).toBe(200)
+  })
+
+  it('the click lasts 7 days, and belongs to the account that gave it', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    await consent(b, (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res, 'allow')
+    const silently = async () => (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=none`)).hops.at(-1)!
+    at(7 * 86400 - 1)
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const fresh = await silently()
+    at(7 * 86400)
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const expired = await silently()
+    at(0)
+    await w.signInAtBroker(b, 'bob@openathena.ai')
+    const other = await silently()
+    expect([fresh, expired, other].map(short)).toEqual([
+      `${PREVIEW_HOSTS[0]}/home`,
+      `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+      `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+    ])
+  })
+
+  it('cancel goes back to the app as access_denied, and remembers nothing', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const { res } = await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)
+    expect((await consent(b, res, 'deny')).hops.map(short)).toEqual([`${PREVIEW_HOSTS[0]}/auth/cb`, `${PREVIEW_HOSTS[0]}/home?sso=access_denied`])
+    expect((await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res.status).toBe(200)
+  })
+
+  it('only the page itself can answer: a cross-site post, a bad decision, a forged cookie, or a post for any other client', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const page = () => b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)
+    const crossSite = await consent(b, (await page()).res, 'allow', `https://${PREVIEW_HOSTS[0]}`)
+    const noOrigin = await consent(b, (await page()).res, 'allow', null)
+    const badDecision = await consent(b, (await page()).res, 'yes')
+    b.jar('login.test').set('__Host-oa_preview_ok', 'W3sicyI6IngiLCJjIjoiYXBwLXAiLCJoIjoicHItMS5wcm9qLnBhZ2VzLmRldiIsIngiOjk5OTk5OTk5OTl9XQ.forged')
+    const forged = (await page()).res.status
+    const otherClient = await b.request(authorizeUrl({ code_challenge: (await pkce()).challenge, code_challenge_method: 'S256' }), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ISSUER },
+      body: 'decision=allow',
+    })
+    expect([crossSite.status, noOrigin.status, badDecision.status, forged, otherClient.status]).toEqual([403, 403, 400, 200, 405])
+    expect(await w.whoAt(b, PREVIEW_HOSTS[0]!)).toBe(null)
+  })
+
+  it('tokens are for the preview client, and logout returns to a branch host by pattern', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const { verifier, challenge } = await pkce()
+    const redirect = `https://${PREVIEW_HOSTS[2]}/auth/cb`
+    const start = await b.request(authorizeUrl({ client_id: 'app-p', redirect_uri: redirect, code_challenge: challenge, code_challenge_method: 'S256' }))
+    const { hops } = await consent(b, start, 'allow')
+    const code = new URL(hops[0]!).searchParams.get('code')!
+    const tokens = (await (await w.net(tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirect, code_verifier: verifier, client_id: 'app-p', client_secret: 'app-p-secret' }))).json()) as { id_token: string }
+    expect(claimsOf(tokens.id_token).aud).toBe('app-p')
+    const out = await b.request(`${ISSUER}/oidc/logout?${new URLSearchParams({ id_token_hint: tokens.id_token, post_logout_redirect_uri: `https://${PREVIEW_HOSTS[2]}/bye` })}`)
+    const stray = await b.request(`${ISSUER}/oidc/logout?${new URLSearchParams({ id_token_hint: tokens.id_token, post_logout_redirect_uri: `https://${PREVIEW_HOSTS[2]}/elsewhere` })}`)
+    expect([out.status, out.headers.get('location'), stray.status]).toEqual([302, `https://${PREVIEW_HOSTS[2]}/bye`, 200])
+  })
+
+  it('an exact-match client never matches a pattern, even sent literally', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const statuses = []
+    for (const [client_id, redirect_uri] of [
+      ['app-a', `https://${PREVIEW_HOSTS[0]}/auth/cb`],
+      ['app-p', `https://*.${PREVIEW}/auth/cb`],
+      ['app-p', `https://x.y.${PREVIEW}/auth/cb`],
+      ['app-p', 'https://a.test/auth/cb'],
+    ]) statuses.push((await b.request(authorizeUrl({ client_id: client_id!, redirect_uri: redirect_uri!, code_challenge: (await pkce()).challenge, code_challenge_method: 'S256' }))).status)
+    expect(statuses).toEqual([400, 400, 400, 400])
   })
 })
 

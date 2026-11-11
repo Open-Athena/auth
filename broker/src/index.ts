@@ -30,6 +30,8 @@ export interface Env {
   ADMIN_EMAILS?: string
   /** Callbacks `/admin` accepts must be https under this (or loopback). */
   CLIENT_REDIRECT_DOMAIN: string
+  /** Comma-separated hosts a preview client's `https://*.<host>/<path>` callback may cover (e.g. `oa-gcs-usage.pages.dev`). */
+  PREVIEW_HOST_SUFFIXES?: string
   /** JSON array of scoped, expiring management grants. Absent = API disabled. Hashes only. */
   CLIENT_MANAGEMENT_GRANTS?: string
   SESSION_SECRET?: string
@@ -119,6 +121,7 @@ export default {
       staticClients: clients,
       admins,
       redirectDomains: [env.CLIENT_REDIRECT_DOMAIN],
+      previewSuffixes: (env.PREVIEW_HOST_SUFFIXES ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
       signInPath: devSignin ? '/dev/signin?next=/admin' : '/auth/google/start?next=/admin',
     })(req)
     if (fromAdmin) return fromAdmin

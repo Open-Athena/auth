@@ -24,6 +24,12 @@ export interface AdminOptions {
   admins: Set<string>
   /** Callbacks must be https under one of these (or loopback). */
   redirectDomains: string[]
+  /**
+   * Hosts whose one-label subdomains a preview client may cover with a
+   * `https://*.<host>/<path>` callback (e.g. `oa-gcs-usage.pages.dev`). Empty:
+   * no preview clients can be made here.
+   */
+  previewSuffixes?: string[]
   /** Where to send someone not signed in. */
   signInPath: string
 }
@@ -37,6 +43,7 @@ interface Draft {
   name: string
   redirects: string
   postLogouts: string
+  preview: boolean
 }
 
 const lines = (raw: string): string[] => raw.split(/\s+/).filter(Boolean)
@@ -55,13 +62,13 @@ const fields = (d: Pick<Draft, 'name' | 'redirects' | 'postLogouts'>) => `<label
 <label>After-logout URLs, one per line (optional)<textarea name="postLogouts" rows="1">${esc(d.postLogouts)}</textarea></label>`
 
 function clientRows(c: RegisteredClient, draft: Draft | null): string {
-  const d = draft ?? { id: c.id, name: c.name, redirects: c.redirectUris.join('\n'), postLogouts: c.postLogoutRedirectUris.join('\n') }
+  const d = draft ?? { id: c.id, name: c.name, redirects: c.redirectUris.join('\n'), postLogouts: c.postLogoutRedirectUris.join('\n'), preview: c.preview }
   const action = `/admin/clients/${encodeURIComponent(c.id)}`
   const editor = `edit-${c.id}`
   return `<tr class="app-row">
 <th scope="row"><span class="app-name">${esc(c.name)}</span><code class="app-id muted">${esc(c.id)}</code></th>
 <td class="callbacks">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</td>
-<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span></td>
+<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span>${c.preview ? ' <span class="status">Preview</span>' : ''}</td>
 <td><div class="row-actions"><button type="button" class="quiet" data-edit aria-controls="${esc(editor)}" aria-expanded="${draft ? 'true' : 'false'}">Edit</button>
 <form method="post" action="${esc(action)}"><button class="quiet" name="action" value="${c.disabledAt === null ? 'disable' : 'enable'}">${c.disabledAt === null ? 'Disable' : 'Enable'}</button></form></div></td>
 </tr>
@@ -72,14 +79,17 @@ function clientRows(c: RegisteredClient, draft: Draft | null): string {
 </td></tr>`
 }
 
-export function adminRoutes({ gate, registry, staticClients, admins, redirectDomains, signInPath }: AdminOptions) {
+export function adminRoutes({ gate, registry, staticClients, admins, redirectDomains, previewSuffixes = [], signInPath }: AdminOptions) {
   const staticIds = new Set(staticClients.map(c => c.id))
 
   async function listPage(actor: string, nonce: string, error: string | null = null, draft: Draft | null = null): Promise<Response> {
     const [clients, events] = await Promise.all([registry.list(), registry.events(30)])
     const editing = draft && clients.some(c => c.id === draft.id) ? draft : null
-    const creating = draft && !editing ? draft : { id: '', name: '', redirects: '', postLogouts: '' }
-    const body = `<p class="muted">Signed in as ${esc(actor)}. Callbacks must be https under ${esc(redirectDomains.join(', '))}, or loopback.</p>
+    const creating = draft && !editing ? draft : { id: '', name: '', redirects: '', postLogouts: '', preview: false }
+    const previewNote = previewSuffixes.length
+      ? ` A preview client may also use <code>https://*.&lt;host&gt;/&lt;path&gt;</code> for ${previewSuffixes.map(s => `<code>${esc(s)}</code>`).join(', ')}.`
+      : ''
+    const body = `<p class="muted">Signed in as ${esc(actor)}. Callbacks must be https under ${esc(redirectDomains.join(', '))}, or loopback.${previewNote}</p>
 ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
 <div class="scroll"><table class="apps" aria-label="Registered apps"><thead><tr><th scope="col">App</th><th scope="col">Callbacks</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>
 ${clients.map(c => clientRows(c, editing?.id === c.id ? editing : null)).join('\n')}
@@ -95,6 +105,11 @@ ${clients.length + staticClients.length === 0 ? '<tr><td colspan="4" class="mute
 <form method="post" action="/admin/clients" class="app-fields create-app">
 <label>Client id<input name="id" required maxlength="63" pattern="[a-z0-9-]+" value="${esc(creating.id)}"></label>
 ${fields(creating)}
+${
+  previewSuffixes.length
+    ? `<label class="check"><input type="checkbox" name="preview"${creating.preview ? ' checked' : ''}> Preview client: PR builds of unreviewed code. Callbacks may use a pattern, sign-in always takes one click per host, and this can't be changed later.</label>`
+    : ''
+}
 <div class="actions"><button>Create</button></div>
 </form>
 <h2>Changes</h2>
@@ -122,7 +137,7 @@ document.querySelectorAll('[data-edit]').forEach(button => {
     return page('Registered apps', body, error ? 400 : 200, { wide: true, headers: securityHeaders(nonce) })
   }
 
-  function secretPage(req: Request, id: string, secret: string, verb: string, nonce: string): Response {
+  function secretPage(req: Request, id: string, secret: string, verb: string, nonce: string, preview: boolean): Response {
     const issuer = new URL(req.url).origin
     return page(
       `${verb}: ${id}`,
@@ -132,6 +147,7 @@ document.querySelectorAll('[data-edit]').forEach(button => {
 <h2>In the app</h2>
 <p class="muted">Issuer <code>${esc(issuer)}</code>, client id <code>${esc(id)}</code>, and the secret as a Worker secret:</p>
 <p><code>wrangler secret put OA_LOGIN_CLIENT_SECRET</code></p>
+${preview ? '<p><strong>A preview client:</strong> put this secret only in the preview deployment (a Pages project\'s Preview environment), never in production, and give the production app its own client.</p>' : ''}
 <script nonce="${nonce}">
 const b = document.getElementById('copy')
 b.addEventListener('click', async () => {
@@ -146,12 +162,13 @@ b.addEventListener('click', async () => {
 
   /** The problem with this submission, or null. */
   function problem(d: Draft): string | null {
+    if (d.preview && !previewSuffixes.length) return 'Preview clients are not enabled here.'
     if (!d.name.trim()) return 'Give it a name.'
     if (d.name.length > 100) return 'That name is too long.'
     const redirects = lines(d.redirects)
     if (!redirects.length) return 'Give it a callback URL.'
     for (const uri of [...redirects, ...lines(d.postLogouts)]) {
-      const p = redirectUriProblem(uri, redirectDomains)
+      const p = redirectUriProblem(uri, redirectDomains, d.preview ? { previewSuffixes } : {})
       if (p) return p
     }
     return null
@@ -175,7 +192,7 @@ b.addEventListener('click', async () => {
 
     const form = await req.formData()
     const text = (k: string) => String(form.get(k) ?? '').trim()
-    const draft: Draft = { id: text('id'), name: text('name'), redirects: text('redirects'), postLogouts: text('postLogouts') }
+    const draft: Draft = { id: text('id'), name: text('name'), redirects: text('redirects'), postLogouts: text('postLogouts'), preview: form.get('preview') !== null }
 
     if (path === '/admin/clients') {
       const idProblem = clientIdProblem(draft.id)
@@ -184,18 +201,27 @@ b.addEventListener('click', async () => {
       if (wrong) return listPage(email, nonce, wrong, draft)
       const secret = mintClientSecret()
       const created = await registry.create(
-        { id: draft.id, name: draft.name, secretHash: await hashClientSecret(secret), redirectUris: lines(draft.redirects), postLogoutRedirectUris: lines(draft.postLogouts) },
+        {
+          id: draft.id,
+          name: draft.name,
+          secretHash: await hashClientSecret(secret),
+          redirectUris: lines(draft.redirects),
+          postLogoutRedirectUris: lines(draft.postLogouts),
+          ...(draft.preview ? { preview: true } : {}),
+        },
         email,
       )
       if (!created) return listPage(email, nonce, `${draft.id} is taken.`, draft)
-      return secretPage(req, draft.id, secret, 'Created', nonce)
+      return secretPage(req, draft.id, secret, 'Created', nonce, draft.preview)
     }
 
     const id = decodeURIComponent(path.slice('/admin/clients/'.length))
-    if (!path.startsWith('/admin/clients/') || !(await registry.get(id))) return new Response('not found\n', { status: 404 })
+    const existing = path.startsWith('/admin/clients/') ? await registry.get(id) : null
+    if (!existing) return new Response('not found\n', { status: 404 })
     switch (text('action')) {
       case 'save': {
-        const edit = { ...draft, id }
+        // Whether it's a preview client was fixed when it was made.
+        const edit = { ...draft, id, preview: existing.preview }
         const wrong = problem(edit)
         if (wrong) return listPage(email, nonce, wrong, edit)
         await registry.update(id, { name: edit.name, redirectUris: lines(edit.redirects), postLogoutRedirectUris: lines(edit.postLogouts) }, email)
@@ -205,7 +231,7 @@ b.addEventListener('click', async () => {
         if (!form.get('confirm')) return listPage(email, nonce, `Tick the box to rotate ${id}'s secret.`)
         const secret = mintClientSecret()
         await registry.rotate(id, await hashClientSecret(secret), email)
-        return secretPage(req, id, secret, 'Rotated', nonce)
+        return secretPage(req, id, secret, 'Rotated', nonce, existing.preview)
       }
       case 'disable':
       case 'enable':
