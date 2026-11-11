@@ -26,7 +26,7 @@ CLIENT_REDIRECT_DOMAIN = "oa.dev"
 # Hosts (comma-separated) whose one-label subdomains a preview client may cover with a
 # `https://*.<host>/<path>` callback: Cloudflare Pages projects' branch hosts, for PR previews.
 # Only that project's deployments serve under `<project>.pages.dev`. Adding one is a reviewed deploy.
-PREVIEW_HOST_SUFFIXES = ""
+PREVIEW_HOST_SUFFIXES = "oa-gcs-usage.pages.dev,oa-cw-s3-usage.pages.dev,oa-hf-usage.pages.dev,oa-r2-usage.pages.dev"
 
 # Secrets (`scripts/oa-wrangler.sh secret put <NAME>`):
 #   SESSION_SECRET        - HMAC key for the broker's session cookie, state and subject ids
