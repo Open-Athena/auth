@@ -131,6 +131,9 @@ const SOFT_ERRORS = new Set(['login_required', 'interaction_required', 'account_
  * `oidc:`. The reverse holds too — a stolen session cookie is not a valid
  * state — so the two token types are mutually inert.
  */
+/** A `redirectUri` on whatever host the request came to: `path` under its origin. */
+export const redirectFromOrigin = (path) => (request) => new URL(path, new URL(request.url).origin).toString();
+const redirectFor = (redirectUri, request) => typeof redirectUri === 'string' ? redirectUri : redirectUri(request);
 export function oidcStart(opts) {
     const { gate, clientId, redirectUri, provider = GOOGLE, authParams = {}, stateTtlS = 600 } = opts;
     const nonceCookie = opts.nonceCookieName ?? DEFAULT_NONCE_COOKIE;
@@ -152,7 +155,7 @@ export function oidcStart(opts) {
         const url = new URL(provider.authUrl);
         url.search = new URLSearchParams({
             client_id: clientId,
-            redirect_uri: redirectUri,
+            redirect_uri: redirectFor(redirectUri, request),
             response_type: 'code',
             scope: provider.scope,
             state,
@@ -230,7 +233,7 @@ export function oidcCallback(opts) {
                 code,
                 client_id: clientId,
                 client_secret: clientSecret,
-                redirect_uri: redirectUri,
+                redirect_uri: redirectFor(redirectUri, request),
                 grant_type: 'authorization_code',
                 code_verifier: await pkceVerifier(gate.secret, nonce),
             }).toString(),

@@ -4,12 +4,24 @@ import type { ProviderStore } from './store.js';
 /** One app allowed to sign people in here. */
 export interface ProviderClient {
     id: string;
+    /** For people: what this app is (the preview consent page names it). */
+    name?: string;
     /** `hashClientSecret(secret)`: the secret itself never sits in config. */
     secretHash: string;
-    /** Exact matches only: no prefixes, no wildcards, no normalizing. */
+    /** Exact matches only: no prefixes, no normalizing, and no wildcards except a preview client's patterns. */
     redirectUris: string[];
-    /** Where RP-initiated logout may send the browser afterwards (exact matches). */
+    /** Where RP-initiated logout may send the browser afterwards (exact matches, or a preview client's patterns). */
     postLogoutRedirectUris?: string[];
+    /**
+     * A PR-preview client: its URIs may include `https://*.<host>/<path>`
+     * patterns (one DNS label, `redirects.ts`), and since a preview is unreviewed
+     * code, it never signs anyone in silently. The first sign-in per preview
+     * host, account and client is one click on a page here naming the host,
+     * remembered for 7 days; `prompt=none` gets `interaction_required` until
+     * then. Give it its own id (so its tokens' `aud` differs from the app's)
+     * and its own secret, held only by the preview deployment.
+     */
+    preview?: boolean;
     /** A per-app admission rule on top of the provider's `policy`. */
     allow?: (email: string) => boolean | Promise<boolean>;
     /**

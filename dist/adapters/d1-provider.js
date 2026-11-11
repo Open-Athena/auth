@@ -52,12 +52,14 @@ const clientFromRow = (r) => ({
     secretHash: r.secret_hash,
     redirectUris: JSON.parse(r.redirect_uris),
     postLogoutRedirectUris: JSON.parse(r.post_logout_redirect_uris),
+    preview: r.preview === 1,
     disabledAt: r.disabled_at,
     createdAt: r.created_at,
     createdBy: r.created_by,
     updatedAt: r.updated_at,
     updatedBy: r.updated_by,
 });
+const SELECT_CLIENT = 'SELECT c.*, EXISTS (SELECT 1 FROM provider_preview_clients p WHERE p.client_id = c.id) AS preview FROM provider_clients c';
 export function d1ClientRegistry(db) {
     const now = () => Math.floor(Date.now() / 1000);
     const logged = (id, action, actor, at, detail) => db.prepare('INSERT INTO provider_client_events (client_id, action, actor, at, detail) VALUES (?, ?, ?, ?, ?)').bind(id, action, actor, at, detail);
@@ -71,11 +73,11 @@ export function d1ClientRegistry(db) {
     };
     return {
         async get(id) {
-            const row = await db.prepare('SELECT * FROM provider_clients WHERE id = ?').bind(id).first();
+            const row = await db.prepare(`${SELECT_CLIENT} WHERE c.id = ?`).bind(id).first();
             return row ? clientFromRow(row) : null;
         },
         async list() {
-            const { results } = await db.prepare('SELECT * FROM provider_clients ORDER BY id').all();
+            const { results } = await db.prepare(`${SELECT_CLIENT} ORDER BY c.id`).all();
             return results.map(clientFromRow);
         },
         async create(c, actor) {
@@ -85,6 +87,8 @@ export function d1ClientRegistry(db) {
                     .prepare(`INSERT INTO provider_clients (id, name, secret_hash, redirect_uris, post_logout_redirect_uris, created_at, created_by, updated_at, updated_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`)
                     .bind(c.id, c.name, c.secretHash, JSON.stringify(c.redirectUris), JSON.stringify(c.postLogoutRedirectUris ?? []), at, actor, at, actor),
+                // Only with the row just inserted: a taken id never becomes a preview client.
+                db.prepare('INSERT OR IGNORE INTO provider_preview_clients (client_id) SELECT ? WHERE ? = 1 AND changes() = 1').bind(c.id, c.preview ? 1 : 0),
                 db
                     .prepare(`INSERT INTO provider_client_events (client_id, action, actor, at, detail)
              SELECT ?, 'create', ?, ?, ?

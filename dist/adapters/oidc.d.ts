@@ -12,8 +12,13 @@ export interface OidcOptions extends AccountHintOptions {
     gate: Gate;
     clientId: string;
     clientSecret: string;
-    /** Must match the provider's registered redirect exactly. */
-    redirectUri: string;
+    /**
+     * Must match the provider's registered redirect exactly. A function of the
+     * request when one deployment answers on many hosts (PR previews at
+     * `<branch>.<project>.pages.dev` against a broker preview client's pattern):
+     * `redirectFromOrigin('/auth/oa/callback')`.
+     */
+    redirectUri: string | ((request: Request) => string);
     provider?: OidcProvider;
     /** Extra authorization params — `hd` to hint a Google Workspace domain, say. */
     authParams?: Record<string, string>;
@@ -76,6 +81,8 @@ export declare const DEFAULT_ACCOUNT_HINT_COOKIE = "oa_google_hint";
  * `oidc:`. The reverse holds too — a stolen session cookie is not a valid
  * state — so the two token types are mutually inert.
  */
+/** A `redirectUri` on whatever host the request came to: `path` under its origin. */
+export declare const redirectFromOrigin: (path: string) => (request: Request) => string;
 export declare function oidcStart(opts: OidcOptions): ({ request }: {
     request: Request;
 }) => Promise<Response>;

@@ -8,5 +8,6 @@
 export { generateSigningKey, keySet, type KeySet, type PublicJwk, type SigningJwk } from './keys.js';
 export { brokerProvider, type ClaimsInput, hashClientSecret, oidcProviderRoutes, type ProviderClient, type ProviderOptions } from './routes.js';
 export { type ClientAction, type ClientChanges, type ClientEvent, clientIdProblem, clientLookup, type ClientRegistry, mintClientSecret, type NewClient, redirectUriProblem, type RegisteredClient, } from './registry.js';
+export { previewPattern, redirectAllowed } from './redirects.js';
 export { type CodeRecord, memoryProviderStore, type ProviderStore } from './store.js';
 export { clientManagementRoutes, managementTokenAuth, type ClientManagementOptions, type ClientCallbackPolicy, type ManagementAction, type ManagementGrant, type ManagementPrincipal } from './management.js';
