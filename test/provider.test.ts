@@ -594,8 +594,14 @@ describe('refusals', () => {
 
 describe('PR-preview clients', () => {
   const short = (h: string) => { const u = new URL(h); return `${u.host}${u.pathname}${u.pathname === '/home' ? u.search : ''}` }
-  /** The consent page's form, posted from the broker's own origin unless told otherwise. */
-  const consent = async (b: Browser, res: Response, decision: string, origin: string | null = ISSUER) => {
+  /**
+   * The Origin a browser puts on the consent page's same-origin form POST. Fetch's "serialize a
+   * request origin" sends `null` for a non-CORS POST when the page's referrer policy is
+   * `no-referrer`, and the real origin under `same-origin` and the other policies.
+   */
+  const browserOrigin = (res: Response) => res.headers.get('referrer-policy') === 'no-referrer' ? 'null' : new URL(ISSUER).origin
+  /** The consent page's form, posted the way a browser would unless told otherwise. */
+  const consent = async (b: Browser, res: Response, decision: string, origin: string | null = browserOrigin(res)) => {
     const action = /<form method="post" action="([^"]+)">/.exec(await res.text())![1]!.replace(/&amp;/g, '&')
     const posted = await b.request(new URL(action, ISSUER).toString(), {
       method: 'POST',
@@ -614,9 +620,10 @@ describe('PR-preview clients', () => {
 
     const first = await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)
     expect([first.hops.map(short), first.res.status]).toEqual([[`${PREVIEW_HOSTS[0]}/auth/start`, 'login.test/oidc/authorize'], 200])
-    expect(Object.fromEntries([...first.res.headers].filter(([k]) => ['content-security-policy', 'x-frame-options', 'cache-control'].includes(k)))).toEqual({
+    expect(Object.fromEntries([...first.res.headers].filter(([k]) => ['content-security-policy', 'x-frame-options', 'cache-control', 'referrer-policy'].includes(k)))).toEqual({
       'cache-control': 'no-store',
       'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://${PREVIEW_HOSTS[0]}; frame-ancestors 'none'; base-uri 'none'`,
+      'referrer-policy': 'same-origin',
       'x-frame-options': 'DENY',
     })
     const html = await first.res.clone().text()
@@ -666,13 +673,14 @@ describe('PR-preview clients', () => {
     expect((await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res.status).toBe(200)
   })
 
-  it('only the page itself can answer: a cross-site post, a bad decision, a forged cookie, or a post for any other client', async () => {
+  it('only the page itself can answer: a cross-site or opaque-origin post, a bad decision, a forged cookie, or a post for any other client', async () => {
     const w = await world()
     const b = w.browser()
     await w.signInAtBroker(b, 'ada@openathena.ai')
     const page = () => b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)
     const crossSite = await consent(b, (await page()).res, 'allow', `https://${PREVIEW_HOSTS[0]}`)
     const noOrigin = await consent(b, (await page()).res, 'allow', null)
+    const opaque = await consent(b, (await page()).res, 'allow', 'null')
     const badDecision = await consent(b, (await page()).res, 'yes')
     b.jar('login.test').set('__Host-oa_preview_ok', 'W3sicyI6IngiLCJjIjoiYXBwLXAiLCJoIjoicHItMS5wcm9qLnBhZ2VzLmRldiIsIngiOjk5OTk5OTk5OTl9XQ.forged')
     const forged = (await page()).res.status
@@ -681,7 +689,7 @@ describe('PR-preview clients', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ISSUER },
       body: 'decision=allow',
     })
-    expect([crossSite.status, noOrigin.status, badDecision.status, forged, otherClient.status]).toEqual([403, 403, 400, 200, 405])
+    expect([crossSite.status, noOrigin.status, opaque.status, badDecision.status, forged, otherClient.status]).toEqual([403, 403, 403, 400, 200, 405])
     expect(await w.whoAt(b, PREVIEW_HOSTS[0]!)).toBe(null)
   })
 
