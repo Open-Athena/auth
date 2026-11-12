@@ -134,7 +134,10 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
                 'cache-control': 'no-store',
                 'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${target.origin}; frame-ancestors 'none'; base-uri 'none'`,
                 'x-frame-options': 'DENY',
-                'referrer-policy': 'no-referrer',
+                // Not `no-referrer`: under it a browser sends `Origin: null` on the form's own POST, which
+                // `authorize` must refuse. `same-origin` keeps the real Origin there, and still sends no
+                // Referer (with the authorize URL's state and PKCE challenge) anywhere else.
+                'referrer-policy': 'same-origin',
                 'x-content-type-options': 'nosniff',
             },
         });
