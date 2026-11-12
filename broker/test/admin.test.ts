@@ -3,13 +3,13 @@
  * provider, plus `oa-client.mjs`'s SQL run against the same tables.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { d1ClientRegistry, d1ProviderStore } from '../../src/adapters/d1-provider.js'
 import { d1AuditSink, d1GrantStore } from '../../src/adapters/d1.js'
 import { createGate, domainPolicy } from '../../src/index.js'
 import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '../../src/provider/index.js'
 import { testDbRaw } from '../../test/d1-shim.js'
-import { createSql, existsSql, lit, listSql, rotateSql, setCallbacksSql, setDisabledSql } from '../scripts/oa-client.mjs'
+import { createSql, existsSql, isPreviewSql, lit, listSql, previewSuffixes, rotateSql, setCallbacksSql, setDisabledSql } from '../scripts/oa-client.mjs'
 import { adminRoutes, parseAdmins } from '../src/admin.js'
 
 const ORIGIN = 'https://login.test'
@@ -323,6 +323,32 @@ describe('oa-client.mjs', () => {
     expect((await registry.events()).map(e => e.action)).toEqual(['enable', 'disable', 'update', 'rotate', 'create'])
     expect(raw.prepare(existsSql('oa-jobs')).all()).toEqual([{ id: 'oa-jobs' }])
     expect(raw.prepare(listSql).all().map((r: Record<string, unknown>) => r.id)).toEqual(['oa-jobs'])
+  })
+
+  it('makes a preview client the provider then matches by pattern', async () => {
+    const { raw, registry, authorize } = setup()
+    const PATTERN = 'https://*.oa-hf-usage.pages.dev/auth/oa/callback'
+    raw.exec(createSql({ id: 'oa-hf-usage-preview', name: 'HF previews', secretHash: 'h1', redirectUris: [PATTERN], preview: true }, 'cli:me', T))
+    expect([(await registry.get('oa-hf-usage-preview'))!.preview, raw.prepare(isPreviewSql('oa-hf-usage-preview')).all(), raw.prepare(isPreviewSql('oa-jobs')).all()]).toEqual([
+      true,
+      [{ client_id: 'oa-hf-usage-preview' }],
+      [],
+    ])
+    expect(await authorize('oa-hf-usage-preview', 'https://pr-3.oa-hf-usage.pages.dev/auth/oa/callback')).toBe(302)
+  })
+
+  it("reads the preview allowlist from wrangler.toml, as the deployed broker has it", () => {
+    expect([
+      previewSuffixes('[vars]\nPREVIEW_HOST_SUFFIXES = "A.pages.dev, b.pages.dev,"\n'),
+      previewSuffixes('[vars]\nPREVIEW_HOST_SUFFIXES = ""\n'),
+      previewSuffixes('[vars]\n# PREVIEW_HOST_SUFFIXES = "x.pages.dev"\n'),
+      previewSuffixes(readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8')),
+    ]).toEqual([
+      ['a.pages.dev', 'b.pages.dev'],
+      [],
+      [],
+      ['oa-gcs-usage.pages.dev', 'oa-cw-s3-usage.pages.dev', 'oa-hf-usage.pages.dev', 'oa-r2-usage.pages.dev'],
+    ])
   })
 
   it('quotes a literal so it stays one', () => {
