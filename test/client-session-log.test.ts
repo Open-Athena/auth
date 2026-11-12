@@ -213,6 +213,9 @@ function page() {
   return { p, win, doc, con, origFetch, origError, tick: (ms: number) => { clock += ms } }
 }
 
+/** A request's context, for a fake page with no `navigator` that stays visible: start and end, number `id`. */
+const ctx = (id: number, at: number, o: Record<string, unknown> = {}) => ({ id, on0: null, vis0: 'visible', visMs: at - T0, end: at, wall: 0, on: null, vis: 'visible', ...o })
+
 describe('install', () => {
   it('records explicit aborts as cancellations and preserves the original rejection', async () => {
     const { logger } = rig()
@@ -221,7 +224,7 @@ describe('install', () => {
     origFetch.mockRejectedValueOnce(abort)
     const undo = install(p, logger)
     await expect(win.fetch('/api/cancelled')).rejects.toBe(abort)
-    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', u: '/api/cancelled', s: 0, ms: 0, err: 'abort' }])
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', ...ctx(1, T0), u: '/api/cancelled', s: 0, ms: 0, err: 'abort', cancel: 'AbortError' }])
     undo()
   })
 
@@ -234,20 +237,33 @@ describe('install', () => {
     await vi.advanceTimersByTimeAsync(4999)
     expect(logger.buffered.filter(e => e.k === 'api')).toEqual([])
     await vi.advanceTimersByTimeAsync(1)
-    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' }])
+    expect(logger.buffered.filter(e => e.k === 'api')).toEqual([{ t: T0, k: 'api', ...ctx(1, T0), u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' }])
     undo()
   })
 
-  it('records connectivity and time since the tab became visible on a network failure', async () => {
+  it("records connectivity and visibility at a request's start and end, and time since the tab became visible again", async () => {
     const { logger } = rig()
-    const { p, win, doc } = page()
-    const undo = install({ ...p, win: Object.assign(win, { navigator: { onLine: false } }) }, logger)
-    fire(doc, 'visibilitychange')
+    const { p, win, doc, origFetch, tick } = page()
+    const nav = { onLine: true }
+    const undo = install({ ...p, win: Object.assign(win, { navigator: nav }) }, logger)
+    const show = (s: string) => { (doc as { visibilityState: string }).visibilityState = s; fire(doc, 'visibilitychange') }
+    show('hidden')
+    await vi.advanceTimersByTimeAsync(100)
+    show('visible')
     await vi.advanceTimersByTimeAsync(250)
-    await expect(win.fetch('/api/down')).rejects.toThrow('Failed to fetch')
+    let reject!: (e: Error) => void
+    origFetch.mockImplementationOnce(() => new Promise<Response>((_, no) => { reject = no }))
+    const pending = win.fetch('/api/slow').catch(() => {})
+    nav.onLine = false
+    fire(win, 'offline')
+    show('hidden')
+    await vi.advanceTimersByTimeAsync(2000)
+    tick(2000)
+    reject(new TypeError('Failed to fetch'))
+    await pending
     await vi.advanceTimersByTimeAsync(LEAVE_MS)
     expect(logger.buffered.filter(e => e.k === 'api')).toEqual([
-      { t: T0 + 250, k: 'api', u: '/api/down', s: 0, ms: 0, online: false, visibility: 'visible', visible_ms: 250, err: 'TypeError: Failed to fetch' },
+      { t: T0 + 350, k: 'api', id: 1, on0: true, vis0: 'visible', visMs: 250, u: '/api/slow', end: T0 + 2350, wall: 2000, on: false, vis: 'hidden', s: 0, ms: 2000, err: 'TypeError: Failed to fetch' },
     ])
     undo()
   })
@@ -260,7 +276,7 @@ describe('install', () => {
     vi.advanceTimersByTime(500)
     fire(win, 'pagehide')
     expect(sent.map(s => ({ beacon: s.beacon, api: s.batch.events.filter(e => e.k === 'api') }))).toEqual([
-      { beacon: true, api: [{ t: T0, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'abort' }] },
+      { beacon: true, api: [{ t: T0, k: 'api', ...ctx(1, T0), u: '/api/down', s: 0, ms: 0, err: 'abort', cancel: 'pagehide' }] },
     ])
     await vi.advanceTimersByTimeAsync(10_000)
     expect(logger.buffered).toEqual([])
@@ -309,6 +325,7 @@ describe('install', () => {
     expect(sent.map(s => [s.beacon, s.batch.seq])).toEqual([[true, 0]])
     const evs = sent[0]!.batch.events.map(({ t, ...e }) => ({ dt: t - T0, ...e }))
     expect(evs).toEqual([
+      { dt: 0, k: 'life', s: 'init', on: null, vis: 'visible' },
       { dt: 0, k: 'start', u: '/?d=2026-10-10&key=…' },
       { dt: 0, k: 'viewport', w: 1280, h: 800, dpr: 2 },
       { dt: 0, k: 'nav', u: '/a/b?d=2026-10-10&f=ckpt' },
@@ -317,15 +334,16 @@ describe('install', () => {
       { dt: 0, k: 'click', l: 'input', x: true },
       { dt: 1000, k: 'filter', n: 'filter', q: 'ckpt' },
       { dt: 1100, k: 'pick', n: 'assign owner', v: 'ann' },
-      { dt: 1100, k: 'api', u: '/api/subtree?d=2026-10-10&key=…', s: 200, ms: 0, c: 'HIT', qe: 'pyrmts' },
-      { dt: 1100, k: 'api', m: 'POST', u: '/api/actions', b: { items: 2, kind: 'assign', memo: 'string' }, s: 200, ms: 0 },
-      { dt: 1100, k: 'api', u: '/api/diff?a=1', s: 503, ms: 0, err: 'phase2 timeout' },
-      { dt: 1100, k: 'api', u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' },
-      { dt: 6100, k: 'error', msg: 'Uncaught Error: kaboom', src: '/assets/index.js?key=…:1:2', st: err.stack },
-      { dt: 6100, k: 'reject', msg: 'nope' },
-      { dt: 6100, k: 'console', msg: 'Warning: Error: bad prop' },
-      { dt: 6600, k: 'viewport', w: 390, h: 844, dpr: 2 },
-      { dt: 6600, k: 'vis', s: 'hidden' },
+      { dt: 1100, k: 'api', ...ctx(1, T0 + 1100), u: '/api/subtree?d=2026-10-10&key=…', s: 200, ms: 0, rt: 'default', c: 'HIT', qe: 'pyrmts' },
+      { dt: 1100, k: 'api', ...ctx(3, T0 + 1100), m: 'POST', u: '/api/actions', b: { items: 2, kind: 'assign', memo: 'string' }, s: 200, ms: 0, rt: 'default' },
+      { dt: 1100, k: 'api', ...ctx(2, T0 + 1100), u: '/api/diff?a=1', s: 503, ms: 0, rt: 'default', err: 'phase2 timeout' },
+      { dt: 1100, k: 'api', ...ctx(4, T0 + 1100), u: '/api/down', s: 0, ms: 0, err: 'TypeError: Failed to fetch' },
+      // The pending timers run up to the lifecycle pulse, at 10 s.
+      { dt: 10_000, k: 'error', msg: 'Uncaught Error: kaboom', src: '/assets/index.js?key=…:1:2', st: err.stack },
+      { dt: 10_000, k: 'reject', msg: 'nope' },
+      { dt: 10_000, k: 'console', msg: 'Warning: Error: bad prop' },
+      { dt: 10_500, k: 'viewport', w: 390, h: 844, dpr: 2 },
+      { dt: 10_500, k: 'vis', s: 'hidden' },
     ])
     expect(origError.mock.calls.length).toBe(1)
     // Undo restores every patch.
@@ -342,7 +360,7 @@ describe('install', () => {
     install(p, logger)
     fire(doc, 'input', Object.assign(el('input', { 'data-log-input': 'filter' }), { value: 'tmp' }))
     fire(win, 'pagehide')
-    expect(sent.map(s => [s.beacon, kinds(s.batch)])).toEqual([[true, ['start', 'viewport', 'filter']]])
+    expect(sent.map(s => [s.beacon, kinds(s.batch)])).toEqual([[true, ['life', 'start', 'viewport', 'life', 'filter']]])
   })
 
   it('per event: well under 20 µs (measured)', () => {

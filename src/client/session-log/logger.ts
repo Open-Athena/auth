@@ -3,7 +3,8 @@
  * (`./index.ts`) only while the admin switch is on. `Logger` buffers and
  * flushes (pure: clock, transport and timers are the caller's); `install` wires
  * it to the page (URL changes, clicks on controls, opted-in input fields,
- * pickers, fetches, errors, console errors, viewport and visibility) and
+ * pickers, fetches, errors, console errors, viewport, visibility and browser
+ * lifecycle) and
  * returns its undo.
  */
 import { type AppEvents, benignError, bodySummary, BUILTIN_FIELDS, type Kind, LIMITS, type SlogBatch, type SlogEvent, TRUNC } from '../../core/session-log-shape.js'
@@ -15,6 +16,10 @@ export const FLUSH_MS = 10_000
 export const LEAVE_MS = 5_000
 export const FILTER_DEBOUNCE_MS = 800
 export const RESIZE_DEBOUNCE_MS = 500
+/** The lifecycle pulse's period, and the silence between pulses logged as a timer gap. */
+export const PULSE_MS = 10_000
+export const GAP_MS = 30_000
+const RAY = /^[a-f0-9]{16,32}(?:-[A-Z]{3})?$/
 
 type Fields = Record<string, unknown>
 /** Sends one batch body; `beacon` on page hide. Resolves to the HTTP status (null: unknown / failed). */
@@ -203,9 +208,10 @@ export interface Page {
     innerHeight: number
     devicePixelRatio: number
     fetch: typeof fetch
-    navigator?: { onLine: boolean }
+    navigator?: { onLine?: boolean }
   }
-  doc: EventTarget & { visibilityState: string; referrer: string }
+  /** `wasDiscarded`: Chrome's flag for a tab reloaded after the browser discarded it. */
+  doc: EventTarget & { visibilityState: string; referrer: string; wasDiscarded?: boolean }
   con: { error: (...a: unknown[]) => void }
   perfNow: () => number
 }
@@ -230,6 +236,41 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
     offs.push(() => t.removeEventListener(type, fn, capture))
   }
   const safe = <A extends unknown[]>(fn: (...a: A) => void) => (...a: A) => { try { fn(...a) } catch { /* the log never breaks the page */ } }
+
+  // Browser lifecycle: connectivity hints, visibility, freeze / resume, BFCache, and long timer gaps.
+  const online = () => (typeof win.navigator?.onLine === 'boolean' ? win.navigator.onLine : null)
+  const state = () => ({ on: online(), vis: doc.visibilityState })
+  let visibility = doc.visibilityState
+  let visibleAt: number | null = visibility === 'visible' ? Date.now() : null
+  let lastPulse = Date.now()
+  let gapAt: number | null = null
+  let gapMs = 0
+  const pulse = () => {
+    const now = Date.now()
+    // Observed here too: a query library's visibility handler may start a fetch before ours runs.
+    if (visibility !== doc.visibilityState) {
+      visibility = doc.visibilityState
+      visibleAt = visibility === 'visible' ? now : null
+    }
+    const elapsed = now - lastPulse
+    if (elapsed > GAP_MS) {
+      gapAt = now
+      gapMs = elapsed
+      // Throttling, suspension or a busy main thread: not proof of sleep.
+      logger.log('life', { s: 'gap', ms: elapsed, ...state() })
+    }
+    lastPulse = now
+  }
+  const pulseTimer = setInterval(safe(pulse), PULSE_MS)
+  offs.push(() => clearInterval(pulseTimer))
+  logger.log('life', { s: 'init', ...state(), ...(typeof doc.wasDiscarded === 'boolean' ? { discarded: doc.wasDiscarded } : {}) })
+  const lifecycle = (s: string, event?: Event) => {
+    pulse()
+    const persisted = (event as PageTransitionEvent | undefined)?.persisted
+    logger.log('life', { s, ...state(), ...(typeof persisted === 'boolean' ? { persisted } : {}) })
+  }
+  for (const name of ['online', 'offline', 'pageshow']) on(win, name, safe((e: Event) => lifecycle(name, e)))
+  for (const name of ['freeze', 'resume']) on(doc, name, safe((e: Event) => lifecycle(name, e)))
 
   // URL state: the boot URL, then every change (router pushes, `?d=` / `f=` replaces, back / forward).
   let lastHref = win.location.href
@@ -294,36 +335,43 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
   const release = (leaving: boolean) => {
     for (const [event, timer] of held) {
       clearTimeout(timer)
-      logger.push(leaving ? { ...event, err: 'abort' } as SlogEvent : event)
+      logger.push(leaving ? { ...event, err: 'abort', cancel: 'pagehide' } as SlogEvent : event)
     }
     held.clear()
   }
   offs.push(() => release(false))
-  // When the tab last became visible: a failure soon after a resume is likelier a network blip than an outage.
-  let visibleAt: number | null = null
+  let requestId = 0
   const origFetch = win.fetch
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url.includes(endpoint)) return origFetch.call(win, input, init)
+    pulse()
     const t = Date.now(), t0 = p.perfNow()
     const method = (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase()
+    // Context at the start; `finish` adds the end. A failure soon after a resume is likelier a blip than an outage.
     const base: Fields = {
+      id: ++requestId,
+      on0: online(),
+      vis0: doc.visibilityState,
+      ...(visibleAt !== null ? { visMs: Math.max(0, t - visibleAt) } : {}),
+      ...(gapAt !== null ? { gapMs, gapAgo: Math.max(0, t - gapAt) } : {}),
       ...(method !== 'GET' ? { m: method } : {}),
       u: redact(url),
       ...(method !== 'GET' && init?.body != null ? { b: bodySummary(init.body) } : {}),
     }
+    const finish = () => ({ end: Date.now(), wall: Math.max(0, Date.now() - t), ...state() })
     let res: Response
     try {
       res = await origFetch.call(win, input, init)
     } catch (e) {
       safe(() => {
-        const event = { t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0) } as SlogEvent
-        if ((e as Error)?.name === 'AbortError') logger.push({ ...event, err: 'abort' } as SlogEvent)
-        else {
-          const context = win.navigator
-            ? { online: win.navigator.onLine, visibility: doc.visibilityState, ...(visibleAt === null ? {} : { visible_ms: Math.max(0, Date.now() - visibleAt) }) }
-            : {}
-          const failed = { ...event, ...context, err: tr(errMsg(e), TRUNC.msg) } as SlogEvent
+        const event = { t, k: 'api', ...base, ...finish(), s: 0, ms: Math.round(p.perfNow() - t0) } as SlogEvent
+        // Which evidence says it was cancelled; never the abort reason itself.
+        const signal = init?.signal ?? (typeof input === 'object' && 'signal' in input ? input.signal : null)
+        if (signal?.aborted || (e as Error)?.name === 'AbortError') {
+          logger.push({ ...event, err: 'abort', cancel: signal?.aborted ? 'signal' : 'AbortError' } as SlogEvent)
+        } else {
+          const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) } as SlogEvent
           if (held.size >= LIMITS.flushEvents) logger.push(failed)
           else held.set(failed, setTimeout(safe(() => { held.delete(failed); logger.push(failed) }), LEAVE_MS))
         }
@@ -333,7 +381,14 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
     safe(() => {
       const ms = Math.round(p.perfNow() - t0)
       const h = res.headers
-      const ev = { t, k: 'api', ...base, s: res.status, ms, ...(h.get('x-cache') ? { c: h.get('x-cache') } : {}), ...(h.get('x-query-engine') ? { qe: h.get('x-query-engine') } : {}) } as SlogEvent
+      const ray = h.get('cf-ray')
+      const ev = {
+        t, k: 'api', ...base, ...finish(), s: res.status, ms, rt: res.type,
+        // Cloudflare's request id, to find the request in its logs; only a well-formed one.
+        ...(ray && RAY.test(ray) ? { ray } : {}),
+        ...(h.get('x-cache') ? { c: h.get('x-cache') } : {}),
+        ...(h.get('x-query-engine') ? { qe: h.get('x-query-engine') } : {}),
+      } as SlogEvent
       if (res.ok) { logger.push(ev); return }
       res.clone().json().then(
         (j: { error?: unknown }) => logger.push(j && typeof j.error === 'string' ? { ...ev, err: tr(j.error, TRUNC.msg) } : ev),
@@ -379,11 +434,11 @@ export function install(p: Page, logger: Logger, opts: InstallOptions = {}): () 
   on(win, 'resize', () => { if (rz) clearTimeout(rz); rz = setTimeout(safe(viewport), RESIZE_DEBOUNCE_MS) })
   offs.push(() => { if (rz) clearTimeout(rz) })
   on(doc, 'visibilitychange', safe(() => {
+    pulse()
     logger.log('vis', { s: doc.visibilityState })
-    if (doc.visibilityState === 'visible') visibleAt = Date.now()
     if (doc.visibilityState === 'hidden') logger.flush(true)
   }))
-  on(win, 'pagehide', safe(() => { release(true); logger.flush(true) }))
+  on(win, 'pagehide', safe((e: Event) => { release(true); lifecycle('pagehide', e); logger.flush(true) }))
 
   return () => { for (const off of offs.splice(0).reverse()) off() }
 }

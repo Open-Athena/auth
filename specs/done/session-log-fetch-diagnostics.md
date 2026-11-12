@@ -27,3 +27,11 @@ git -C ~/c/disky show 876069c94:specs/r2-network-diagnostics.md
 ## Done when
 
 Auth publishes a dist with the above and its tests. Then disky `cloud` bumps the pin, adds `life` to `site/functions/_lib/activityShape.ts` `KIND_DEFS` (`'Browser connectivity hints, lifecycle changes and long timer gaps'`, default `off`), and brings back the two disky test files. r2 picks that up on its next `cloud` merge.
+
+## As built (auth, 2026-11-11)
+
+- Ported from r2's patch onto the current logger. The per-request context, `life` events, Ray filter, cancel evidence and later-success links are as requested, and r2's four client tests pass unmodified against the package (`test/client-session-log-diagnostics.test.ts`).
+- `e5013f6`'s `online` / `visibility` / `visible_ms` are no longer sent. `on` / `vis` / `visMs` replace them. The server still accepts the old fields, so clients on `baf7314` keep working. `offlineFailure` reads `on` / `vis`, falling back to the old names.
+- **Change from r2's model test:** a failure that ended with `on: false` or `vis: 'hidden'` is an `offlineFailure`. It still shows its context and still links to a later success, but it isn't an error (lane `api`). The ported test in `test/react/session-log-model.test.ts` says so, and adds a failure that is still an error.
+- The later-success link applies to any request that got nothing usable (a 5xx, or no response other than a cancel), whether or not it counts as an error.
+- Fixed in passing: an app event's line no longer shows the server's `_received_ms`.

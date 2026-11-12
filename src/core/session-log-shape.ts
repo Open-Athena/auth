@@ -18,12 +18,14 @@ export const BUILTIN_FIELDS = {
   filter: ['n', 'q'],
   pick: ['n', 'v'],
   prefetch: ['w', 'p', 'd'],
-  api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b', 'online', 'visibility', 'visible_ms'],
+  // `online`, `visibility`, `visible_ms`: what clients before `id` / `on0`… sent on failures; still accepted.
+  api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b', 'id', 'end', 'wall', 'on0', 'on', 'vis0', 'vis', 'visMs', 'gapMs', 'gapAgo', 'ray', 'rt', 'cancel', 'online', 'visibility', 'visible_ms'],
   error: ['msg', 'src', 'st'],
   reject: ['msg', 'st'],
   console: ['msg'],
   viewport: ['w', 'h', 'dpr'],
   vis: ['s'],
+  life: ['s', 'on', 'vis', 'ms', 'persisted', 'discarded'],
   dropped: ['n'],
 } as const satisfies Record<string, readonly string[]>
 
@@ -103,7 +105,7 @@ export const isCancelled = (e: { k?: unknown; s?: unknown; err?: unknown }): boo
 /** Batches normally arrive within ~16 s (the logger flushes every 10 s); a failure received later than this was reported by a device that went to sleep or offline. */
 export const OFFLINE_LAG_MS = 60_000
 
-type ApiFields = { k?: unknown; t?: unknown; s?: unknown; err?: unknown; online?: unknown; visibility?: unknown }
+type ApiFields = { k?: unknown; t?: unknown; s?: unknown; err?: unknown; on?: unknown; vis?: unknown; online?: unknown; visibility?: unknown }
 
 /**
  * A network failure nobody saw fail: the browser was offline, the tab hidden,
@@ -116,8 +118,9 @@ export const offlineFailure = (e: ApiFields, receivedMs?: number): boolean =>
   e.k === 'api' &&
   e.s === 0 &&
   e.err !== 'abort' &&
-  (e.online === false ||
-    e.visibility === 'hidden' ||
+  // At the request's end (`on` / `vis`; `online` / `visibility` from older clients).
+  ((e.on ?? e.online) === false ||
+    (e.vis ?? e.visibility) === 'hidden' ||
     (receivedMs !== undefined && typeof e.t === 'number' && receivedMs - e.t > OFFLINE_LAG_MS))
 
 /** A request that failed: a 5xx, or no response other than a cancellation or an `offlineFailure`. */
