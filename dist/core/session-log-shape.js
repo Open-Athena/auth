@@ -17,12 +17,14 @@ export const BUILTIN_FIELDS = {
     filter: ['n', 'q'],
     pick: ['n', 'v'],
     prefetch: ['w', 'p', 'd'],
-    api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b', 'online', 'visibility', 'visible_ms'],
+    // `online`, `visibility`, `visible_ms`: what clients before `id` / `on0`… sent on failures; still accepted.
+    api: ['m', 'u', 's', 'ms', 'c', 'qe', 'err', 'b', 'id', 'end', 'wall', 'on0', 'on', 'vis0', 'vis', 'visMs', 'gapMs', 'gapAgo', 'ray', 'rt', 'cancel', 'online', 'visibility', 'visible_ms'],
     error: ['msg', 'src', 'st'],
     reject: ['msg', 'st'],
     console: ['msg'],
     viewport: ['w', 'h', 'dpr'],
     vis: ['s'],
+    life: ['s', 'on', 'vis', 'ms', 'persisted', 'discarded'],
     dropped: ['n'],
 };
 export const KINDS = Object.keys(BUILTIN_FIELDS);
@@ -79,8 +81,9 @@ export const OFFLINE_LAG_MS = 60_000;
 export const offlineFailure = (e, receivedMs) => e.k === 'api' &&
     e.s === 0 &&
     e.err !== 'abort' &&
-    (e.online === false ||
-        e.visibility === 'hidden' ||
+    // At the request's end (`on` / `vis`; `online` / `visibility` from older clients).
+    ((e.on ?? e.online) === false ||
+        (e.vis ?? e.visibility) === 'hidden' ||
         (receivedMs !== undefined && typeof e.t === 'number' && receivedMs - e.t > OFFLINE_LAG_MS));
 /** A request that failed: a 5xx, or no response other than a cancellation or an `offlineFailure`. */
 export const isFailedApi = (e, receivedMs) => e.k === 'api' && typeof e.s === 'number' && (e.s >= 500 || (e.s === 0 && !isCancelled(e) && !offlineFailure(e, receivedMs)));

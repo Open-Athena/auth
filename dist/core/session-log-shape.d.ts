@@ -17,12 +17,13 @@ export declare const BUILTIN_FIELDS: {
     readonly filter: readonly ["n", "q"];
     readonly pick: readonly ["n", "v"];
     readonly prefetch: readonly ["w", "p", "d"];
-    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b", "online", "visibility", "visible_ms"];
+    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b", "id", "end", "wall", "on0", "on", "vis0", "vis", "visMs", "gapMs", "gapAgo", "ray", "rt", "cancel", "online", "visibility", "visible_ms"];
     readonly error: readonly ["msg", "src", "st"];
     readonly reject: readonly ["msg", "st"];
     readonly console: readonly ["msg"];
     readonly viewport: readonly ["w", "h", "dpr"];
     readonly vis: readonly ["s"];
+    readonly life: readonly ["s", "on", "vis", "ms", "persisted", "discarded"];
     readonly dropped: readonly ["n"];
 };
 export type BuiltinKind = keyof typeof BUILTIN_FIELDS;
@@ -96,6 +97,8 @@ type ApiFields = {
     t?: unknown;
     s?: unknown;
     err?: unknown;
+    on?: unknown;
+    vis?: unknown;
     online?: unknown;
     visibility?: unknown;
 };

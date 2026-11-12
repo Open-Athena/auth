@@ -3,7 +3,8 @@
  * (`./index.ts`) only while the admin switch is on. `Logger` buffers and
  * flushes (pure: clock, transport and timers are the caller's); `install` wires
  * it to the page (URL changes, clicks on controls, opted-in input fields,
- * pickers, fetches, errors, console errors, viewport and visibility) and
+ * pickers, fetches, errors, console errors, viewport, visibility and browser
+ * lifecycle) and
  * returns its undo.
  */
 import { benignError, bodySummary, BUILTIN_FIELDS, LIMITS, TRUNC } from '../../core/session-log-shape.js';
@@ -13,6 +14,10 @@ export const FLUSH_MS = 10_000;
 export const LEAVE_MS = 5_000;
 export const FILTER_DEBOUNCE_MS = 800;
 export const RESIZE_DEBOUNCE_MS = 500;
+/** The lifecycle pulse's period, and the silence between pulses logged as a timer gap. */
+export const PULSE_MS = 10_000;
+export const GAP_MS = 30_000;
+const RAY = /^[a-f0-9]{16,32}(?:-[A-Z]{3})?$/;
 export const tr = (s, n) => {
     const str = typeof s === 'string' ? s : String(s);
     return str.length > n ? `${str.slice(0, n - 1)}…` : str;
@@ -215,6 +220,42 @@ export function install(p, logger, opts = {}) {
         fn(...a);
     }
     catch { /* the log never breaks the page */ } };
+    // Browser lifecycle: connectivity hints, visibility, freeze / resume, BFCache, and long timer gaps.
+    const online = () => (typeof win.navigator?.onLine === 'boolean' ? win.navigator.onLine : null);
+    const state = () => ({ on: online(), vis: doc.visibilityState });
+    let visibility = doc.visibilityState;
+    let visibleAt = visibility === 'visible' ? Date.now() : null;
+    let lastPulse = Date.now();
+    let gapAt = null;
+    let gapMs = 0;
+    const pulse = () => {
+        const now = Date.now();
+        // Observed here too: a query library's visibility handler may start a fetch before ours runs.
+        if (visibility !== doc.visibilityState) {
+            visibility = doc.visibilityState;
+            visibleAt = visibility === 'visible' ? now : null;
+        }
+        const elapsed = now - lastPulse;
+        if (elapsed > GAP_MS) {
+            gapAt = now;
+            gapMs = elapsed;
+            // Throttling, suspension or a busy main thread: not proof of sleep.
+            logger.log('life', { s: 'gap', ms: elapsed, ...state() });
+        }
+        lastPulse = now;
+    };
+    const pulseTimer = setInterval(safe(pulse), PULSE_MS);
+    offs.push(() => clearInterval(pulseTimer));
+    logger.log('life', { s: 'init', ...state(), ...(typeof doc.wasDiscarded === 'boolean' ? { discarded: doc.wasDiscarded } : {}) });
+    const lifecycle = (s, event) => {
+        pulse();
+        const persisted = event?.persisted;
+        logger.log('life', { s, ...state(), ...(typeof persisted === 'boolean' ? { persisted } : {}) });
+    };
+    for (const name of ['online', 'offline', 'pageshow'])
+        on(win, name, safe((e) => lifecycle(name, e)));
+    for (const name of ['freeze', 'resume'])
+        on(doc, name, safe((e) => lifecycle(name, e)));
     // URL state: the boot URL, then every change (router pushes, `?d=` / `f=` replaces, back / forward).
     let lastHref = win.location.href;
     logger.log('start', { u: redact(lastHref), ...(doc.referrer ? { ref: redact(doc.referrer) } : {}) });
@@ -282,39 +323,46 @@ export function install(p, logger, opts = {}) {
     const release = (leaving) => {
         for (const [event, timer] of held) {
             clearTimeout(timer);
-            logger.push(leaving ? { ...event, err: 'abort' } : event);
+            logger.push(leaving ? { ...event, err: 'abort', cancel: 'pagehide' } : event);
         }
         held.clear();
     };
     offs.push(() => release(false));
-    // When the tab last became visible: a failure soon after a resume is likelier a network blip than an outage.
-    let visibleAt = null;
+    let requestId = 0;
     const origFetch = win.fetch;
     const wrapped = (async (input, init) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if (url.includes(endpoint))
             return origFetch.call(win, input, init);
+        pulse();
         const t = Date.now(), t0 = p.perfNow();
         const method = (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase();
+        // Context at the start; `finish` adds the end. A failure soon after a resume is likelier a blip than an outage.
         const base = {
+            id: ++requestId,
+            on0: online(),
+            vis0: doc.visibilityState,
+            ...(visibleAt !== null ? { visMs: Math.max(0, t - visibleAt) } : {}),
+            ...(gapAt !== null ? { gapMs, gapAgo: Math.max(0, t - gapAt) } : {}),
             ...(method !== 'GET' ? { m: method } : {}),
             u: redact(url),
             ...(method !== 'GET' && init?.body != null ? { b: bodySummary(init.body) } : {}),
         };
+        const finish = () => ({ end: Date.now(), wall: Math.max(0, Date.now() - t), ...state() });
         let res;
         try {
             res = await origFetch.call(win, input, init);
         }
         catch (e) {
             safe(() => {
-                const event = { t, k: 'api', ...base, s: 0, ms: Math.round(p.perfNow() - t0) };
-                if (e?.name === 'AbortError')
-                    logger.push({ ...event, err: 'abort' });
+                const event = { t, k: 'api', ...base, ...finish(), s: 0, ms: Math.round(p.perfNow() - t0) };
+                // Which evidence says it was cancelled; never the abort reason itself.
+                const signal = init?.signal ?? (typeof input === 'object' && 'signal' in input ? input.signal : null);
+                if (signal?.aborted || e?.name === 'AbortError') {
+                    logger.push({ ...event, err: 'abort', cancel: signal?.aborted ? 'signal' : 'AbortError' });
+                }
                 else {
-                    const context = win.navigator
-                        ? { online: win.navigator.onLine, visibility: doc.visibilityState, ...(visibleAt === null ? {} : { visible_ms: Math.max(0, Date.now() - visibleAt) }) }
-                        : {};
-                    const failed = { ...event, ...context, err: tr(errMsg(e), TRUNC.msg) };
+                    const failed = { ...event, err: tr(errMsg(e), TRUNC.msg) };
                     if (held.size >= LIMITS.flushEvents)
                         logger.push(failed);
                     else
@@ -326,7 +374,14 @@ export function install(p, logger, opts = {}) {
         safe(() => {
             const ms = Math.round(p.perfNow() - t0);
             const h = res.headers;
-            const ev = { t, k: 'api', ...base, s: res.status, ms, ...(h.get('x-cache') ? { c: h.get('x-cache') } : {}), ...(h.get('x-query-engine') ? { qe: h.get('x-query-engine') } : {}) };
+            const ray = h.get('cf-ray');
+            const ev = {
+                t, k: 'api', ...base, ...finish(), s: res.status, ms, rt: res.type,
+                // Cloudflare's request id, to find the request in its logs; only a well-formed one.
+                ...(ray && RAY.test(ray) ? { ray } : {}),
+                ...(h.get('x-cache') ? { c: h.get('x-cache') } : {}),
+                ...(h.get('x-query-engine') ? { qe: h.get('x-query-engine') } : {}),
+            };
             if (res.ok) {
                 logger.push(ev);
                 return;
@@ -375,13 +430,12 @@ export function install(p, logger, opts = {}) {
     offs.push(() => { if (rz)
         clearTimeout(rz); });
     on(doc, 'visibilitychange', safe(() => {
+        pulse();
         logger.log('vis', { s: doc.visibilityState });
-        if (doc.visibilityState === 'visible')
-            visibleAt = Date.now();
         if (doc.visibilityState === 'hidden')
             logger.flush(true);
     }));
-    on(win, 'pagehide', safe(() => { release(true); logger.flush(true); }));
+    on(win, 'pagehide', safe((e) => { release(true); lifecycle('pagehide', e); logger.flush(true); }));
     return () => { for (const off of offs.splice(0).reverse())
         off(); };
 }
