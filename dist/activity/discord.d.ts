@@ -1,5 +1,7 @@
+import { type ActivityLinks } from './render.js';
 import type { ActivitySink } from './types.js';
-export interface DiscordActivityOptions {
+/** One message per burst (Discord webhooks have no threads to edit into), with the same links as Slack's. */
+export interface DiscordActivityOptions extends ActivityLinks {
     id: string;
     staffOnly: true;
     webhook: string;

@@ -16,6 +16,7 @@ import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_K
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export { activityRoutes } from './routes.js';
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
 export function activityFeed(options) {
     const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options;
     const defaults = { ...DEFAULT_ACTIVITY_KINDS, ...options.kinds };
@@ -44,7 +45,16 @@ export function activityFeed(options) {
                 await store.release(burstId, sink.id, claim.token);
                 return { sink: sink.id, status: 'missing' };
             }
-            const messageId = await sink.send(burst, claim.messageId);
+            let parts = { ...claim.parts };
+            const ctx = {
+                get parts() { return parts; },
+                async save(messageId, next) {
+                    parts = { ...next };
+                    if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts)))
+                        throw new Error('activity: delivery lease lost');
+                },
+            };
+            const messageId = await sink.send(burst, claim.messageId, ctx);
             const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version);
             return { sink: sink.id, status: completed ? 'sent' : 'fenced' };
         }
@@ -70,7 +80,8 @@ export function activityFeed(options) {
             const policy = Object.hasOwn(configured, event.kind) ? configured[event.kind] : undefined;
             if (!policy || policy.record === 'off')
                 return { status: 'off', burstId: null };
-            return store.append({ ...event, policy }, now(), gapS);
+            const resumePolicy = Object.hasOwn(configured, 'resume') ? configured.resume : undefined;
+            return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), gapS);
         },
         async deliver(burstId) {
             const results = [];

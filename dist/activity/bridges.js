@@ -4,7 +4,12 @@ import { activityInteger, activityPath, activityText } from './shape.js';
 export function activityActorFromAuth(auth) {
     return auth.kind === 'sso'
         ? { id: `email:${auth.email}`, name: auth.subject?.name?.trim() || auth.email, via: 'sso' }
-        : { id: `grant:${auth.grant.id}`, name: auth.grant.subject?.name?.trim() || auth.grant.email || 'Unnamed recipient', via: 'grant' };
+        : {
+            id: `grant:${auth.grant.id}`,
+            name: auth.grant.subject?.name?.trim() || auth.grant.email || 'Unnamed recipient',
+            // A service link's activity is reported only when notable (`activityFeed`'s `service` option).
+            via: auth.grant.service ? 'service' : 'grant',
+        };
 }
 function sessionEvent(event, receivedMs) {
     const { k } = event;
