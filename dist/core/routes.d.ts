@@ -10,7 +10,7 @@ import { type DecisionPageOptions } from './decision-page.js';
 import type { DecisionView } from './decisions.js';
 import type { Auth } from './types.js';
 import type { AllowlistStore, AuditQuery } from './store.js';
-import type { Gate } from './gate.js';
+import { type Gate } from './gate.js';
 import type { AllowedForLink } from './http.js';
 export interface RouteOptions {
     /** Default `/api/auth`. */

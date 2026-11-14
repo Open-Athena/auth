@@ -1,4 +1,11 @@
 /** Grants (share links / magic links) and the identities they resolve to. */
+/**
+ * What the link's holder may see of its subject and email: nothing, for an `anon` link.
+ * Staff routes return the grant itself; every holder-facing response goes through this.
+ */
+export function holderIdentity(grant) {
+    return grant.anon ? { subject: null, email: null } : { subject: grant.subject, email: grant.email };
+}
 /** Wildcard scope: granted to admins, matches every `hasScope` check. */
 export const ALL_SCOPES = '*';
 export function hasScope(auth, scope) {

@@ -24,15 +24,22 @@ export interface GrantWhoami {
     scopes: string[];
     admin: false;
     expiresAt: number | null;
+    /** An anonymous link: `subject` and `email` are withheld from the holder. `pseudonym(id)` gives it a stable name. */
+    anon?: true;
     /** Retained-login mode only: see `SsoWhoami.selection`. */
     selection?: string;
 }
 /** What a gate's `/whoami` returns: an email session, or a share-link session. */
 export type Whoami = SsoWhoami | GrantWhoami;
 /**
+ * A stable "Anonymous Capybara"-style name for an anonymous link, derived from
+ * its grant id: every session of one link gets the same name, and nothing is stored.
+ */
+export declare function pseudonym(grantId: string): string;
+/**
  * Best available human label: the *person*, then an email, or null for an
- * anonymous link. A link's memo is not a candidate: it's the minter's note, and
- * a gate doesn't send it to the link session.
+ * anonymous link (unnamed, or `anon`; see `pseudonym` for the latter). A link's
+ * memo is not a candidate: it's the minter's note, and a gate doesn't send it to the link session.
  */
 export declare function displayName(whoami: Whoami | null | undefined): string | null;
 export declare function hasScope(whoami: Whoami | null | undefined, scope: string): boolean;

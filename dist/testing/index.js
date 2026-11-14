@@ -88,6 +88,10 @@ export function memoryGrantStore() {
                 next.sessionTtlS = patch.sessionTtlS ?? null;
             if ('expiryEndsSessions' in patch)
                 next.expiryEndsSessions = patch.expiryEndsSessions ?? true;
+            if ('service' in patch)
+                next.service = !!patch.service;
+            if ('anon' in patch)
+                next.anon = !!patch.anon;
             if ('email' in patch)
                 next.email = patch.email ?? null;
             if ('subject' in patch)

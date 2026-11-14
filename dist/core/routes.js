@@ -7,6 +7,7 @@
  * copy around them are per-app and get vendored, per share-links §6.
  */
 import { renderDecisionPage } from './decision-page.js';
+import { ServiceGrantEmailError } from './gate.js';
 import { assetId } from './assets.js';
 import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvatarRef } from './avatar.js';
 import { cleanSubject, isEmailish } from './requests.js';
@@ -367,12 +368,16 @@ export function authRoutes(gate, opts = {}) {
                         expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
                         sessionTtlS: b.sessionTtlS ?? null,
                         expiryEndsSessions: b.expiryEndsSessions ?? true,
+                        service: !!b.service,
+                        anon: !!b.anon,
                         createdBy: creatorOf(a),
                     });
                 }
                 catch (e) {
                     if (e instanceof InvalidImageError)
                         return json({ error: 'invalid avatar', detail: e.message }, 400);
+                    if (e instanceof ServiceGrantEmailError)
+                        return json({ error: 'service links cannot have an email' }, 400);
                     throw e;
                 }
                 const { grant, token } = minted;
@@ -438,6 +443,10 @@ export function authRoutes(gate, opts = {}) {
                     patch.sessionTtlS = b.sessionTtlS ?? null;
                 if ('expiryEndsSessions' in b)
                     patch.expiryEndsSessions = !!b.expiryEndsSessions;
+                if ('service' in b)
+                    patch.service = !!b.service;
+                if ('anon' in b)
+                    patch.anon = !!b.anon;
                 if ('subjectName' in b)
                     patch.subjectName = b.subjectName ?? null;
                 if ('avatar' in b)
@@ -486,6 +495,8 @@ export function authRoutes(gate, opts = {}) {
                 catch (e) {
                     if (e instanceof InvalidImageError)
                         return json({ error: 'invalid avatar', detail: e.message }, 400);
+                    if (e instanceof ServiceGrantEmailError)
+                        return json({ error: 'service links cannot have an email' }, 400);
                     throw e;
                 }
                 if (!grant)

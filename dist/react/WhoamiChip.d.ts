@@ -11,6 +11,11 @@ export interface WhoamiChipProps {
      * is the one case where a visitor most needs a way out.
      */
     anonymousLabel?: ReactNode;
+    /**
+     * An `anon` link (staff chose to hide who it's for): show `anonymousLabel`
+     * (the default), its stable `pseudonym`, or no chip at all.
+     */
+    anon?: 'label' | 'pseudonym' | 'hidden';
     onSignedOut?: () => void;
     /** Show an `<Avatar>` before the name. Off by default: it changes the layout. */
     avatar?: boolean | {
@@ -26,4 +31,4 @@ export interface WhoamiChipProps {
     classNames?: Partial<Record<'root' | 'name' | 'button' | 'avatar' | 'identity', string>>;
 }
 /** Header chip: who you are, and how to stop being them. */
-export declare function WhoamiChip({ whoami, logoutEndpoint, signOutLabel, anonymousLabel, onSignedOut, avatar, onOpenProfile, classNames, }: WhoamiChipProps): import("react").JSX.Element | null;
+export declare function WhoamiChip({ whoami, logoutEndpoint, signOutLabel, anonymousLabel, anon, onSignedOut, avatar, onOpenProfile, classNames, }: WhoamiChipProps): import("react").JSX.Element | null;

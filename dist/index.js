@@ -10,7 +10,7 @@ export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, ma
 export { emailNotify } from './core/email.js';
 export { emailCodeAuth } from './core/email-codes.js';
 export { verifyRs256Jwt } from './core/jwt.js';
-export { ALL_SCOPES, canRedeem, createGate, isActive, sessionValid } from './core/gate.js';
+export { ALL_SCOPES, canRedeem, createGate, isActive, ServiceGrantEmailError, sessionValid } from './core/gate.js';
 export { isSessionLossReason, sessionLossMessage } from './core/denial.js';
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';
 export { authRoutes } from './core/routes.js';
@@ -18,5 +18,6 @@ export { adminPolicy, allowlistPolicy, anyEmailPolicy, domainPolicy, firstMatch 
 export { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, verifySession, verifySessionClaims, } from './core/session.js';
 export { SELECTION_CONTEXT_HEADER, MAX_SELECTION_CONTEXT_LENGTH, serializeSelectionContext, parseSelectionContext, nextSelectionVersion, checkSelectionContext, } from './core/selection-context.js';
 export { generateId, generateToken, hashIp, hashToken } from './core/tokens.js';
-export { formatScopes, hasScope, parseScopes } from './core/types.js';
+export { formatScopes, hasScope, holderIdentity, parseScopes } from './core/types.js';
+export { pseudonym } from './client/identity.js';
 export { RetainedLoginError, selectionConflict } from './core/retained.js';

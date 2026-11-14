@@ -7,5 +7,5 @@ export { useWhoami } from './useWhoami.js';
 export type { UseWhoamiOptions, UseWhoamiResult } from './useWhoami.js';
 export { exchangeKeyParam, exchangeKeyParam as exchangeKey, hasKeyParam } from '../client/exchange.js';
 export type { ExchangeOptions } from '../client/exchange.js';
-export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from '../client/identity.js';
+export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope, pseudonym } from '../client/identity.js';
 export type { Whoami, WhoamiSource, SsoWhoami, GrantWhoami } from '../client/identity.js';

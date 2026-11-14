@@ -53,7 +53,8 @@ export function useAccounts({ basePath = '/api/auth', enabled = true } = {}) {
         error: m.error,
     };
 }
-const who = (a) => a.subject?.name ?? a.email ?? (a.kind === 'grant' ? 'Share link' : 'Account');
+/** An anonymous link has no name or email here; it goes by its pseudonym (the server's, from its grant id). */
+const who = (a) => a.subject?.name ?? a.email ?? a.pseudonym ?? (a.kind === 'grant' ? 'Share link' : 'Account');
 /**
  * The browser's accounts: switch with one click, add another, take one off,
  * or sign out of all. A share-link login is always labelled as one, so a
