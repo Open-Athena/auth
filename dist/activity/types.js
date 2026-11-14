@@ -6,6 +6,8 @@ export const DEFAULT_ACTIVITY_KINDS = {
     access: { record: 'line', notify: 'line' },
     /** A tab picked up again after a gap: its earlier burst (and thread) continues, with this line. */
     resume: { record: 'line', notify: 'line' },
+    /** A refused request: an expired, revoked or disabled link, a bad token (`accessLogActivity` maps `deny` rows here). */
+    denied: { record: 'line', notify: 'line' },
 };
 export const BATCH_GAP_S = 15 * 60;
 /** How far back a tab's session resumes its own earlier burst. */

@@ -1,4 +1,4 @@
-import { type ActivityEvent, type ActivityKind, type ActivityKinds, type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js';
+import { type ActivityEvent, type ActivityKind, type ActivityKinds, type ActivityBurst, type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js';
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js';
@@ -13,11 +13,27 @@ export interface ActivityFeedOptions {
     leaseS?: number;
     /** Epoch seconds; injectable for deterministic tests. */
     now?: () => number;
+    /**
+     * Service links (actors with `via: 'service'`): their routine bursts post nothing. A notable one posts red, with
+     * why; the next clean one after a red posts green. `notable` replaces the default reasons (`serviceReasons`).
+     */
+    service?: {
+        notable?: (burst: ActivityBurst, ctx: {
+            newClients: string[];
+        }) => string[] | Promise<string[]>;
+        /** Errors in one burst that make it notable (default 3). */
+        errorThreshold?: number;
+    };
 }
-/** `busy`: another caller holds the lease, or this burst is backing off after a failed send. */
+/** Why a service burst is notable, by default: a run of errors, any refused request, or a client it hasn't used before. */
+export declare function serviceReasons(burst: ActivityBurst, newClients: readonly string[], errorThreshold?: number): string[];
+/**
+ * `busy`: another caller holds the lease, or this burst is backing off after a failed send.
+ * `quiet`: a service link's routine burst, marked delivered with nothing posted.
+ */
 export type ActivityDelivery = {
     sink: string;
-    status: 'sent' | 'busy' | 'missing' | 'fenced';
+    status: 'sent' | 'busy' | 'missing' | 'fenced' | 'quiet';
 };
 export declare function activityFeed(options: ActivityFeedOptions): {
     kinds: () => Promise<Record<string, ActivityKind>>;

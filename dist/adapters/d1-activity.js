@@ -86,9 +86,9 @@ export function d1ActivityStore(db) {
               SELECT ?, ?, ?, 'resume', ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)
               AND NOT EXISTS (${eligible}) AND (${resumable}) = ?`, `${e.id}#resume`, resume.id, e.ts, resumePolicy.record, resumePolicy.notify, resumePolicy.record === 'line' ? `after ${fmtGap(e.ts - resume.last_ts)}` : null, resumePolicy.record === 'line' && e.path !== undefined ? activityPath(e.path) : null, resumePolicy.record === 'line' ? sid : null, e.id, ...eligibleArgs, ...resumeArgs, resume.id)]
                     : []),
-                sql(`INSERT INTO activity_events (id, burst_id, ts, kind, record, notify, line, path, session_id)
-          SELECT ?, COALESCE((SELECT id FROM activity_bursts WHERE id = ?), (${eligible}), (${resumable})), ?, ?, ?, ?, ?, ?, ?
-          WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)`, e.id, proposed, ...eligibleArgs, ...resumeArgs, e.ts, e.kind, e.policy.record, e.policy.notify, detailed ? (e.line ?? null) : null, detailed && e.path !== undefined ? activityPath(e.path) : null, detailed ? sid : null, e.id),
+                sql(`INSERT INTO activity_events (id, burst_id, ts, kind, record, notify, line, path, session_id, client)
+          SELECT ?, COALESCE((SELECT id FROM activity_bursts WHERE id = ?), (${eligible}), (${resumable})), ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)`, e.id, proposed, ...eligibleArgs, ...resumeArgs, e.ts, e.kind, e.policy.record, e.policy.notify, detailed ? (e.line ?? null) : null, detailed && e.path !== undefined ? activityPath(e.path) : null, detailed ? sid : null, e.client ?? null, e.id),
                 // `changes()` is the receipt insert's: retries cannot change a burst, even its actor name or receipt time.
                 sql(`UPDATE activity_bursts SET first_ts = MIN(first_ts, ?), last_ts = MAX(last_ts, ?),
           received_ts = MAX(received_ts, ?), actor_name = ?, via = ?, version = version + 1
@@ -171,6 +171,25 @@ export function d1ActivityStore(db) {
         async release(burstId, sink, token) {
             await sql(`UPDATE activity_posts SET claim_token = NULL, claim_until = 0
         WHERE burst_id = ? AND sink = ? AND claim_token = ?`, burstId, sink, token).run();
+        },
+        async newClients(burstId) {
+            activityText(burstId, 'burst id');
+            const rows = await sql(`SELECT DISTINCT e.client FROM activity_events e JOIN activity_bursts b ON b.id = e.burst_id
+        WHERE e.burst_id = ? AND e.client IS NOT NULL
+        AND EXISTS (SELECT 1 FROM activity_bursts p WHERE p.actor_id = b.actor_id AND p.origin = b.origin AND p.first_ts < b.first_ts)
+        AND NOT EXISTS (SELECT 1 FROM activity_events o JOIN activity_bursts p ON p.id = o.burst_id
+          WHERE o.client = e.client AND p.actor_id = b.actor_id AND p.origin = b.origin AND p.id != b.id AND p.first_ts < b.first_ts)
+        ORDER BY e.client`, burstId).all();
+            return rows.results.map(r => r.client);
+        },
+        async serviceRed(actorId, origin, sink) {
+            const row = await sql('SELECT red FROM activity_service_state WHERE actor_id = ? AND origin = ? AND sink = ?', actorId, origin, sink).first();
+            return row?.red === 1;
+        },
+        async setServiceRed(actorId, origin, sink, red, nowS) {
+            activityInteger(nowS, 'state time');
+            await sql(`INSERT INTO activity_service_state (actor_id, origin, sink, red, updated_ts) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(actor_id, origin, sink) DO UPDATE SET red = excluded.red, updated_ts = excluded.updated_ts`, actorId, origin, sink, red ? 1 : 0, nowS).run();
         },
         async checkpoint(burstId, sink, token, messageId, parts) {
             activityText(messageId, 'message id');

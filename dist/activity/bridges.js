@@ -35,6 +35,7 @@ export function sessionLogActivity(feed, options) {
                 return;
             const { batch, req } = input;
             const receipt = now();
+            const client = (await options.client?.(input)) ?? null;
             // Stable per-event keys allow safe retry after partially bridging a stored batch.
             for (const [index, event] of batch.events.entries()) {
                 const mapped = (options.event ?? sessionEvent)(event, receipt * 1000);
@@ -47,11 +48,22 @@ export function sessionLogActivity(feed, options) {
                     origin: new URL(req.url).origin,
                     ts: Math.min(receipt, Math.floor(event.t / 1000)),
                     sessionId: batch.sid,
+                    ...(client ? { client } : {}),
                 });
             }
         },
         async onPurge(cutoffS) { await feed.purge(cutoffS); },
     };
+}
+/**
+ * An access row's client fingerprint: SHA-256 of its IP hash (already an HMAC, never an address) and user agent,
+ * first 16 bytes. Null when the row has neither.
+ */
+async function accessClient(event) {
+    if (!event.ipHash && !event.ua)
+        return null;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([event.ipHash ?? null, event.ua ?? null])));
+    return [...new Uint8Array(digest).slice(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 /**
  * Replay an accepted access-log row with its stable database ID (namespace it
@@ -68,14 +80,17 @@ export function accessLogActivity(feed, options) {
         if (!actor)
             return null;
         const path = event.path ? activityPath(event.path) : undefined;
+        const client = await accessClient(event);
+        const denied = event.event === 'deny';
         return feed.record({
             id: `access:${JSON.stringify([options.origin, id])}`,
             actor,
             origin: options.origin,
             ts: event.ts,
-            kind: event.event === 'view' ? 'view' : 'access',
-            line: `${event.event}${path ? ` ${path}` : ''}`,
+            kind: event.event === 'view' ? 'view' : denied ? 'denied' : 'access',
+            line: denied ? `${event.reason ?? 'refused'}${path ? ` ${path}` : ''}` : `${event.event}${path ? ` ${path}` : ''}`,
             path,
+            ...(client ? { client } : {}),
         });
     };
 }

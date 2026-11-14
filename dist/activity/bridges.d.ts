@@ -20,6 +20,8 @@ export interface SessionActivityOptions {
      * `receivedMs` is when the server received the batch, for `isErrorEvent`'s offline-failure rule.
      */
     event?: (event: SlogEvent, receivedMs: number) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null;
+    /** An opaque fingerprint of the batch's client (hash the IP with a secret, plus the user agent); never a raw address. */
+    client?: (input: StoredSession) => string | null | Promise<string | null>;
 }
 /** Structurally compatible with sessionLogRoutes' onStored/onPurge; session retention remains independent. */
 export declare function sessionLogActivity(feed: ActivityFeed, options: SessionActivityOptions): {

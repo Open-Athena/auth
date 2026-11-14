@@ -42,6 +42,8 @@ export function checkActivityEvent(e) {
         throw new TypeError('activity: invalid path');
     if (e.sessionId !== undefined)
         activityText(e.sessionId, 'session id', 128);
+    if (e.client !== undefined)
+        activityText(e.client, 'client', 128);
 }
 export function checkActivityWrite(e) {
     checkActivityEvent(e);
