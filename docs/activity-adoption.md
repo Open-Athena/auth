@@ -55,6 +55,12 @@ Hooks, all optional, on `slackActivitySink` (and the link ones on `discordActivi
 
 Discord stays one message per burst (webhooks have no threads to edit into), rendered the same way and cut to 2000 characters.
 
+### Service links
+
+`activityActorFromAuth` gives a service link (`grant.service`) `via: 'service'`. Such an actor's routine bursts post nothing (`deliver` reports `quiet`, and the burst is not left pending). A notable burst posts red, leading with why (`🔴 3 errors`); the next clean burst after a red posts green (`🟢 clean again`), then it's quiet again. The state is per actor, origin and sink. By default (`serviceReasons`), notable means at least `errorThreshold` (3) errors, any refused request, or a client the service hasn't used before (once it has an earlier burst). Pass `activityFeed({ service: { notable: (burst, { newClients }) => reasons } })` to decide yourself.
+
+`accessLogActivity` records `deny` rows as the `denied` kind (a default kind, `line`/`line`), with the reason as the line (`revoked /scan`), and gives every row a client fingerprint (a hash of its IP hash and user agent). For session-log batches, pass `sessionLogActivity(feed, { client })` with your own fingerprint (hash the IP with a secret); never a raw address.
+
 `feed.purge(cutoffS)` is bounded and uses receipt time; repeat while it deletes rows. Activity purge does not delete already-posted Slack/Discord messages. Source-row storage, bridging and remote posting are separate transactions: hook failure needs replay, not an assumption that everything rolled back.
 
 ## Verify Before Enabling

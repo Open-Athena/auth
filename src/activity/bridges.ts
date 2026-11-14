@@ -29,6 +29,8 @@ export interface SessionActivityOptions {
    * `receivedMs` is when the server received the batch, for `isErrorEvent`'s offline-failure rule.
    */
   event?: (event: SlogEvent, receivedMs: number) => Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null
+  /** An opaque fingerprint of the batch's client (hash the IP with a secret, plus the user agent); never a raw address. */
+  client?: (input: StoredSession) => string | null | Promise<string | null>
 }
 
 function sessionEvent(event: SlogEvent, receivedMs: number): Pick<ActivityEvent, 'kind' | 'line' | 'path'> | null {
@@ -52,6 +54,7 @@ export function sessionLogActivity(feed: ActivityFeed, options: SessionActivityO
       if (!actor) return
       const { batch, req } = input
       const receipt = now()
+      const client = (await options.client?.(input)) ?? null
       // Stable per-event keys allow safe retry after partially bridging a stored batch.
       for (const [index, event] of batch.events.entries()) {
         const mapped = (options.event ?? sessionEvent)(event, receipt * 1000)
@@ -63,11 +66,22 @@ export function sessionLogActivity(feed: ActivityFeed, options: SessionActivityO
           origin: new URL(req.url).origin,
           ts: Math.min(receipt, Math.floor(event.t / 1000)),
           sessionId: batch.sid,
+          ...(client ? { client } : {}),
         })
       }
     },
     async onPurge(cutoffS: number): Promise<void> { await feed.purge(cutoffS) },
   }
+}
+
+/**
+ * An access row's client fingerprint: SHA-256 of its IP hash (already an HMAC, never an address) and user agent,
+ * first 16 bytes. Null when the row has neither.
+ */
+async function accessClient(event: AccessEvent): Promise<string | null> {
+  if (!event.ipHash && !event.ua) return null
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([event.ipHash ?? null, event.ua ?? null])))
+  return [...new Uint8Array(digest).slice(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 export interface AccessActivityOptions {
@@ -90,14 +104,17 @@ export function accessLogActivity(feed: ActivityFeed, options: AccessActivityOpt
     const actor = await options.actor(event)
     if (!actor) return null
     const path = event.path ? activityPath(event.path) : undefined
+    const client = await accessClient(event)
+    const denied = event.event === 'deny'
     return feed.record({
       id: `access:${JSON.stringify([options.origin, id])}`,
       actor,
       origin: options.origin,
       ts: event.ts,
-      kind: event.event === 'view' ? 'view' : 'access',
-      line: `${event.event}${path ? ` ${path}` : ''}`,
+      kind: event.event === 'view' ? 'view' : denied ? 'denied' : 'access',
+      line: denied ? `${event.reason ?? 'refused'}${path ? ` ${path}` : ''}` : `${event.event}${path ? ` ${path}` : ''}`,
       path,
+      ...(client ? { client } : {}),
     })
   }
 }

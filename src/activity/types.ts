@@ -17,6 +17,8 @@ export const DEFAULT_ACTIVITY_KINDS: ActivityKinds = {
   access: { record: 'line', notify: 'line' },
   /** A tab picked up again after a gap: its earlier burst (and thread) continues, with this line. */
   resume: { record: 'line', notify: 'line' },
+  /** A refused request: an expired, revoked or disabled link, a bad token (`accessLogActivity` maps `deny` rows here). */
+  denied: { record: 'line', notify: 'line' },
 }
 
 export const BATCH_GAP_S = 15 * 60
@@ -45,6 +47,11 @@ export interface ActivityEvent {
   /** Only a pathname is retained, never query strings or fragments. */
   path?: string
   sessionId?: string
+  /**
+   * An opaque client fingerprint (a hash of the IP hash and user agent, say; never a raw address). Stored at any
+   * record level: a service link's burst from a client it hasn't used before is notable.
+   */
+  client?: string
 }
 
 export interface ActivityWrite extends ActivityEvent {
@@ -78,6 +85,13 @@ export interface ActivityBurst {
   omittedLines: number
   /** The burst's sessions (tabs), oldest first, at most `ACTIVITY_SESSIONS`. */
   sessionIds: string[]
+  /** Set by the feed for a service link's burst it posts: red (notable, with why) or green (clean again after a red). */
+  notice?: ActivityNotice
+}
+
+export interface ActivityNotice {
+  color: 'red' | 'green'
+  reasons: string[]
 }
 
 export const ACTIVITY_SESSIONS = 50
@@ -117,6 +131,11 @@ export interface ActivityStore {
   claim(burstId: string, sink: string, nowS: number, leaseS: number): Promise<ActivityClaim | null>
   complete(burstId: string, sink: string, token: string, messageId: string, version: number): Promise<boolean>
   release(burstId: string, sink: string, token: string): Promise<void>
+  /** This burst's clients that the same actor (and origin) never used in an earlier burst; empty when it has no earlier burst. */
+  newClients(burstId: string): Promise<string[]>
+  /** Whether the actor's last service notice (on this origin, in this sink) was red. */
+  serviceRed(actorId: string, origin: string, sink: string): Promise<boolean>
+  setServiceRed(actorId: string, origin: string, sink: string, red: boolean, nowS: number): Promise<void>
   /** Save a send's progress under its lease, so a failure partway through doesn't post the parent twice. False when the lease is lost. */
   checkpoint(burstId: string, sink: string, token: string, messageId: string, parts: Record<string, string>): Promise<boolean>
   /** Drop the claim after a failed send, count the failure, and refuse claims until `retryAtS`. */

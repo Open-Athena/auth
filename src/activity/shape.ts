@@ -40,6 +40,7 @@ export function checkActivityEvent(e: ActivityEvent): void {
   if (e.line !== undefined && (typeof e.line !== 'string' || e.line.length > 2000)) throw new TypeError('activity: invalid line')
   if (e.path !== undefined && typeof e.path !== 'string') throw new TypeError('activity: invalid path')
   if (e.sessionId !== undefined) activityText(e.sessionId, 'session id', 128)
+  if (e.client !== undefined) activityText(e.client, 'client', 128)
 }
 
 export function checkActivityWrite(e: ActivityWrite): void {

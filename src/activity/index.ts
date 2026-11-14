@@ -13,7 +13,7 @@
  */
 import { activityInteger, activityText, checkActivityEvent, checkActivityKind, checkActivityKinds } from './shape.js'
 import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityKind, type ActivityKinds,
-  type ActivityRecordResult, type ActivitySendContext, type ActivitySink, type ActivityStore } from './types.js'
+  type ActivityBurst, type ActivityRecordResult, type ActivitySendContext, type ActivitySink, type ActivityStore } from './types.js'
 
 export * from './types.js'
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js'
@@ -30,10 +30,39 @@ export interface ActivityFeedOptions {
   leaseS?: number
   /** Epoch seconds; injectable for deterministic tests. */
   now?: () => number
+  /**
+   * Service links (actors with `via: 'service'`): their routine bursts post nothing. A notable one posts red, with
+   * why; the next clean one after a red posts green. `notable` replaces the default reasons (`serviceReasons`).
+   */
+  service?: {
+    notable?: (burst: ActivityBurst, ctx: { newClients: string[] }) => string[] | Promise<string[]>
+    /** Errors in one burst that make it notable (default 3). */
+    errorThreshold?: number
+  }
 }
 
-/** `busy`: another caller holds the lease, or this burst is backing off after a failed send. */
-export type ActivityDelivery = { sink: string; status: 'sent' | 'busy' | 'missing' | 'fenced' }
+/** Marks a service burst that was judged routine: delivered, with nothing posted. */
+const QUIET = '-'
+
+/** Why a service burst is notable, by default: a run of errors, any refused request, or a client it hasn't used before. */
+export function serviceReasons(burst: ActivityBurst, newClients: readonly string[], errorThreshold = 3): string[] {
+  const reasons: string[] = []
+  const errors = burst.counts.error ?? 0
+  if (errors >= errorThreshold) reasons.push(`${errors} errors`)
+  const denied = burst.counts.denied ?? 0
+  if (denied) {
+    const why = [...new Set(burst.lines.filter(l => l.kind === 'denied' && l.line).map(l => l.line!))].slice(0, 3)
+    reasons.push(`${denied} refused ${denied === 1 ? 'request' : 'requests'}${why.length ? ` (${why.join('; ')})` : ''}`)
+  }
+  if (newClients.length) reasons.push(newClients.length === 1 ? 'a new client' : `${newClients.length} new clients`)
+  return reasons
+}
+
+/**
+ * `busy`: another caller holds the lease, or this burst is backing off after a failed send.
+ * `quiet`: a service link's routine burst, marked delivered with nothing posted.
+ */
+export type ActivityDelivery = { sink: string; status: 'sent' | 'busy' | 'missing' | 'fenced' | 'quiet' }
 
 export function activityFeed(options: ActivityFeedOptions) {
   const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options
@@ -63,6 +92,20 @@ export function activityFeed(options: ActivityFeedOptions) {
         await store.release(burstId, sink.id, claim.token)
         return { sink: sink.id, status: 'missing' }
       }
+      const posted = claim.messageId === QUIET ? null : claim.messageId
+      if (burst.actor.via === 'service') {
+        const newClients = await store.newClients(burstId)
+        const reasons = options.service?.notable
+          ? await options.service.notable(burst, { newClients })
+          : serviceReasons(burst, newClients, options.service?.errorThreshold)
+        // A burst already posted green keeps its color as it grows; a clean one with no red before it posts nothing.
+        const green = !reasons.length && (posted !== null || (await store.serviceRed(burst.actor.id, burst.origin, sink.id)))
+        if (!reasons.length && !green) {
+          const completed = await store.complete(burstId, sink.id, claim.token, QUIET, burst.version)
+          return { sink: sink.id, status: completed ? 'quiet' : 'fenced' }
+        }
+        burst.notice = reasons.length ? { color: 'red', reasons } : { color: 'green', reasons: [] }
+      }
       let parts: Record<string, string> = { ...claim.parts }
       const ctx: ActivitySendContext = {
         get parts() { return parts },
@@ -71,8 +114,9 @@ export function activityFeed(options: ActivityFeedOptions) {
           if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts))) throw new Error('activity: delivery lease lost')
         },
       }
-      const messageId = await sink.send(burst, claim.messageId, ctx)
+      const messageId = await sink.send(burst, posted, ctx)
       const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version)
+      if (completed && burst.notice) await store.setServiceRed(burst.actor.id, burst.origin, sink.id, burst.notice.color === 'red', now())
       return { sink: sink.id, status: completed ? 'sent' : 'fenced' }
     } catch (error) {
       // Failed/ambiguous delivery remains pending, but waits before the next attempt, so drains on

@@ -85,7 +85,11 @@ export function renderHeadline(b: ActivityBurst, o: HeadlineOptions): string {
   const { fmt } = o
   const who = o.asActor ? (b.actor.via === 'sso' ? [] : [via(b)]) : [`${fmt.bold(fmt.esc(b.actor.name))} (${via(b)})`]
   const href = o.links?.burstHref?.(b)
-  return [...who, ...notified(b).map(([k, n]) => countText(k, n)), span(b), ...(href ? [fmt.link(href, 'activity')] : [])].join(' · ')
+  // A service link's notice leads: red with why, or green once it's clean again.
+  const notice = b.notice
+    ? [b.notice.color === 'red' ? `🔴 ${fmt.esc(b.notice.reasons.join('; '))}` : '🟢 clean again']
+    : []
+  return [...notice, ...who, ...notified(b).map(([k, n]) => countText(k, n)), span(b), ...(href ? [fmt.link(href, 'activity')] : [])].join(' · ')
 }
 
 /** Stops on a path trail, kept to the last this many. */
