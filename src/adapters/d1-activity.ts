@@ -1,5 +1,6 @@
 import { activityInteger, activityPath, activityText, checkActivityKind, checkActivityWrite } from '../activity/shape.js'
-import { ACTIVITY_LINES, type ActivityBurst, type ActivityKind, type ActivityLine, type ActivityStore } from '../activity/types.js'
+import { fmtGap } from '../activity/render.js'
+import { ACTIVITY_LINES, ACTIVITY_SESSIONS, type ActivityBurst, type ActivityKind, type ActivityLine, type ActivityStore, RESUME_S } from '../activity/types.js'
 
 interface BurstRow {
   id: string
@@ -30,12 +31,13 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
   async function get(id: string): Promise<ActivityBurst | null> {
     activityText(id, 'burst id')
     // A coherent snapshot: its version must describe exactly these counts and lines.
-    const rows = await db.batch<BurstRow | CountRow | ActivityLine>([
+    const rows = await db.batch<BurstRow | CountRow | ActivityLine | { session_id: string }>([
       sql('SELECT * FROM activity_bursts WHERE id = ? AND purging = 0', id),
       sql(`SELECT kind, COUNT(*) AS n, SUM(notify != 'off') AS notified, SUM(record = 'line') AS lines
         FROM activity_events WHERE burst_id = ? GROUP BY kind ORDER BY kind`, id),
       sql(`SELECT id, ts, kind, line, path, session_id AS sessionId, notify FROM activity_events
         WHERE burst_id = ? AND record = 'line' ORDER BY ts DESC, id DESC LIMIT ?`, id, ACTIVITY_LINES),
+      sql('SELECT session_id FROM activity_burst_sessions WHERE burst_id = ? ORDER BY rowid LIMIT ?', id, ACTIVITY_SESSIONS),
     ])
     const row = rows[0]!.results[0] as BurstRow | undefined
     if (!row) return null
@@ -53,6 +55,7 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
       notifyCounts: Object.fromEntries(counts.filter(r => r.notified > 0).map(r => [r.kind, r.notified])),
       lines,
       omittedLines: counts.reduce((n, r) => n + r.lines, 0) - lines.length,
+      sessionIds: (rows[3]!.results as { session_id: string }[]).map(r => r.session_id),
     }
   }
 
@@ -79,28 +82,58 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
         ORDER BY last_ts DESC, id DESC LIMIT 1`
       const eligible = `SELECT id FROM activity_bursts WHERE id = (${latest}) AND last_ts BETWEEN ? AND ?`
       const eligibleArgs = [e.actor.id, e.origin, e.ts - gapS, e.ts + gapS] as const
+      // Past the gap, a tab's session rejoins the newest burst it was already in (within RESUME_S): one tab, one thread.
+      const resumable = `SELECT b.id FROM activity_bursts b JOIN activity_burst_sessions s ON s.burst_id = b.id
+        WHERE s.session_id = ? AND b.actor_id = ? AND b.origin = ? AND b.purging = 0 AND b.last_ts BETWEEN ? AND ?
+        ORDER BY b.last_ts DESC, b.id DESC LIMIT 1`
+      const sid = e.sessionId ?? null
+      const resumeArgs = [sid, e.actor.id, e.origin, e.ts - RESUME_S, e.ts] as const
       const detailed = e.policy.record === 'line'
-      const results = await db.batch<{ burst_id: string }>([
+      // The resumption's own line says after how long: read the candidate first, and write the line only if the batch
+      // still finds that same candidate (a racing append that changed the answer just loses the line, not the event).
+      const resume = sid && e.resumePolicy && e.resumePolicy.record !== 'off'
+        ? await sql(`SELECT b.id, b.last_ts FROM activity_bursts b WHERE b.id = (${resumable})
+            AND NOT EXISTS (${eligible}) AND NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)`,
+          ...resumeArgs, ...eligibleArgs, e.id).first<{ id: string; last_ts: number }>()
+        : null
+      const resumePolicy = e.resumePolicy
+      const statements = [
         sql(`INSERT INTO activity_bursts (id, actor_id, actor_name, via, origin, first_ts, last_ts, received_ts)
           SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)
-          AND NOT EXISTS (${eligible})`,
-        proposed, e.actor.id, e.actor.name, e.actor.via, e.origin, e.ts, e.ts, nowS, e.id, ...eligibleArgs),
+          AND NOT EXISTS (${eligible}) AND NOT EXISTS (${resumable})`,
+        proposed, e.actor.id, e.actor.name, e.actor.via, e.origin, e.ts, e.ts, nowS, e.id, ...eligibleArgs, ...resumeArgs),
+        ...(resume && resumePolicy
+          ? [sql(`INSERT INTO activity_events (id, burst_id, ts, kind, record, notify, line, path, session_id)
+              SELECT ?, ?, ?, 'resume', ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)
+              AND NOT EXISTS (${eligible}) AND (${resumable}) = ?`,
+            `${e.id}#resume`, resume.id, e.ts, resumePolicy.record, resumePolicy.notify,
+            resumePolicy.record === 'line' ? `after ${fmtGap(e.ts - resume.last_ts)}` : null,
+            resumePolicy.record === 'line' && e.path !== undefined ? activityPath(e.path) : null,
+            resumePolicy.record === 'line' ? sid : null, e.id, ...eligibleArgs, ...resumeArgs, resume.id)]
+          : []),
         sql(`INSERT INTO activity_events (id, burst_id, ts, kind, record, notify, line, path, session_id)
-          SELECT ?, COALESCE((SELECT id FROM activity_bursts WHERE id = ?), (${eligible})), ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, COALESCE((SELECT id FROM activity_bursts WHERE id = ?), (${eligible}), (${resumable})), ?, ?, ?, ?, ?, ?, ?
           WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)`,
-        e.id, proposed, ...eligibleArgs, e.ts, e.kind, e.policy.record, e.policy.notify,
+        e.id, proposed, ...eligibleArgs, ...resumeArgs, e.ts, e.kind, e.policy.record, e.policy.notify,
         detailed ? (e.line ?? null) : null, detailed && e.path !== undefined ? activityPath(e.path) : null,
-        detailed ? (e.sessionId ?? null) : null, e.id),
+        detailed ? sid : null, e.id),
         // `changes()` is the receipt insert's: retries cannot change a burst, even its actor name or receipt time.
         sql(`UPDATE activity_bursts SET first_ts = MIN(first_ts, ?), last_ts = MAX(last_ts, ?),
           received_ts = MAX(received_ts, ?), actor_name = ?, via = ?, version = version + 1
           WHERE changes() = 1 AND id = (SELECT burst_id FROM activity_events WHERE id = ?)`,
         e.ts, e.ts, nowS, e.actor.name, e.actor.via, e.id),
+        // Count-level kinds keep no detail, their session included.
+        ...(sid && detailed
+          ? [sql(`INSERT OR IGNORE INTO activity_burst_sessions (burst_id, session_id)
+              SELECT burst_id, ? FROM activity_events WHERE id = ?`, sid, e.id)]
+          : []),
         sql('SELECT burst_id FROM activity_events WHERE id = ?', e.id),
-      ])
-      const receipt = results[3]!.results[0]
+      ]
+      const results = await db.batch<{ burst_id: string }>(statements)
+      const receipt = results.at(-1)!.results[0]
+      const inserted = results[resume ? 2 : 1]!
       if (!receipt) throw new Error('activity: append produced no receipt')
-      return { status: results[1]!.meta.changes === 1 ? 'stored' : 'duplicate', burstId: receipt.burst_id }
+      return { status: inserted.meta.changes === 1 ? 'stored' : 'duplicate', burstId: receipt.burst_id }
     },
 
     get,
@@ -140,17 +173,17 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
       activityInteger(leaseS, 'lease', 1)
       activityInteger(nowS + leaseS, 'lease end')
       const token = crypto.randomUUID()
-      const rows = await db.batch<{ message_id: string | null; failures: number }>([
+      const rows = await db.batch<{ message_id: string | null; failures: number; parts: string }>([
         sql(`INSERT INTO activity_posts (burst_id, sink, claim_token, claim_until)
           SELECT b.id, ?, ?, ? FROM activity_bursts b WHERE b.id = ? AND b.purging = 0
           AND EXISTS (SELECT 1 FROM activity_events e WHERE e.burst_id = b.id AND e.notify != 'off')
           ON CONFLICT(burst_id, sink) DO UPDATE SET claim_token = excluded.claim_token, claim_until = excluded.claim_until
           WHERE activity_posts.claim_until <= ? AND activity_posts.version < (SELECT version FROM activity_bursts WHERE id = ?)` ,
         sink, token, nowS + leaseS, burstId, nowS, burstId),
-        sql('SELECT message_id, failures FROM activity_posts WHERE burst_id = ? AND sink = ? AND claim_token = ?', burstId, sink, token),
+        sql('SELECT message_id, failures, parts FROM activity_posts WHERE burst_id = ? AND sink = ? AND claim_token = ?', burstId, sink, token),
       ])
       const row = rows[1]!.results[0]
-      return row ? { token, messageId: row.message_id, failures: row.failures } : null
+      return row ? { token, messageId: row.message_id, failures: row.failures, parts: JSON.parse(row.parts) as Record<string, string> } : null
     },
 
     async complete(burstId, sink, token, messageId, version) {
@@ -166,6 +199,13 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
     async release(burstId, sink, token) {
       await sql(`UPDATE activity_posts SET claim_token = NULL, claim_until = 0
         WHERE burst_id = ? AND sink = ? AND claim_token = ?`, burstId, sink, token).run()
+    },
+
+    async checkpoint(burstId, sink, token, messageId, parts) {
+      activityText(messageId, 'message id')
+      const result = await sql(`UPDATE activity_posts SET message_id = ?, parts = ?
+        WHERE burst_id = ? AND sink = ? AND claim_token = ?`, messageId, JSON.stringify(parts), burstId, sink, token).run()
+      return result.meta.changes === 1
     },
 
     async defer(burstId, sink, token, retryAtS) {
@@ -185,14 +225,17 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
             WHERE p.burst_id = b.id AND p.claim_until > ?) ORDER BY b.received_ts, b.id LIMIT ?)`, cutoffS, nowS, budget),
         sql(`DELETE FROM activity_events WHERE id IN (SELECT e.id FROM activity_events e JOIN activity_bursts b
           ON b.id = e.burst_id WHERE b.purging = 1 ORDER BY e.id LIMIT ?)`, budget),
+        sql(`DELETE FROM activity_burst_sessions WHERE rowid IN (SELECT s.rowid FROM activity_burst_sessions s JOIN activity_bursts b
+          ON b.id = s.burst_id WHERE b.purging = 1 LIMIT ?)`, budget),
         sql(`DELETE FROM activity_posts WHERE rowid IN (SELECT p.rowid FROM activity_posts p JOIN activity_bursts b
           ON b.id = p.burst_id WHERE b.purging = 1 AND NOT EXISTS
           (SELECT 1 FROM activity_events e WHERE e.burst_id = b.id) LIMIT ?)`, budget),
         sql(`DELETE FROM activity_bursts WHERE id IN (SELECT b.id FROM activity_bursts b WHERE b.purging = 1
           AND NOT EXISTS (SELECT 1 FROM activity_events e WHERE e.burst_id = b.id)
-          AND NOT EXISTS (SELECT 1 FROM activity_posts p WHERE p.burst_id = b.id) LIMIT ?)`, budget),
+          AND NOT EXISTS (SELECT 1 FROM activity_posts p WHERE p.burst_id = b.id)
+          AND NOT EXISTS (SELECT 1 FROM activity_burst_sessions s WHERE s.burst_id = b.id) LIMIT ?)`, budget),
       ])
-      return { events: results[1]!.meta.changes, posts: results[2]!.meta.changes, bursts: results[3]!.meta.changes }
+      return { events: results[1]!.meta.changes, posts: results[3]!.meta.changes, bursts: results[4]!.meta.changes }
     },
   }
 }

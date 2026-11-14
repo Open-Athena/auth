@@ -13,12 +13,13 @@
  */
 import { activityInteger, activityText, checkActivityEvent, checkActivityKind, checkActivityKinds } from './shape.js'
 import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityKind, type ActivityKinds,
-  type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js'
+  type ActivityRecordResult, type ActivitySendContext, type ActivitySink, type ActivityStore } from './types.js'
 
 export * from './types.js'
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js'
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js'
 export { activityRoutes, type ActivityRoutesOptions } from './routes.js'
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT, type ActivityFmt, type ActivityLinks } from './render.js'
 
 export interface ActivityFeedOptions {
   store: ActivityStore
@@ -62,7 +63,15 @@ export function activityFeed(options: ActivityFeedOptions) {
         await store.release(burstId, sink.id, claim.token)
         return { sink: sink.id, status: 'missing' }
       }
-      const messageId = await sink.send(burst, claim.messageId)
+      let parts: Record<string, string> = { ...claim.parts }
+      const ctx: ActivitySendContext = {
+        get parts() { return parts },
+        async save(messageId, next) {
+          parts = { ...next }
+          if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts))) throw new Error('activity: delivery lease lost')
+        },
+      }
+      const messageId = await sink.send(burst, claim.messageId, ctx)
       const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version)
       return { sink: sink.id, status: completed ? 'sent' : 'fenced' }
     } catch (error) {
@@ -86,7 +95,8 @@ export function activityFeed(options: ActivityFeedOptions) {
       const configured = await kinds()
       const policy = Object.hasOwn(configured, event.kind) ? configured[event.kind] : undefined
       if (!policy || policy.record === 'off') return { status: 'off', burstId: null }
-      return store.append({ ...event, policy }, now(), gapS)
+      const resumePolicy = Object.hasOwn(configured, 'resume') ? configured.resume : undefined
+      return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), gapS)
     },
     async deliver(burstId: string): Promise<ActivityDelivery[]> {
       const results: ActivityDelivery[] = []

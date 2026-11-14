@@ -63,7 +63,7 @@ describe('activity bridges', () => {
 })
 
 describe('activity sink protocols', () => {
-  it('posts then edits a Slack message without mentions or raw detail at count level', async () => {
+  it('posts then edits a Slack parent without raw detail at count level, as mrkdwn rather than one plain-text block', async () => {
     const { store, feed } = setup()
     const result = await feed.record({ id: 'one', actor, origin: 'https://app.example', ts: 1000, kind: 'view', line: 'PRIVATE_DETAIL' })
     const burst = (await store.get(result.burstId!))!
@@ -74,8 +74,7 @@ describe('activity sink protocols', () => {
     }) as typeof fetch })
     await sink.send(burst, null)
     await sink.send(burst, '123.456')
-    const text = 'Recipient (grant)\n1970-01-01T00:16:40.000Z - 1970-01-01T00:16:40.000Z\nview: 1'
-    const body = { channel: 'C123', text, blocks: [{ type: 'section', text: { type: 'plain_text', text, emoji: false } }], mrkdwn: false, parse: 'none', unfurl_links: false, unfurl_media: false }
+    const body = { channel: 'C123', parse: 'none', unfurl_links: false, unfurl_media: false, text: '*Recipient* (share link) · 1 page load · 1970-01-01 00:16Z' }
     expect(calls).toEqual([
       ['https://slack.com/api/chat.postMessage', body],
       ['https://slack.com/api/chat.update', { ...body, ts: '123.456' }],
@@ -93,7 +92,7 @@ describe('activity sink protocols', () => {
     }) as typeof fetch })
     await sink.send(burst, null)
     await sink.send(burst, 'message1')
-    const body = { content: 'Recipient (grant)\n1970-01-01T00:16:40.000Z - 1970-01-01T00:16:40.000Z\nview: 1', allowed_mentions: { parse: [] } }
+    const body = { content: '**Recipient** (share link) · 1 page load · 1970-01-01 00:16Z', allowed_mentions: { parse: [] } }
     expect(calls).toEqual([
       ['https://discord.com/api/webhooks/123/test-secret?wait=true', 'POST', body],
       ['https://discord.com/api/webhooks/123/test-secret/messages/message1', 'PATCH', body],

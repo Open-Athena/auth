@@ -68,7 +68,7 @@ describe('activity admin routes with SQLite', () => {
     await feed.record({ id: 'two', actor: { ...actor, id: 'actor:b' }, origin: 'https://other.example', ts: 2000, kind: 'click' })
     const expected = {
       id: first.burstId, actor, origin: 'https://app.example', firstTs: 1000, lastTs: 1000, receivedTs: 5000, version: 1,
-      counts: { view: 1 }, notifyCounts: { view: 1 }, omittedLines: 0,
+      counts: { view: 1 }, notifyCounts: { view: 1 }, omittedLines: 0, sessionIds: [],
       lines: [{ id: 'one', ts: 1000, kind: 'view', line: 'Opened report', path: '/report', sessionId: null, notify: 'count' }],
     }
     expect(await result(await routes(request('?actorId=actor%3Aa&origin=https%3A%2F%2Fapp.example&since=1000&limit=1')))).toEqual({ status: 200, body: { bursts: [expected] }, cache: 'no-store' })

@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); globalThis.fetch = realFetch })
 
 const burst: ActivityBurst = {
   id: 'burst:one', actor: { id: 'actor:a', name: 'Alice', via: 'google' }, origin: 'https://app.example',
-  firstTs: 1000, lastTs: 1060, receivedTs: 1100, version: 3, counts: { view: 1, click: 2 }, notifyCounts: { view: 1 }, omittedLines: 2,
+  firstTs: 1000, lastTs: 1060, receivedTs: 1100, version: 3, counts: { view: 1, click: 2 }, notifyCounts: { view: 1 }, omittedLines: 2, sessionIds: [],
   lines: [{ id: 'line:one', ts: 1000, kind: 'view', line: '<script>not markup</script>', path: '/report', sessionId: 'tab:one', notify: 'count' }],
 }
 interface Call { path: string; query: Record<string, string>; method: string; body: unknown; credentials: RequestCredentials | undefined; cache: RequestCache | undefined }

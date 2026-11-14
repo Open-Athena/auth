@@ -43,7 +43,7 @@ describe('activity D1 ingestion', () => {
     const burst = await store.get(first.burstId!)
     expect(burst).toEqual({
       id: first.burstId, actor, origin: 'https://app.example', firstTs: 1000, lastTs: 1900, receivedTs: 5000,
-      version: 2, counts: { view: 2 }, notifyCounts: { view: 2 }, omittedLines: 0,
+      version: 2, counts: { view: 2 }, notifyCounts: { view: 2 }, omittedLines: 0, sessionIds: [],
       lines: ['one', 'two'].map((id, index) => ({
         id, ts: index ? 1900 : 1000, kind: 'view', line: '/report', path: '/report', sessionId: null, notify: 'count',
       })),
@@ -80,7 +80,7 @@ describe('activity D1 ingestion', () => {
     ])
     expect(await store.get(result.burstId!)).toEqual({
       id: result.burstId, actor, origin: 'https://app.example', firstTs: 1000, lastTs: 1000, receivedTs: 1000,
-      version: 1, counts: { click: 1 }, notifyCounts: { click: 1 }, lines: [], omittedLines: 0,
+      version: 1, counts: { click: 1 }, notifyCounts: { click: 1 }, lines: [], omittedLines: 0, sessionIds: [],
     })
     expect(await feed.record(event('off', 1000, 'custom'))).toEqual({ status: 'off', burstId: null })
     expect(await feed.record(event('unknown', 1000, 'constructor'))).toEqual({ status: 'off', burstId: null })
