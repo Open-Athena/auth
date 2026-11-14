@@ -13,6 +13,7 @@ export interface ActivityFeedOptions {
     /** Epoch seconds; injectable for deterministic tests. */
     now?: () => number;
 }
+/** `busy`: another caller holds the lease, or this burst is backing off after a failed send. */
 export type ActivityDelivery = {
     sink: string;
     status: 'sent' | 'busy' | 'missing' | 'fenced';

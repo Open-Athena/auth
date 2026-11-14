@@ -127,15 +127,15 @@ export function d1ActivityStore(db) {
           AND EXISTS (SELECT 1 FROM activity_events e WHERE e.burst_id = b.id AND e.notify != 'off')
           ON CONFLICT(burst_id, sink) DO UPDATE SET claim_token = excluded.claim_token, claim_until = excluded.claim_until
           WHERE activity_posts.claim_until <= ? AND activity_posts.version < (SELECT version FROM activity_bursts WHERE id = ?)`, sink, token, nowS + leaseS, burstId, nowS, burstId),
-                sql('SELECT message_id FROM activity_posts WHERE burst_id = ? AND sink = ? AND claim_token = ?', burstId, sink, token),
+                sql('SELECT message_id, failures FROM activity_posts WHERE burst_id = ? AND sink = ? AND claim_token = ?', burstId, sink, token),
             ]);
             const row = rows[1].results[0];
-            return row ? { token, messageId: row.message_id } : null;
+            return row ? { token, messageId: row.message_id, failures: row.failures } : null;
         },
         async complete(burstId, sink, token, messageId, version) {
             activityText(messageId, 'message id');
             activityInteger(version, 'version', 1);
-            const result = await sql(`UPDATE activity_posts SET message_id = ?, version = ?, claim_token = NULL, claim_until = 0
+            const result = await sql(`UPDATE activity_posts SET message_id = ?, version = ?, claim_token = NULL, claim_until = 0, failures = 0
         WHERE burst_id = ? AND sink = ? AND claim_token = ? AND version < ?
         AND ? <= (SELECT version FROM activity_bursts WHERE id = ?)`, messageId, version, burstId, sink, token, version, version, burstId).run();
             return result.meta.changes === 1;
@@ -143,6 +143,11 @@ export function d1ActivityStore(db) {
         async release(burstId, sink, token) {
             await sql(`UPDATE activity_posts SET claim_token = NULL, claim_until = 0
         WHERE burst_id = ? AND sink = ? AND claim_token = ?`, burstId, sink, token).run();
+        },
+        async defer(burstId, sink, token, retryAtS) {
+            activityInteger(retryAtS, 'retry time');
+            await sql(`UPDATE activity_posts SET claim_token = NULL, claim_until = ?, failures = failures + 1
+        WHERE burst_id = ? AND sink = ? AND claim_token = ?`, retryAtS, burstId, sink, token).run();
         },
         async purge(cutoffS, nowS, limit = 200) {
             activityInteger(cutoffS, 'cutoff');

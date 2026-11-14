@@ -28,8 +28,11 @@ export function discordActivitySink(options) {
                 signal: AbortSignal.timeout(10_000),
                 body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
             });
-            if (!response.ok)
-                throw new Error(`activity: Discord HTTP ${response.status}`);
+            if (!response.ok) {
+                // Discord's JSON error code (e.g. 10015 Unknown Webhook) says why; it never echoes the webhook.
+                const code = (await response.json().catch(() => null))?.code;
+                throw new Error(`activity: Discord HTTP ${response.status}${Number.isSafeInteger(code) ? ` (${code})` : ''}`);
+            }
             const result = await response.json();
             if (typeof result.id !== 'string' || !result.id)
                 throw new Error('activity: Discord returned no message ID');
