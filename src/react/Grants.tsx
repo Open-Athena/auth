@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { pseudonym } from '../client/identity.js'
 import type { AuthClient } from '../client/api.js'
 import type { GrantsController } from '../client/grants.js'
 import type { Grant, MintInput } from '../core/http.js'
@@ -121,7 +122,8 @@ export interface GrantMintFormProps {
   avatarEndpoint?: string
   labels?: Partial<
     Record<
-      'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired',
+      | 'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired'
+      | 'anon' | 'service',
       ReactNode
     >
   >
@@ -154,6 +156,8 @@ export function GrantMintForm({
   const [days, setDays] = useState(defaultExpiryDays)
   const [max, setMax] = useState(0)
   const [noScope, setNoScope] = useState(false)
+  const [anon, setAnon] = useState(false)
+  const [service, setService] = useState(false)
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -166,7 +170,8 @@ export function GrantMintForm({
     }
     setNoScope(false)
     const name = holder.trim()
-    const address = email.trim()
+    // A service link is never a person's, so it takes no email (the server refuses both).
+    const address = service ? '' : email.trim()
     const input: MintInput = {
       name: memo.trim() || null,
       ...(name ? { subjectName: name } : {}),
@@ -176,12 +181,16 @@ export function GrantMintForm({
       scopes: picked,
       maxRedeems: max > 0 ? max : null,
       expiresInS: days > 0 ? days * DAY_S : null,
+      ...(anon ? { anon: true } : {}),
+      ...(service ? { service: true } : {}),
     }
     if (await onMint(input)) {
       setMemo(resolveMemo(defaultMemo))
       setHolder('')
       setEmail('')
       setAvatar(null)
+      setAnon(false)
+      setService(false)
     }
   }
 
@@ -189,7 +198,7 @@ export function GrantMintForm({
     <form className={cx.form} onSubmit={submit}>
       <label>
         <span>{labels.memo ?? 'Memo'}</span>
-        <input className={cx.input} name="memo" value={memo} onChange={e => setMemo(e.target.value)} autoComplete="off" />
+        <input className={cx.input} name="memo" value={memo} onChange={e => setMemo(e.target.value)} autoComplete="off" placeholder="private: never shown to the recipient" />
       </label>
       <label>
         <span>{labels.holder ?? 'Holder'}</span>
@@ -197,9 +206,9 @@ export function GrantMintForm({
       </label>
       <label>
         <span>{labels.email ?? 'Email'}</span>
-        <input className={cx.input} name="email" type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="off" />
+        <input className={cx.input} name="email" type="email" value={service ? '' : email} disabled={service} onChange={e => setEmail(e.target.value)} autoComplete="off" />
       </label>
-      {allowlist && (
+      {allowlist && !service && (
         <label className={cx.check}>
           <input type="checkbox" checked={allow} onChange={e => setAllow(e.target.checked)} />
           <span>{labels.allowlist ?? 'Also let this email sign in'}</span>
@@ -220,6 +229,14 @@ export function GrantMintForm({
           />
         </div>
       )}
+      <label className={cx.check}>
+        <input type="checkbox" name="anon" checked={anon} onChange={e => setAnon(e.target.checked)} />
+        <span>{labels.anon ?? "Anonymous: the recipient doesn't see this name or photo"}</span>
+      </label>
+      <label className={cx.check}>
+        <input type="checkbox" name="service" checked={service} onChange={e => setService(e.target.checked)} />
+        <span>{labels.service ?? 'Service account: for a job, not a person (no email)'}</span>
+      </label>
       <fieldset>
         <legend>{labels.scopes ?? 'Opens'}</legend>
         {scopes.map(scope => (
@@ -353,7 +370,8 @@ export interface GrantCardProps {
     Partial<
       Record<
         | 'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm'
-        | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes',
+        | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes'
+        | 'anon' | 'service' | 'anonToggle' | 'serviceToggle',
         ReactNode
       >
     >
@@ -386,7 +404,11 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
   return (
     <article className={revoked ? cx.cardRevoked : cx.card} data-grant={grant.id}>
       <header className={cx.cardHead}>
-        <h3>{grant.name ?? labels.noMemo ?? 'No memo'}</h3>
+        <h3>
+          {grant.name ?? labels.noMemo ?? 'No memo'}
+          {grant.anon && <> <span className={cx.tag} title={pseudonym(grant.id)}>{labels.anon ?? 'anon'}</span></>}
+          {grant.service && <> <span className={cx.tag}>{labels.service ?? 'service'}</span></>}
+        </h3>
         {revoked ? (
           <span className={cx.tagDead}>{labels.revoked ?? 'revoked'}</span>
         ) : expired ? (
@@ -497,6 +519,26 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
         </div>
       </dl>
 
+      {!revoked && (
+        <div className={cx.row}>
+          <label className={cx.check}>
+            <input type="checkbox" name="anon" checked={grant.anon} disabled={busy} onChange={() => void grants.update(grant.id, { anon: !grant.anon })} />
+            <span>{labels.anonToggle ?? "Anonymous: the recipient doesn't see this name or photo"}</span>
+          </label>
+          <label className={cx.check}>
+            <input
+              type="checkbox"
+              name="service"
+              checked={grant.service}
+              // A link bound to an email is a person's; unbind it first.
+              disabled={busy || (!grant.service && grant.email !== null)}
+              onChange={() => void grants.update(grant.id, { service: !grant.service })}
+            />
+            <span>{labels.serviceToggle ?? 'Service account'}</span>
+          </label>
+        </div>
+      )}
+
       {editScopes && allowlist && !revoked && grant.email && (
         <p className={cx.muted}>{labels.allowlistKeepsScopes ?? `This doesn't change what ${grant.email} gets by signing in, if they're on the allowlist.`}</p>
       )}
@@ -545,7 +587,7 @@ function HolderEditor({
   const [avatar, setAvatar] = useState<string | null | undefined>(undefined)
   const [email, setEmail] = useState('')
   const [allow, setAllow] = useState(true)
-  const bind = grant.email === null && email.trim() !== ''
+  const bind = grant.email === null && !grant.service && email.trim() !== ''
   return (
     <form
       className={cx.holderForm}
@@ -566,7 +608,7 @@ function HolderEditor({
         <span>{l.holderName ?? "Holder's name"}</span>
         <input className={cx.input} type="text" value={name} onChange={e => setName(e.target.value)} autoFocus />
       </label>
-      {grant.email === null && (
+      {grant.email === null && !grant.service && (
         <label>
           <span>{l.holderEmail ?? 'Their email'}</span>
           <input className={cx.input} type="email" value={email} placeholder="optional" onChange={e => setEmail(e.target.value)} />

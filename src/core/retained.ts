@@ -14,11 +14,12 @@
  * Off unless a gate is given `retained`; the single-cookie path is unchanged.
  */
 import { b64uEncode } from './base64.js'
+import { pseudonym } from '../client/identity.js'
 import type { AccountView, AccountsResponse, IncomingView } from './http.js'
 import { clearCookie, emailSub, grantSub, inspectSessionClaims, isSecureRequest, readCookie } from './session.js'
 import type { EmailProof, RetainedBinding, RetainedBrowser, RetainedSession, RetainedStore } from './retained-store.js'
 import { SELECTION_CONTEXT_HEADER, type SelectionContext, parseSelectionContext, serializeSelectionContext } from './selection-context.js'
-import type { Auth, Grant } from './types.js'
+import { type Auth, type Grant, holderIdentity } from './types.js'
 import { generateId } from './tokens.js'
 
 /** What an incoming share link does while another login is active. */
@@ -215,8 +216,8 @@ export function retainedMode(opts: RetainedOptions, deps: Deps) {
           : {
               id: s.id,
               kind: 'grant',
-              email: auth.grant.email,
-              subject: auth.grant.subject,
+              ...holderIdentity(auth.grant),
+              ...(auth.grant.anon ? { anon: true as const, pseudonym: pseudonym(auth.grant.id) } : {}),
               active: s.id === h.browser.activeSessionId,
               expiresAt,
             },
@@ -225,7 +226,7 @@ export function retainedMode(opts: RetainedOptions, deps: Deps) {
     const incomingLinks: IncomingView[] = []
     for (const p of await store.pendings(h.binding, nowS)) {
       const g = await deps.grantById(p.grantId)
-      if (g) incomingLinks.push({ id: p.id, email: g.email, subject: g.subject, expiresAt: p.expiresAt })
+      if (g) incomingLinks.push({ id: p.id, ...holderIdentity(g), ...(g.anon ? { anon: true as const, pseudonym: pseudonym(g.id) } : {}), expiresAt: p.expiresAt })
     }
     return {
       selection: serializeSelectionContext(contextOf(h.browser)),

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from '../src/client/identity.js'
+import { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope, pseudonym } from '../src/client/identity.js'
 import type { GrantWhoami } from '../src/client/identity.js'
 import { exchangeKeyParam, hasKeyParam } from '../src/client/exchange.js'
 import { downscaleDataUri, downscaleImage } from '../src/client/image.js'
@@ -39,6 +39,19 @@ describe('framework-free identity helpers', () => {
       hasScope(grant, 'reports'), hasScope(grant, 'report'),
       hasScope({ ...grant, scopes: ['*'] }, 'anything'), hasScope(null, 'reports'),
     ]).toEqual([true, false, true, false])
+  })
+})
+
+describe('anonymous links', () => {
+  it('get no display name, even if a subject slipped through, and a stable pseudonym per grant id', () => {
+    const anon: GrantWhoami = { kind: 'grant', id: 'g1', subject: { name: 'Bob' }, email: 'bob@example.com', scopes: [], admin: false, expiresAt: null, anon: true }
+    expect(displayName(anon)).toBe(null)
+    expect(['g1', 'g1', 'g2', 'TQSrM3g8L8YG'].map(pseudonym)).toEqual(['Kind Marmot', 'Kind Marmot', 'Misty Dormouse', 'Ruby Lemur'])
+  })
+
+  it('spread over the name space', () => {
+    const names = new Set(Array.from({ length: 1000 }, (_, i) => pseudonym(`grant-${i}`)))
+    expect(names.size).toBe(904)
   })
 })
 

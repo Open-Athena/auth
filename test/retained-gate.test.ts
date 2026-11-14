@@ -13,6 +13,7 @@ import type { RetainedLimits } from '../src/core/retained-store.js'
 import type { IncomingPolicy } from '../src/core/retained.js'
 import { authRoutes } from '../src/core/routes.js'
 import { SELECTION_CONTEXT_HEADER } from '../src/core/selection-context.js'
+import { pseudonym } from '../src/client/identity.js'
 import { testDbRaw } from './d1-shim.js'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -240,6 +241,37 @@ describe('retained logins', () => {
       active: session.id,
       accounts: [{ id: session.id, kind: 'grant', email: null, subject: { name: 'Bea' }, active: true, expiresAt: expect.any(Number) }],
       incoming: [{ id: ex.body.incoming, email: null, subject: null, expiresAt: expect.any(Number) }],
+    })
+  })
+
+  it("an anonymous link's name and email reach neither the held logins nor an incoming offer; its pseudonym does", async () => {
+    const t = setup()
+    const b = new Browser()
+    const link = (name: string) =>
+      t.gate.mint({ subject: { name }, email: `${name.toLowerCase()}@x.test`, anon: true, scopes: ['view'], createdBy: 'boss@x.test' })
+    const held = await link('Bea')
+    const offered = await link('Cy')
+    await t.call(b, 'POST', '/exchange', { token: held.token })
+    const ex = await t.call(b, 'POST', '/exchange', { token: offered.token })
+    expect(ex.body).toEqual({
+      kind: 'grant',
+      id: held.grant.id,
+      subject: null,
+      email: null,
+      scopes: ['view'],
+      admin: false,
+      expiresAt: null,
+      anon: true,
+      selection: expect.any(String),
+      incoming: expect.any(String),
+    })
+    const listed = (await t.call(b, 'GET', '/accounts')).body as AccountsResponse
+    const session = listed.accounts[0]!
+    expect(listed).toEqual({
+      selection: expect.any(String),
+      active: session.id,
+      accounts: [{ id: session.id, kind: 'grant', email: null, subject: null, anon: true, pseudonym: pseudonym(held.grant.id), active: true, expiresAt: expect.any(Number) }],
+      incoming: [{ id: ex.body.incoming, email: null, subject: null, anon: true, pseudonym: pseudonym(offered.grant.id), expiresAt: expect.any(Number) }],
     })
   })
 

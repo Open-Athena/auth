@@ -60,6 +60,8 @@ describe('mint', () => {
       sessionsInvalidBefore: null,
       firstUsedAt: null,
       lastUsedAt: null,
+      service: false,
+      anon: false,
     })
     expect([...store.hashes.keys()]).not.toContain(token)
   })
@@ -374,6 +376,8 @@ describe('canRedeem / sessionValid', () => {
     sessionsInvalidBefore: null,
     firstUsedAt: null,
     lastUsedAt: null,
+    service: false,
+    anon: false,
   }
 
   /** Every state a grant can be in, against both questions. */

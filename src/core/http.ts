@@ -34,6 +34,9 @@ export interface AccountView {
   kind: 'sso' | 'grant'
   email: string | null
   subject: Subject | null
+  /** An anonymous link: `email` and `subject` are withheld; `pseudonym` is its stable stand-in name. */
+  anon?: true
+  pseudonym?: string
   active: boolean
   /** When this login stops working here (epoch s). */
   expiresAt: number
@@ -44,6 +47,9 @@ export interface IncomingView {
   id: string
   email: string | null
   subject: Subject | null
+  /** See `AccountView.anon`. */
+  anon?: true
+  pseudonym?: string
   /** When the offer lapses (epoch s); the link must be opened again after. */
   expiresAt: number
 }

@@ -313,6 +313,17 @@ describe('an anonymous link', () => {
     ]).toEqual(['Anonymous link', true])
   })
 
+  it('an `anon` link: the label by default, its pseudonym, or no chip, as the app chooses', () => {
+    const hidden: Whoami = { ...GRANT, id: 'g1', subject: null, email: null, anon: true }
+    const label = (anon?: 'label' | 'pseudonym' | 'hidden') => {
+      const { container } = renderWithQuery(<WhoamiChip whoami={hidden} {...(anon ? { anon } : {})} classNames={{ root: 'chip', name: 'nm' }} />)
+      const text = container.querySelector('.chip') ? container.querySelector('.nm')!.textContent : null
+      cleanup()
+      return text
+    }
+    expect([label(), label('pseudonym'), label('hidden')]).toEqual(['Anonymous link', 'Kind Marmot', null])
+  })
+
   it('renders nothing at all when there is no identity', () => {
     const { container } = renderWithQuery(
       <>

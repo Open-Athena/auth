@@ -2,6 +2,10 @@
 
 Requested from disky's root session, 2026-11-14. Ryan, in that session: "go for SAs in auth. and we should be able to tag existing grants with the SA bit."
 
+**Status (2026-11-14):** §1 is implemented. §2 waits on the activity threads port (`activity-threads-and-anon-links.md` §1). §3 is disky's, once it takes a dist with §1.
+
+§1 as built: `grants.service` and `grants.anon` are columns, in `migrations/0005_grant_flags.sql` (apply once). Both are set at mint (`NewGrant`/`MintInput`) and changed with `PATCH /grants/:id`, logged as an `update` like other edits. `ServiceGrantEmailError` (400 `service links cannot have an email` from the routes) refuses a service link with an email, at mint, when binding an email to one, and when flagging an email-bound link. Apps read it as `auth.grant.service` (no separate `auth.service`: `auth.grant` is already loaded). The package has no job-token provisioning path of its own, so "default true for job tokens" is the minting app's: pass `service: true`. `<GrantsPanel>`: a "Service account" checkbox on the mint form (it disables the email field) and on each card, plus a `service` tag; the holder editor hides the email field for a service link.
+
 ## Why
 
 disky posts each grant's activity to `#<deploy>-admin` (one Slack thread per burst, sender = the grant's holder). Grants used by jobs (`gcs-snapshot-job`, `gcs-sheet-sync`, a VM-mode parity link) post routine bursts ("7 page loads · 1 URL change") that read like a person browsing and tell an admin nothing. Ryan: omit service accounts' routine activity "unless there's an error or sthg notable", the way disky's deploy notices post a red and then a green.

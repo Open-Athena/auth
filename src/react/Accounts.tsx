@@ -97,8 +97,9 @@ export interface AccountSwitcherProps {
   >
 }
 
-const who = (a: { kind: AccountView['kind']; email: string | null; subject: AccountView['subject'] }): string =>
-  a.subject?.name ?? a.email ?? (a.kind === 'grant' ? 'Share link' : 'Account')
+/** An anonymous link has no name or email here; it goes by its pseudonym (the server's, from its grant id). */
+const who = (a: { kind: AccountView['kind']; email: string | null; subject: AccountView['subject']; pseudonym?: string }): string =>
+  a.subject?.name ?? a.email ?? a.pseudonym ?? (a.kind === 'grant' ? 'Share link' : 'Account')
 
 /**
  * The browser's accounts: switch with one click, add another, take one off,

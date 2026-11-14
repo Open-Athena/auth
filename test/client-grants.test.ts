@@ -58,6 +58,8 @@ const grant = (id: string, o: Partial<Grant> = {}): Grant => ({
   sessionsInvalidBefore: null,
   firstUsedAt: null,
   lastUsedAt: null,
+  service: false,
+  anon: false,
   ...o,
 })
 

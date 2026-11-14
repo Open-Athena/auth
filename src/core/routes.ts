@@ -10,7 +10,7 @@ import { type DecisionPageOptions, renderDecisionPage } from './decision-page.js
 import type { DecisionView } from './decisions.js'
 import type { Auth, Subject } from './types.js'
 import type { AllowEntry, AllowlistStore, AuditQuery } from './store.js'
-import type { Gate, GrantEdit, ProfileInput } from './gate.js'
+import { type Gate, type GrantEdit, type ProfileInput, ServiceGrantEmailError } from './gate.js'
 import { assetId } from './assets.js'
 import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvatarRef } from './avatar.js'
 import { cleanSubject, isEmailish } from './requests.js'
@@ -432,10 +432,13 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
             expiresAt: b.expiresInS ? Math.floor(Date.now() / 1000) + b.expiresInS : null,
             sessionTtlS: b.sessionTtlS ?? null,
             expiryEndsSessions: b.expiryEndsSessions ?? true,
+            service: !!b.service,
+            anon: !!b.anon,
             createdBy: creatorOf(a),
           })
         } catch (e) {
           if (e instanceof InvalidImageError) return json({ error: 'invalid avatar', detail: e.message }, 400)
+          if (e instanceof ServiceGrantEmailError) return json({ error: 'service links cannot have an email' }, 400)
           throw e
         }
         const { grant, token } = minted
@@ -495,6 +498,8 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         if ('maxRedeems' in b) patch.maxRedeems = b.maxRedeems ?? null
         if ('sessionTtlS' in b) patch.sessionTtlS = b.sessionTtlS ?? null
         if ('expiryEndsSessions' in b) patch.expiryEndsSessions = !!b.expiryEndsSessions
+        if ('service' in b) patch.service = !!b.service
+        if ('anon' in b) patch.anon = !!b.anon
         if ('subjectName' in b) patch.subjectName = b.subjectName ?? null
         if ('avatar' in b) patch.avatar = b.avatar ?? null
         // Whoever may edit this link could mint these scopes on a new one, so
@@ -534,6 +539,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
           grant = await gate.update(id, patch, undefined, allowEmail ? ['allowlist'] : [])
         } catch (e) {
           if (e instanceof InvalidImageError) return json({ error: 'invalid avatar', detail: e.message }, 400)
+          if (e instanceof ServiceGrantEmailError) return json({ error: 'service links cannot have an email' }, 400)
           throw e
         }
         if (!grant) return json({ error: 'not found' }, 404)

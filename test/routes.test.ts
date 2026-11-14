@@ -152,6 +152,65 @@ describe("a link's memo", () => {
   })
 })
 
+describe('service and anonymous links', () => {
+  const patch = (id: string, data: unknown, cookie: string) => call(`/grants/${id}`, { method: 'PATCH', body: JSON.stringify(data) }, cookie)
+  const flags = (g: { service: boolean; anon: boolean }) => [g.service, g.anon]
+  /** Grants minted in one second list in no particular order. */
+  const byId = (rows: unknown[][]) => [...rows].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+  const updates = (id: string) =>
+    db.prepare("SELECT reason FROM access_log WHERE grant_id = ? AND event = 'update' ORDER BY id").bind(id).all<{ reason: string }>()
+      .then(r => r.results.map(row => row.reason))
+
+  it('mints either flag, defaulting off, and lets staff change both later, logging each change', async () => {
+    const admin = await asAdmin()
+    const plain = (await post('/grants', { scopes: ['reports'], avatar: null }, admin)).body.grant
+    const job = (await post('/grants', { scopes: ['reports'], service: true, avatar: null }, admin)).body.grant
+    const anon = (await post('/grants', { scopes: ['reports'], anon: true, subjectName: 'Bob', avatar: null }, admin)).body.grant
+    expect([flags(plain), flags(job), flags(anon)]).toEqual([[false, false], [true, false], [false, true]])
+    expect(flags((await patch(plain.id, { service: true }, admin)).body.grant)).toEqual([true, false])
+    expect(flags((await patch(plain.id, { service: false, anon: true }, admin)).body.grant)).toEqual([false, true])
+    expect(await updates(plain.id)).toEqual(['service', 'anon,service'])
+    const listed = (await call('/grants', {}, admin)).body.grants.map((g: { id: string; service: boolean; anon: boolean }) => [g.id, ...flags(g)])
+    expect(byId(listed)).toEqual(byId([
+      [anon.id, false, true],
+      [job.id, true, false],
+      [plain.id, false, true],
+    ]))
+  })
+
+  it('refuses a service link bound to an email, at mint and on either edit, and changes nothing', async () => {
+    const admin = await asAdmin()
+    const minted = await post('/grants', { scopes: ['reports'], service: true, email: 'bob@example.com', avatar: null }, admin)
+    const job = (await post('/grants', { scopes: ['reports'], service: true, avatar: null }, admin)).body.grant
+    const bound = (await post('/grants', { scopes: ['reports'], email: 'bob@example.com', avatar: null }, admin)).body.grant
+    const refused = { status: 400, body: { error: 'service links cannot have an email' } }
+    const shape = ({ status, body }: { status: number; body: unknown }) => ({ status, body })
+    expect([
+      shape(minted),
+      shape(await patch(job.id, { email: 'bob@example.com' }, admin)),
+      shape(await patch(bound.id, { service: true }, admin)),
+    ]).toEqual([refused, refused, refused])
+    const listed = (await call('/grants', {}, admin)).body.grants.map((g: { id: string; email: string | null; service: boolean }) => [g.id, g.email, g.service])
+    expect(byId(listed)).toEqual(byId([
+      [bound.id, 'bob@example.com', false],
+      [job.id, null, true],
+    ]))
+    expect([await updates(job.id), await updates(bound.id)]).toEqual([[], []])
+  })
+
+  it("hides an anonymous link's subject and email from its holder, but not from staff", async () => {
+    const admin = await asAdmin()
+    const minted = await post('/grants', { scopes: ['reports'], anon: true, subjectName: 'Bob Secret', email: 'bob@example.com', avatar: null }, admin)
+    const id: string = minted.body.grant.id
+    const holder = { kind: 'grant', id, subject: null, email: null, scopes: ['reports'], admin: false, expiresAt: null, anon: true }
+    const exchanged = await post('/exchange', { token: minted.body.token })
+    expect(exchanged.body).toEqual(holder)
+    expect((await call('/whoami', {}, pair(exchanged.setCookie!))).body).toEqual(holder)
+    expect(minted.body.grant.subject).toEqual({ name: 'Bob Secret' })
+    expect(minted.body.grant.email).toBe('bob@example.com')
+  })
+})
+
 describe('exchange', () => {
   it('trades a token for a session cookie', async () => {
     const cookie = await asAdmin()

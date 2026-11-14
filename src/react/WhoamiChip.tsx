@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { SELECTION_HEADER } from '../client/accounts.js'
 import { Avatar } from './Avatar.js'
 import { useForgetWhoami } from './useWhoami.js'
-import { type Whoami, displayName } from './types.js'
+import { type Whoami, displayName, pseudonym } from './types.js'
 
 export interface WhoamiChipProps {
   whoami: Whoami | null | undefined
@@ -15,6 +15,11 @@ export interface WhoamiChipProps {
    * is the one case where a visitor most needs a way out.
    */
   anonymousLabel?: ReactNode
+  /**
+   * An `anon` link (staff chose to hide who it's for): show `anonymousLabel`
+   * (the default), its stable `pseudonym`, or no chip at all.
+   */
+  anon?: 'label' | 'pseudonym' | 'hidden'
   onSignedOut?: () => void
   /** Show an `<Avatar>` before the name. Off by default: it changes the layout. */
   avatar?: boolean | { src?: string | null; size?: number }
@@ -33,14 +38,16 @@ export function WhoamiChip({
   logoutEndpoint = '/api/auth/logout',
   signOutLabel = 'Sign out',
   anonymousLabel = 'Anonymous link',
+  anon = 'label',
   onSignedOut,
   avatar = false,
   onOpenProfile,
   classNames = {},
 }: WhoamiChipProps) {
   const forget = useForgetWhoami()
-  const name = displayName(whoami)
-  if (!whoami) return null
+  const anonLink = whoami?.kind === 'grant' && whoami.anon === true
+  const name = anonLink && anon === 'pseudonym' ? pseudonym(whoami.id) : displayName(whoami)
+  if (!whoami || (anonLink && anon === 'hidden')) return null
 
   async function signOut() {
     // In retained-login mode the server signs out only the account this page

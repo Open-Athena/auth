@@ -2,6 +2,12 @@
 
 Requested from `jobs` on 2026-11-14. Approved by Ryan in the `jobs` session (design below is what he agreed to there).
 
+**Status (2026-11-14):** §2 and §3 are implemented; §1 (threads) is next.
+
+§2 as built: `grants.anon` (with `service`, `migrations/0005_grant_flags.sql`). `holderIdentity(grant)` is the one filter: `whoami`, `/exchange`, and retained `/accounts` (logins and incoming offers) carry `subject: null, email: null, anon: true`, and account entries add `pseudonym`. `/profile` treats an anon link as having no principal, so the holder can neither read nor edit the profile of the email staff bound it to. `pseudonym(grantId)`: FNV-1a over the id into 64 adjectives × 64 animals ("Kind Marmot"). `displayName` returns null for anon. `<WhoamiChip anon="label" | "pseudonym" | "hidden">` (default `label`, i.e. `anonymousLabel`); `<AccountSwitcher>` shows the pseudonym. Admin: mint and card checkboxes ("Anonymous: the recipient doesn't see this name or photo") and an `anon` tag whose tooltip is the pseudonym. Staff routes, session-log identity and activity actors still use the real subject.
+
+§3 as built: kept the field name `name` (renaming would break disky and `jobs` for no behavioral gain). Types and README call it a private note never shown to the recipient, and the mint form's placeholder says so. `test/holder-privacy.test.ts` mints an anon, email-bound link with sentinel memo, name, email and stored photo, then hits exchange, whoami (cookie and Bearer), profile GET/PUT, track, the grant admin routes, the access log, session-log ingest/list/detail, the activity routes and logout as the holder, and asserts no sentinel appears in any body or header. It fails without the profile fix above.
+
 `jobs` uses `@open-athena/auth/activity` (dist `9c8be0d`) with the `OA Jobs` Slack bot in `#wip-jd-logs`. Its posts are one flat plain-text message per burst (`ryan.williams@openathena.ai (sso) <ISO> - <ISO> view: 3 [view] view /pm …`): no threads, no links, posted as the bot. disky's channels (`#gcs-admin` etc.) are much better, but disky has its own implementation (`~/c/disky/site/functions/_lib/activity.ts`, not this package). This spec moves disky's model into the package so `jobs` (now) and disky (later) share it, and adds anonymous links.
 
 ## 1. Threads: port disky's burst/thread model

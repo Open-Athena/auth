@@ -96,6 +96,8 @@ export function memoryGrantStore(): MemoryGrantStore {
       if ('maxRedeems' in patch) next.maxRedeems = patch.maxRedeems ?? null
       if ('sessionTtlS' in patch) next.sessionTtlS = patch.sessionTtlS ?? null
       if ('expiryEndsSessions' in patch) next.expiryEndsSessions = patch.expiryEndsSessions ?? true
+      if ('service' in patch) next.service = !!patch.service
+      if ('anon' in patch) next.anon = !!patch.anon
       if ('email' in patch) next.email = patch.email ?? null
       if ('subject' in patch) next.subject = patch.subject ?? null
       rows.set(id, next)

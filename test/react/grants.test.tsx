@@ -24,7 +24,7 @@ describe('GrantMintForm', () => {
   it('submits exactly the chosen scopes, in the order offered', async () => {
     const onMint = form()
     const user = userEvent.setup()
-    expect(screen.getAllByRole('checkbox').map(c => (c as HTMLInputElement).checked)).toEqual([false, false])
+    expect(within(screen.getByRole('group', { name: 'Opens' })).getAllByRole('checkbox').map(c => (c as HTMLInputElement).checked)).toEqual([false, false])
     expect(screen.getByText('0 of 622 sessions are visible to links')).toBeTruthy()
     await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
     await user.click(screen.getByRole('checkbox', { name: /^Alpha/ }))
@@ -80,7 +80,7 @@ function backend(patches: unknown[] = []) {
       const grant = {
         id: `g${grants.length + 1}`, name: body.name ?? null, note: null, subject: null, email: null, scopes: body.scopes,
         maxRedeems: null, redeems: 0, expiresAt: null, sessionTtlS: null, createdAt: 1, createdBy: 'a', disabledAt: null,
-        revokedAt: null, expiryEndsSessions: true, sessionsInvalidBefore: null, firstUsedAt: null, lastUsedAt: null,
+        revokedAt: null, expiryEndsSessions: true, sessionsInvalidBefore: null, firstUsedAt: null, lastUsedAt: null, service: false, anon: false,
       } satisfies Grant
       grants.push(grant)
       return reply({ grant, token: `token-${grant.id}` })
@@ -182,7 +182,7 @@ describe('GrantsPanel editScopes', () => {
   }
   /** Each scope checkbox on the card: `[name, checked, disabled]`. */
   const checks = () =>
-    within(screen.getByRole('article'))
+    within(screen.getByRole('article').querySelector('dd')!)
       .queryAllByRole('checkbox')
       .map(c => [(c as HTMLInputElement).closest('label')!.textContent, (c as HTMLInputElement).checked, (c as HTMLInputElement).disabled])
 
@@ -218,5 +218,38 @@ describe('GrantsPanel editScopes', () => {
     renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} editScopes buildLink={() => 'x'} />)
     await screen.findByText('revoked')
     expect(checks()).toEqual([])
+  })
+})
+
+describe('anonymous and service links', () => {
+  const ANON = "Anonymous: the recipient doesn't see this name or photo"
+  const SERVICE_MINT = 'Service account: for a job, not a person (no email)'
+
+  it('the mint form sends either flag, and a service link drops the email', async () => {
+    const onMint = vi.fn(async (_: MintInput) => ({ id: 'g' }))
+    renderWithQuery(<GrantMintForm scopes={[{ id: 'reports', label: 'Reports' }]} onMint={onMint} />)
+    const user = userEvent.setup()
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), 'bob@example.com')
+    await user.click(screen.getByRole('checkbox', { name: ANON }))
+    await user.click(screen.getByRole('checkbox', { name: SERVICE_MINT }))
+    expect((screen.getByRole('textbox', { name: 'Email' }) as HTMLInputElement).disabled).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    expect(onMint.mock.calls).toEqual([[{
+      name: null, email: null, scopes: ['reports'], maxRedeems: null, expiresInS: 30 * 86400, anon: true, service: true,
+    }]])
+  })
+
+  it('a card tags each flag and toggles it on an existing link', async () => {
+    const patches: unknown[] = []
+    const client = backend(patches)
+    await client.grants.mint({ name: 'Nightly scan', scopes: ['alpha'] })
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} />)
+    const card = await screen.findByRole('article')
+    const user = userEvent.setup()
+    await user.click(within(card).getByRole('checkbox', { name: 'Service account' }))
+    await waitFor(() => expect(within(card).getByRole('heading').textContent).toBe('Nightly scan service'))
+    await user.click(within(card).getByRole('checkbox', { name: ANON }))
+    await waitFor(() => expect(within(card).getByRole('heading').textContent).toBe('Nightly scan anon service'))
+    expect(patches).toEqual([{ service: true }, { anon: true }])
   })
 })

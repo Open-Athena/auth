@@ -22,6 +22,12 @@ We will handle GCP project/SA creation, API enablement and secure runtime creden
 
 Google documents direct [service-account role assignment] and the read-only [Groups Reader role]. Its optional restrictions distinguish categories such as security/non-security groups; do not assume an arbitrary per-group allowlist. The request names the real SA email above.
 
+## How Often Is The Grant Needed?
+
+Once per Workspace, not once per group or per app. Groups Reader is a tenant-wide admin role: assigned to `groups-reader@oa-auth-509611.iam.gserviceaccount.com`, it lets that account read every group's membership in `openathena.ai`, unless the super admin restricts it to group categories (security / non-security). Adding a group later (another app, another team) is config on our side: add it to the central sync's group list and map it to scopes in the consuming app. It needs no new grant. A new grant is needed only for a new SA (e.g. replacing this one), or if the role was restricted to categories and a new group falls outside them.
+
+The GCP side (the SA and the enabled APIs) can be code: `~/c/oa/ops/gcp` already manages GCP resources with Pulumi. The role assignment can be code too, via the Admin SDK's `roleAssignments` API or Terraform's `googleworkspace` provider. Either way it runs with a super admin's credential, so for a one-time assignment the console click is simpler and keeps that credential out of automation.
+
 ## Who Needs Which Permission?
 
 | Task | Authority needed | Workspace superadmin needed? |

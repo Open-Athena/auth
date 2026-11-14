@@ -59,7 +59,7 @@ import {
   mintDecisionTokens,
   readDecisionToken,
 } from './decisions.js'
-import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, type NewGrant, type Subject } from './types.js'
+import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, holderIdentity, type NewGrant, type Subject } from './types.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 import { type RetainedOptions, retainedMode } from './retained.js'
 import type { EmailProof } from './retained-store.js'
@@ -217,6 +217,14 @@ export interface GrantEdit extends Omit<GrantPatch, 'subject'> {
   subjectName?: string | null
   /** The holder's face: anything `copyAvatar` takes, copied before it's stored; null clears it. */
   avatar?: string | null
+}
+
+/** A service link is a job's, never a person's, so it can't also be bound to an email. */
+export class ServiceGrantEmailError extends Error {
+  constructor() {
+    super('a service link cannot be bound to an email')
+    this.name = 'ServiceGrantEmailError'
+  }
 }
 
 export type AvatarInput =
@@ -623,6 +631,7 @@ export function createGate(opts: GateOptions) {
    */
   async function mint(draft: NewGrant, nowMs = Date.now()): Promise<MintResult> {
     const nowS = sec(nowMs)
+    if (draft.service && draft.email) throw new ServiceGrantEmailError()
     let subject = draft.subject ?? null
     if (subject?.avatar) {
       const { avatar, ...rest } = subject
@@ -649,6 +658,8 @@ export function createGate(opts: GateOptions) {
       sessionsInvalidBefore: null,
       firstUsedAt: null,
       lastUsedAt: null,
+      service: draft.service ?? false,
+      anon: draft.anon ?? false,
     }
     await store.insert(grant, await hashToken(token))
     // Without this the timeline starts at `redeem`, so "who handed this link
@@ -955,11 +966,14 @@ export function createGate(opts: GateOptions) {
     let prior: Subject | null = null
     let priorEmail: string | null = null
     let priorScopes: string[] | null = null
-    if ('email' in edit || 'scopes' in edit) {
+    if ('email' in edit || 'scopes' in edit || 'service' in edit) {
       const existing = await store.byId(id)
       if (!existing) return null
       priorEmail = existing.email
       priorScopes = existing.scopes
+      const service = 'service' in edit ? !!edit.service : existing.service
+      const email = 'email' in edit ? (edit.email ?? null) : existing.email
+      if (service && email) throw new ServiceGrantEmailError()
     }
     if ('subjectName' in edit || 'avatar' in edit) {
       const existing = await store.byId(id)
@@ -997,9 +1011,12 @@ export function createGate(opts: GateOptions) {
     return grant
   }
 
-  /** The email a profile is keyed by: an SSO principal, or an email-bound grant. */
+  /**
+   * The email a profile is keyed by: an SSO principal, or an email-bound grant.
+   * None for an `anon` link: its holder mustn't learn which person staff bound it to.
+   */
   function principalEmail(auth: Auth): string | null {
-    return auth.kind === 'sso' ? auth.email : auth.grant.email
+    return auth.kind === 'sso' ? auth.email : holderIdentity(auth.grant).email
   }
 
   /**
@@ -1010,7 +1027,7 @@ export function createGate(opts: GateOptions) {
    */
   function mayEditProfile(auth: Auth): boolean {
     if (auth.kind === 'sso') return true
-    return allowGrantSelfEdit && auth.grant.email !== null
+    return allowGrantSelfEdit && principalEmail(auth) !== null
   }
 
   /** The caller's own profile, or null. Never reads another principal's row. */
@@ -1178,11 +1195,11 @@ export function createGate(opts: GateOptions) {
           // has no identifier a person can quote back to an admin.
           id: auth.grant.id,
           // Not `grant.name`: the memo is the minter's, and this goes to whoever holds the link.
-          subject: auth.grant.subject,
-          email: auth.grant.email,
+          ...holderIdentity(auth.grant),
           scopes: auth.scopes,
           admin: false,
           expiresAt: auth.grant.expiresAt,
+          ...(auth.grant.anon ? { anon: true as const } : {}),
         }
   }
 
