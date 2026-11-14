@@ -1,5 +1,5 @@
 import { activityText } from './shape.js';
-import { activityMessage } from './render.js';
+import { renderDiscordMessage } from './render.js';
 /** The webhook is a secret; errors never interpolate it or a provider response body. */
 export function discordActivitySink(options) {
     activityText(options.id, 'sink id');
@@ -19,9 +19,8 @@ export function discordActivitySink(options) {
                 url.pathname += `/messages/${encodeURIComponent(messageId)}`;
             else
                 url.searchParams.set('wait', 'true');
-            // Suppress mentions, and escape formatting before applying Discord's 2000-character limit.
-            const raw = activityMessage(burst, 1900).replace(/([\\*_~`|>\[\]])/g, '\\$1');
-            const content = raw.length <= 2000 ? raw : `${raw.slice(0, 1986)}\n[truncated]`;
+            // Text is escaped by the renderer and cut to Discord's 2000 characters; mentions are suppressed below.
+            const content = renderDiscordMessage(burst, options);
             const response = await (options.fetch ?? fetch)(url.href, {
                 method: messageId ? 'PATCH' : 'POST',
                 headers: { 'content-type': 'application/json' },

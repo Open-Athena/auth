@@ -16,6 +16,24 @@ import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_K
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export { activityRoutes } from './routes.js';
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
+/** Marks a service burst that was judged routine: delivered, with nothing posted. */
+const QUIET = '-';
+/** Why a service burst is notable, by default: a run of errors, any refused request, or a client it hasn't used before. */
+export function serviceReasons(burst, newClients, errorThreshold = 3) {
+    const reasons = [];
+    const errors = burst.counts.error ?? 0;
+    if (errors >= errorThreshold)
+        reasons.push(`${errors} errors`);
+    const denied = burst.counts.denied ?? 0;
+    if (denied) {
+        const why = [...new Set(burst.lines.filter(l => l.kind === 'denied' && l.line).map(l => l.line))].slice(0, 3);
+        reasons.push(`${denied} refused ${denied === 1 ? 'request' : 'requests'}${why.length ? ` (${why.join('; ')})` : ''}`);
+    }
+    if (newClients.length)
+        reasons.push(newClients.length === 1 ? 'a new client' : `${newClients.length} new clients`);
+    return reasons;
+}
 export function activityFeed(options) {
     const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options;
     const defaults = { ...DEFAULT_ACTIVITY_KINDS, ...options.kinds };
@@ -44,8 +62,33 @@ export function activityFeed(options) {
                 await store.release(burstId, sink.id, claim.token);
                 return { sink: sink.id, status: 'missing' };
             }
-            const messageId = await sink.send(burst, claim.messageId);
+            const posted = claim.messageId === QUIET ? null : claim.messageId;
+            if (burst.actor.via === 'service') {
+                const newClients = await store.newClients(burstId);
+                const reasons = options.service?.notable
+                    ? await options.service.notable(burst, { newClients })
+                    : serviceReasons(burst, newClients, options.service?.errorThreshold);
+                // A burst already posted green keeps its color as it grows; a clean one with no red before it posts nothing.
+                const green = !reasons.length && (posted !== null || (await store.serviceRed(burst.actor.id, burst.origin, sink.id)));
+                if (!reasons.length && !green) {
+                    const completed = await store.complete(burstId, sink.id, claim.token, QUIET, burst.version);
+                    return { sink: sink.id, status: completed ? 'quiet' : 'fenced' };
+                }
+                burst.notice = reasons.length ? { color: 'red', reasons } : { color: 'green', reasons: [] };
+            }
+            let parts = { ...claim.parts };
+            const ctx = {
+                get parts() { return parts; },
+                async save(messageId, next) {
+                    parts = { ...next };
+                    if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts)))
+                        throw new Error('activity: delivery lease lost');
+                },
+            };
+            const messageId = await sink.send(burst, posted, ctx);
             const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version);
+            if (completed && burst.notice)
+                await store.setServiceRed(burst.actor.id, burst.origin, sink.id, burst.notice.color === 'red', now());
             return { sink: sink.id, status: completed ? 'sent' : 'fenced' };
         }
         catch (error) {
@@ -70,7 +113,8 @@ export function activityFeed(options) {
             const policy = Object.hasOwn(configured, event.kind) ? configured[event.kind] : undefined;
             if (!policy || policy.record === 'off')
                 return { status: 'off', burstId: null };
-            return store.append({ ...event, policy }, now(), gapS);
+            const resumePolicy = Object.hasOwn(configured, 'resume') ? configured.resume : undefined;
+            return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), gapS);
         },
         async deliver(burstId) {
             const results = [];

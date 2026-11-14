@@ -8,11 +8,14 @@ export interface ActivityKind {
 export type ActivityKinds = Readonly<Record<string, ActivityKind>>;
 export declare const DEFAULT_ACTIVITY_KINDS: ActivityKinds;
 export declare const BATCH_GAP_S: number;
+/** How far back a tab's session resumes its own earlier burst. */
+export declare const RESUME_S: number;
 export declare const ACTIVITY_LINES = 100;
 export interface ActivityActor {
     /** Stable identity, not a display name. Include the grant ID for an unbound share link. */
     id: string;
     name: string;
+    /** How they got in: `sso`, `grant`, or `service` for a service link (a job, not a person). */
     via: string;
 }
 export interface ActivityEvent {
@@ -28,9 +31,16 @@ export interface ActivityEvent {
     /** Only a pathname is retained, never query strings or fragments. */
     path?: string;
     sessionId?: string;
+    /**
+     * An opaque client fingerprint (a hash of the IP hash and user agent, say; never a raw address). Stored at any
+     * record level: a service link's burst from a client it hasn't used before is notable.
+     */
+    client?: string;
 }
 export interface ActivityWrite extends ActivityEvent {
     policy: ActivityKind;
+    /** The `resume` kind's policy: a session rejoining its own earlier burst records a `resume` line when this records. */
+    resumePolicy?: ActivityKind;
 }
 export interface ActivityLine {
     id: string;
@@ -54,7 +64,16 @@ export interface ActivityBurst {
     /** Latest `ACTIVITY_LINES` recorded lines, in timestamp/ID order. Count-only rows have no detail. */
     lines: ActivityLine[];
     omittedLines: number;
+    /** The burst's sessions (tabs), oldest first, at most `ACTIVITY_SESSIONS`. */
+    sessionIds: string[];
+    /** Set by the feed for a service link's burst it posts: red (notable, with why) or green (clean again after a red). */
+    notice?: ActivityNotice;
 }
+export interface ActivityNotice {
+    color: 'red' | 'green';
+    reasons: string[];
+}
+export declare const ACTIVITY_SESSIONS = 50;
 export type ActivityRecordResult = {
     status: 'off';
     burstId: null;
@@ -67,6 +86,8 @@ export interface ActivityClaim {
     messageId: string | null;
     /** Consecutive failed sends of this burst to this sink. */
     failures: number;
+    /** Thread replies already posted, by slot (see `ActivitySendContext`). */
+    parts: Record<string, string>;
 }
 /** After the nth consecutive failure, a burst waits `min(2^(n-1) × 30s, 15 min)` before its next send to that sink. */
 export declare const ACTIVITY_RETRY_S = 30;
@@ -90,6 +111,13 @@ export interface ActivityStore {
     claim(burstId: string, sink: string, nowS: number, leaseS: number): Promise<ActivityClaim | null>;
     complete(burstId: string, sink: string, token: string, messageId: string, version: number): Promise<boolean>;
     release(burstId: string, sink: string, token: string): Promise<void>;
+    /** This burst's clients that the same actor (and origin) never used in an earlier burst; empty when it has no earlier burst. */
+    newClients(burstId: string): Promise<string[]>;
+    /** Whether the actor's last service notice (on this origin, in this sink) was red. */
+    serviceRed(actorId: string, origin: string, sink: string): Promise<boolean>;
+    setServiceRed(actorId: string, origin: string, sink: string, red: boolean, nowS: number): Promise<void>;
+    /** Save a send's progress under its lease, so a failure partway through doesn't post the parent twice. False when the lease is lost. */
+    checkpoint(burstId: string, sink: string, token: string, messageId: string, parts: Record<string, string>): Promise<boolean>;
     /** Drop the claim after a failed send, count the failure, and refuse claims until `retryAtS`. */
     defer(burstId: string, sink: string, token: string, retryAtS: number): Promise<void>;
     /** Bounded incremental purge by server receipt time; no remote messages are deleted. */
@@ -104,5 +132,15 @@ export interface ActivitySink {
     id: string;
     /** Explicit acknowledgement: every sink receives private staff-facing activity. */
     staffOnly: true;
-    send(burst: ActivityBurst, messageId: string | null): Promise<string>;
+    /**
+     * Post the burst (`messageId` null) or edit its message, returning the message id. A threaded sink posts
+     * replies too, recording each in `ctx.parts` and saving progress with `ctx.save` as it goes.
+     */
+    send(burst: ActivityBurst, messageId: string | null, ctx?: ActivitySendContext): Promise<string>;
+}
+export interface ActivitySendContext {
+    /** Replies already posted for this burst, by slot (`details`, or `kind:<kind>`). */
+    parts: Readonly<Record<string, string>>;
+    /** Persist progress under the current lease: the parent id and every reply posted so far. */
+    save(messageId: string, parts: Record<string, string>): Promise<void>;
 }
