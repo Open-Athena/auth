@@ -1,6 +1,6 @@
 import type { AccountsResponse } from './http.js';
 import type { EmailProof, RetainedStore } from './retained-store.js';
-import type { Auth, Grant } from './types.js';
+import { type Auth, type Grant } from './types.js';
 /** What an incoming share link does while another login is active. */
 export type IncomingDecision = 'keep' | 'switch';
 export type IncomingPolicy = IncomingDecision | ((c: {

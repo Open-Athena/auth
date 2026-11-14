@@ -175,6 +175,10 @@ export interface GrantEdit extends Omit<GrantPatch, 'subject'> {
     /** The holder's face: anything `copyAvatar` takes, copied before it's stored; null clears it. */
     avatar?: string | null;
 }
+/** A service link is a job's, never a person's, so it can't also be bound to an email. */
+export declare class ServiceGrantEmailError extends Error {
+    constructor();
+}
 export type AvatarInput = {
     upload: Uint8Array;
 }

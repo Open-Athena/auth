@@ -1,5 +1,5 @@
 import { formatScopes, parseScopes } from '../core/types.js';
-const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at';
+const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon';
 function parseSubject(json) {
     if (!json)
         return null;
@@ -31,6 +31,8 @@ const toGrant = (r) => ({
     sessionsInvalidBefore: r.sessions_invalid_before,
     firstUsedAt: r.first_used_at,
     lastUsedAt: r.last_used_at,
+    service: r.service !== 0,
+    anon: r.anon !== 0,
 });
 export function d1GrantStore(db) {
     return {
@@ -45,9 +47,9 @@ export function d1GrantStore(db) {
         async insert(g, tokenHash) {
             await db
                 .prepare(`INSERT INTO grants (id, token_hash, name, note, subject_json, email, scopes, max_redeems, redeems,
-                               expires_at, session_ttl, created_at, created_by, expiry_ends_sessions)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`)
-                .bind(g.id, tokenHash, g.name, g.note, g.subject ? JSON.stringify(g.subject) : null, g.email, formatScopes(g.scopes), g.maxRedeems, g.expiresAt, g.sessionTtlS, g.createdAt, g.createdBy, g.expiryEndsSessions ? 1 : 0)
+                               expires_at, session_ttl, created_at, created_by, expiry_ends_sessions, service, anon)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`)
+                .bind(g.id, tokenHash, g.name, g.note, g.subject ? JSON.stringify(g.subject) : null, g.email, formatScopes(g.scopes), g.maxRedeems, g.expiresAt, g.sessionTtlS, g.createdAt, g.createdBy, g.expiryEndsSessions ? 1 : 0, g.service ? 1 : 0, g.anon ? 1 : 0)
                 .run();
         },
         async redeem(id, nowS) {
@@ -116,6 +118,10 @@ export function d1GrantStore(db) {
                 cols.session_ttl = patch.sessionTtlS ?? null;
             if ('expiryEndsSessions' in patch)
                 cols.expiry_ends_sessions = patch.expiryEndsSessions ? 1 : 0;
+            if ('service' in patch)
+                cols.service = patch.service ? 1 : 0;
+            if ('anon' in patch)
+                cols.anon = patch.anon ? 1 : 0;
             if ('email' in patch)
                 cols.email = patch.email ?? null;
             if (patch.scopes)

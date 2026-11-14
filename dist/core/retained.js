@@ -14,8 +14,10 @@
  * Off unless a gate is given `retained`; the single-cookie path is unchanged.
  */
 import { b64uEncode } from './base64.js';
+import { pseudonym } from '../client/identity.js';
 import { clearCookie, emailSub, grantSub, inspectSessionClaims, isSecureRequest, readCookie } from './session.js';
 import { SELECTION_CONTEXT_HEADER, parseSelectionContext, serializeSelectionContext } from './selection-context.js';
+import { holderIdentity } from './types.js';
 import { generateId } from './tokens.js';
 /** A retained-mode refusal; invalid email proof keeps the email flow's uniform failure. */
 export class RetainedLoginError extends Error {
@@ -142,8 +144,8 @@ export function retainedMode(opts, deps) {
                 : {
                     id: s.id,
                     kind: 'grant',
-                    email: auth.grant.email,
-                    subject: auth.grant.subject,
+                    ...holderIdentity(auth.grant),
+                    ...(auth.grant.anon ? { anon: true, pseudonym: pseudonym(auth.grant.id) } : {}),
                     active: s.id === h.browser.activeSessionId,
                     expiresAt,
                 });
@@ -152,7 +154,7 @@ export function retainedMode(opts, deps) {
         for (const p of await store.pendings(h.binding, nowS)) {
             const g = await deps.grantById(p.grantId);
             if (g)
-                incomingLinks.push({ id: p.id, email: g.email, subject: g.subject, expiresAt: p.expiresAt });
+                incomingLinks.push({ id: p.id, ...holderIdentity(g), ...(g.anon ? { anon: true, pseudonym: pseudonym(g.id) } : {}), expiresAt: p.expiresAt });
         }
         return {
             selection: serializeSelectionContext(contextOf(h.browser)),

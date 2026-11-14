@@ -374,7 +374,14 @@ const res = await gate.redeem(token, request)   // POST /auth/exchange
 if (res.ok) return new Response(null, { headers: { 'set-cookie': res.cookie } })
 ```
 
-`subject` is who the link is for: it's what the recipient's chip, menu and access notice say. `name` is the memo, the minter's own label: admin routes return it, and `whoami`, `/accounts` and `displayName` never pass it to the link session. A link with no subject name or email is anonymous, and `<UserMenu>` and `<WhoamiChip>` say so (`anonymousLabel`). A server handler still holds it as `auth.grant.name`, so don't render that to a link session.
+`subject` is who the link is for: it's what the recipient's chip, menu and access notice say. `name` is the memo, the minter's own label: admin routes return it, and `whoami`, `/accounts` and `displayName` never pass it to the link session. A link with no subject name or email is anonymous, and `<UserMenu>` and `<WhoamiChip>` say so (`anonymousLabel`). A server handler still holds it as `auth.grant.name`, so don't render that to a link session. `test/holder-privacy.test.ts` checks that no holder-reachable response carries the memo.
+
+Two per-link flags, set at mint and editable by staff afterwards (`PATCH /grants/:id`, logged like other edits; the `<GrantsPanel>` form and cards have a checkbox for each):
+
+- **`anon`**: the holder must not learn who staff think they are. `whoami`, `/exchange`, `/accounts` and `/profile` omit the link's `subject` and `email` and say `anon: true`; staff routes, the session log and activity senders still see them. `pseudonym(grantId)` gives a stable "Kind Marmot"-style name; `displayName` returns null; `<WhoamiChip anon="label" | "pseudonym" | "hidden">` picks what the chip shows; `<AccountSwitcher>` uses the pseudonym. `holderIdentity(grant)` is the filter, for an app's own holder-facing responses.
+- **`service`**: the link is held by a job, not a person. It can't be bound to an email (`ServiceGrantEmailError`, 400 from the routes, at mint or on either edit). Read it as `auth.grant.service`. A job-token minting path should pass `service: true`.
+
+Both need `migrations/0005_grant_flags.sql`, applied once.
 
 Every knob is optional; zero-config is an unlimited-use, never-expiring, unnamed link. `maxRedeems` counts **sessions minted** (≈ distinct browsers), not requests — which is what makes "one-use link" mean what a human predicts. Note that `maxRedeems: 1` is hostile UX in practice (the recipient opens it on their phone, then their laptop, and is locked out); prefer unlimited-redeem, named, logged, and revocable.
 

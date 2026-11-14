@@ -68,7 +68,7 @@ export interface GrantMintFormProps {
     allowlist?: boolean;
     /** The `<basePath>/avatar` route, to offer choosing the holder's face. */
     avatarEndpoint?: string;
-    labels?: Partial<Record<'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired', ReactNode>>;
+    labels?: Partial<Record<'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired' | 'anon' | 'service', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 export declare function GrantMintForm({ scopes, onMint, busy, error, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, labels, classNames, }: GrantMintFormProps): import("react").JSX.Element;
@@ -88,7 +88,7 @@ export interface GrantCardProps {
     avatarEndpoint?: string;
     /** After the holder is edited: binding an email may have added an allowlist row. */
     onHolderSaved?: () => void;
-    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes', ReactNode>>;
+    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes' | 'anon' | 'service' | 'anonToggle' | 'serviceToggle', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */

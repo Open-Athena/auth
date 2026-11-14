@@ -12,8 +12,9 @@ export interface Subject {
 export interface Grant {
     id: string;
     /**
-     * The memo: the minter's own label, "Q3 board packet" or "Bob (donor), weak on X".
-     * Admin routes return it; a link session never sees it. Who the link is for goes in `subject`.
+     * The memo, a private note never shown to the recipient: the minter's own label,
+     * "Q3 board packet" or "Bob (donor), weak on X". Admin routes return it; no
+     * holder-facing response carries it (`test/holder-privacy.test.ts`). Who the link is for goes in `subject`.
      */
     name: string | null;
     /** Freeform: why this link exists. */
@@ -50,6 +51,16 @@ export interface Grant {
     sessionsInvalidBefore: number | null;
     firstUsedAt: number | null;
     lastUsedAt: number | null;
+    /**
+     * Held by a job, not a person: never bound to an email, and its activity is
+     * reported only when something is notable. Staff may change it after minting.
+     */
+    service: boolean;
+    /**
+     * The holder must not learn who staff think they are: holder-facing responses
+     * omit `subject` and `email`, and say `anon: true`. Staff views are unchanged.
+     */
+    anon: boolean;
 }
 export interface NewGrant {
     name?: string | null;
@@ -62,6 +73,10 @@ export interface NewGrant {
     sessionTtlS?: number | null;
     /** Default true — see `Grant.expiryEndsSessions`. */
     expiryEndsSessions?: boolean;
+    /** Default false — see `Grant.service`. Refused together with `email`. */
+    service?: boolean;
+    /** Default false — see `Grant.anon`. */
+    anon?: boolean;
     createdBy: string;
 }
 /** The knobs an admin can change after minting. Everything else (`createdBy`, say) is immutable. */
@@ -84,6 +99,10 @@ export interface GrantPatch {
      * row the link added to the allowlist at mint or bind time keeps its scopes.
      */
     scopes?: string[];
+    /** See `Grant.service`. A service link can't be bound to an email, so setting both is refused. */
+    service?: boolean;
+    /** See `Grant.anon`. */
+    anon?: boolean;
     /** Replaces the holder's subject wholesale. Stores take it as given; `gate.update` builds it (copying any avatar) from a `GrantEdit`. */
     subject?: Subject | null;
 }
@@ -98,6 +117,14 @@ export type Auth = {
     grant: Grant;
     admin: false;
     scopes: string[];
+};
+/**
+ * What the link's holder may see of its subject and email: nothing, for an `anon` link.
+ * Staff routes return the grant itself; every holder-facing response goes through this.
+ */
+export declare function holderIdentity(grant: Grant): {
+    subject: Subject | null;
+    email: string | null;
 };
 /** Wildcard scope: granted to admins, matches every `hasScope` check. */
 export declare const ALL_SCOPES = "*";

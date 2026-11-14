@@ -2,12 +2,13 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { SELECTION_HEADER } from '../client/accounts.js';
 import { Avatar } from './Avatar.js';
 import { useForgetWhoami } from './useWhoami.js';
-import { displayName } from './types.js';
+import { displayName, pseudonym } from './types.js';
 /** Header chip: who you are, and how to stop being them. */
-export function WhoamiChip({ whoami, logoutEndpoint = '/api/auth/logout', signOutLabel = 'Sign out', anonymousLabel = 'Anonymous link', onSignedOut, avatar = false, onOpenProfile, classNames = {}, }) {
+export function WhoamiChip({ whoami, logoutEndpoint = '/api/auth/logout', signOutLabel = 'Sign out', anonymousLabel = 'Anonymous link', anon = 'label', onSignedOut, avatar = false, onOpenProfile, classNames = {}, }) {
     const forget = useForgetWhoami();
-    const name = displayName(whoami);
-    if (!whoami)
+    const anonLink = whoami?.kind === 'grant' && whoami.anon === true;
+    const name = anonLink && anon === 'pseudonym' ? pseudonym(whoami.id) : displayName(whoami);
+    if (!whoami || (anonLink && anon === 'hidden'))
         return null;
     async function signOut() {
         // In retained-login mode the server signs out only the account this page

@@ -22,7 +22,7 @@ export { RequestAccessForm } from './RequestAccessForm.js';
 export type { RequestAccessFormProps, RequestState } from './RequestAccessForm.js';
 export { deniedEmail, SignInPanel } from './SignInPanel.js';
 export type { SignInPanelProps } from './SignInPanel.js';
-export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope } from './types.js';
+export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope, pseudonym } from './types.js';
 export type { GrantWhoami, SsoWhoami, Whoami, WhoamiSource } from './types.js';
 export { WHOAMI_KEY, useForgetWhoami, useWhoami } from './useWhoami.js';
 export type { UseWhoamiOptions, UseWhoamiResult } from './useWhoami.js';
