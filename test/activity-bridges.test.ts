@@ -99,4 +99,28 @@ describe('activity sink protocols', () => {
       ['https://discord.com/api/webhooks/123/test-secret/messages/message1', 'PATCH', body],
     ])
   })
+
+  it("says why a sink refused, with only the platform's short error code", async () => {
+    const { store, feed } = setup()
+    const result = await feed.record({ id: 'one', actor, origin: 'https://app.example', ts: 1000, kind: 'view' })
+    const burst = (await store.get(result.burstId!))!
+    const failure = async (send: () => Promise<string>) => send().then(() => 'sent', (e: Error) => e.message)
+    const slack = (reply: unknown) => slackActivitySink({ id: 'staff', staffOnly: true, token: 'fake-test-token', channel: 'C123', fetch: (async () => Response.json(reply)) as typeof fetch })
+    const discord = (reply: Response) => discordActivitySink({ id: 'staff', staffOnly: true, webhook: 'https://discord.com/api/webhooks/123/test-secret', fetch: (async () => reply) as typeof fetch })
+    expect(await Promise.all([
+      failure(() => slack({ ok: false, error: 'not_in_channel' }).send(burst, null)),
+      failure(() => slack({ ok: false, error: 'Bearer fake-test-token is bad' }).send(burst, null)),
+      failure(() => slack({ ok: false, error: 'x'.repeat(65) }).send(burst, null)),
+      failure(() => slack({ ok: false }).send(burst, null)),
+      failure(() => discord(Response.json({ code: 10015, message: 'Unknown Webhook' }, { status: 404 })).send(burst, null)),
+      failure(() => discord(new Response('<html>bad gateway</html>', { status: 502 })).send(burst, null)),
+    ])).toEqual([
+      'activity: Slack rejected message (not_in_channel)',
+      'activity: Slack rejected message',
+      'activity: Slack rejected message',
+      'activity: Slack rejected message',
+      'activity: Discord HTTP 404 (10015)',
+      'activity: Discord HTTP 502',
+    ])
+  })
 })

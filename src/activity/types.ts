@@ -78,7 +78,13 @@ export type ActivityRecordResult =
 export interface ActivityClaim {
   token: string
   messageId: string | null
+  /** Consecutive failed sends of this burst to this sink. */
+  failures: number
 }
+
+/** After the nth consecutive failure, a burst waits `min(2^(n-1) × 30s, 15 min)` before its next send to that sink. */
+export const ACTIVITY_RETRY_S = 30
+export const ACTIVITY_RETRY_MAX_S = 15 * 60
 
 export interface ActivityFilter {
   actorId?: string
@@ -98,6 +104,8 @@ export interface ActivityStore {
   claim(burstId: string, sink: string, nowS: number, leaseS: number): Promise<ActivityClaim | null>
   complete(burstId: string, sink: string, token: string, messageId: string, version: number): Promise<boolean>
   release(burstId: string, sink: string, token: string): Promise<void>
+  /** Drop the claim after a failed send, count the failure, and refuse claims until `retryAtS`. */
+  defer(burstId: string, sink: string, token: string, retryAtS: number): Promise<void>
   /** Bounded incremental purge by server receipt time; no remote messages are deleted. */
   purge(cutoffS: number, nowS: number, limit?: number): Promise<{ events: number; bursts: number; posts: number }>
 }

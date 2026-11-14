@@ -10,6 +10,11 @@ export interface SlackActivityOptions {
   fetch?: typeof fetch
 }
 
+/** Slack's error codes are short fixed strings (`not_in_channel`); anything else is left out of logs. */
+function slackErrorCode(error: unknown): string {
+  return typeof error === 'string' && /^[a-z_]{1,64}$/.test(error) ? ` (${error})` : ''
+}
+
 /** One bot-owned message per burst, edited as it grows. No user impersonation or app-specific actions. */
 export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
   activityText(options.id, 'sink id')
@@ -38,8 +43,8 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
         }),
       })
       if (!response.ok) throw new Error(`activity: Slack HTTP ${response.status}`)
-      const result = await response.json() as { ok?: boolean; ts?: string }
-      if (result.ok !== true || typeof result.ts !== 'string' || !result.ts) throw new Error('activity: Slack rejected message')
+      const result = await response.json() as { ok?: boolean; ts?: string; error?: unknown }
+      if (result.ok !== true || typeof result.ts !== 'string' || !result.ts) throw new Error(`activity: Slack rejected message${slackErrorCode(result.error)}`)
       return result.ts
     },
   }

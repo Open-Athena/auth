@@ -12,7 +12,7 @@
  * duplicate a message. A stale remote edit may need a later flush to repair.
  */
 import { activityInteger, activityText, checkActivityEvent, checkActivityKind, checkActivityKinds } from './shape.js'
-import { BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityKind, type ActivityKinds,
+import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityKind, type ActivityKinds,
   type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js'
 
 export * from './types.js'
@@ -31,6 +31,7 @@ export interface ActivityFeedOptions {
   now?: () => number
 }
 
+/** `busy`: another caller holds the lease, or this burst is backing off after a failed send. */
 export type ActivityDelivery = { sink: string; status: 'sent' | 'busy' | 'missing' | 'fenced' }
 
 export function activityFeed(options: ActivityFeedOptions) {
@@ -65,8 +66,10 @@ export function activityFeed(options: ActivityFeedOptions) {
       const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version)
       return { sink: sink.id, status: completed ? 'sent' : 'fenced' }
     } catch (error) {
-      // Failed/ambiguous delivery remains pending. The caller owns reporting and retry policy.
-      await store.release(burstId, sink.id, claim.token)
+      // Failed/ambiguous delivery remains pending, but waits before the next attempt, so drains on
+      // every request don't each call a sink that keeps refusing. The caller owns reporting.
+      const waitS = Math.min(ACTIVITY_RETRY_S * 2 ** claim.failures, ACTIVITY_RETRY_MAX_S)
+      await store.defer(burstId, sink.id, claim.token, now() + waitS)
       throw error
     }
   }

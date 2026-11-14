@@ -166,11 +166,47 @@ describe('activity delivery leases', () => {
         return `${id}-message`
       },
     })
-    const feed = activityFeed({ store, now: () => 1000, sinks: [sink('one'), sink('two')] })
+    let clock = 1000
+    const feed = activityFeed({ store, now: () => clock, sinks: [sink('one'), sink('two')] })
     const first = await feed.record(event('one'))
     await expect(feed.deliver(first.burstId!)).rejects.toThrow('mock failure')
+    clock = 1030
     expect(await feed.flush()).toEqual([{ sink: 'two', status: 'sent' }])
     expect(calls).toEqual(['one:null', 'two:null', 'two:null'])
+  })
+
+  it('backs a failing sink off per burst: 30s, doubling to 15 minutes, and reset by a success', async () => {
+    const { store, raw } = setup()
+    let clock = 1000
+    let failing = true
+    const calls: number[] = []
+    const feed = activityFeed({ store, now: () => clock, leaseS: 10, sinks: [{
+      id: 'staff', staffOnly: true,
+      async send() {
+        calls.push(clock)
+        if (failing) throw new Error('mock failure')
+        return 'message'
+      },
+    }] })
+    const { burstId } = await feed.record(event('one'))
+    /** Drain the way a request path does: attempt, and report the status or the error. */
+    const drain = async (at: number) => {
+      clock = at
+      return feed.deliver(burstId!).then(r => r.map(d => d.status).join(), (e: Error) => e.message)
+    }
+    const retryAt = () => raw.prepare('SELECT claim_until, failures FROM activity_posts').get()
+    expect([await drain(1000), await drain(1001), await drain(1029)]).toEqual(['mock failure', 'busy', 'busy'])
+    expect(retryAt()).toEqual({ claim_until: 1030, failures: 1 })
+    expect([await drain(1030), await drain(1089), await drain(1090)]).toEqual(['mock failure', 'busy', 'mock failure'])
+    expect(retryAt()).toEqual({ claim_until: 1210, failures: 3 })
+    for (const at of [1210, 1450, 1930, 2890]) await drain(at)
+    expect(retryAt()).toEqual({ claim_until: 3790, failures: 7 })
+    await drain(3790)
+    expect(retryAt()).toEqual({ claim_until: 4690, failures: 8 })
+    failing = false
+    expect(await drain(4690)).toBe('sent')
+    expect(retryAt()).toEqual({ claim_until: 0, failures: 0 })
+    expect(calls).toEqual([1000, 1030, 1090, 1210, 1450, 1930, 2890, 3790, 4690])
   })
 })
 

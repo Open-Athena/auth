@@ -2,6 +2,8 @@
 
 Requested from `jobs` on 2026-11-11, after adopting `@open-athena/auth/activity` (dist `2c9be8e`) with an `OA Jobs` bot.
 
+**Status (2026-11-14): done.** All three parts are implemented; see "Implemented" at the end.
+
 ## 1. Include Slack's error code
 
 `slackActivitySink.send` throws `activity: Slack rejected message` when `result.ok !== true`, dropping Slack's `result.error`. In `jobs` the bot wasn't in the channel yet, and logs only showed the generic message, so the cause (presumably `not_in_channel`) had to be guessed.
@@ -15,3 +17,9 @@ Include the error code, e.g. `activity: Slack rejected message (not_in_channel)`
 ## 3. (Optional) constructor errors
 
 `slackActivitySink` throws `invalid Slack token` for an empty token. `jobs` hit that because `wrangler secret put` run non-interactively stored `""`, and since `jobs` built the sink per request, the throw took the whole site down (Error 1101) until it caught it (`jobs` `493b2fe`). Worth a README note for adopters: build sinks defensively, or validate config at deploy time rather than per request.
+
+## Implemented
+
+- **Error codes.** Slack's `error` is appended when it matches `^[a-z_]{1,64}$` (`activity: Slack rejected message (not_in_channel)`); anything else is left out. Discord failures append the JSON `code` when it is an integer (`activity: Discord HTTP 404 (10015)`). Tests: `test/activity-bridges.test.ts`, "says why a sink refused".
+- **Backoff.** Per (burst, sink) delivery row, as suggested, not a separate per-sink table. New migration `migrations/activity/0002_post_failures.sql` adds `activity_posts.failures`. On a failed send, `activityFeed` calls the new `ActivityStore.defer(burstId, sink, token, retryAtS)`. That drops the lease, counts the failure, and sets `claim_until` to `now + min(30s × 2^(failures before), 15 min)`, so claims (and therefore `deliver`/`flush`) return `busy` until then. A success resets `failures` to 0. A new burst on a still-failing sink still costs one call before it starts waiting. `ActivityClaim` gains `failures`. Custom `ActivityStore` implementations need `defer`. Test: `test/activity.test.ts`, "backs a failing sink off per burst".
+- **Constructor errors.** Documented in `docs/activity-adoption.md` (build sinks once, or validate config at deploy time), next to the backoff and migration notes.
