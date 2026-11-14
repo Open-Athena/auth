@@ -92,7 +92,7 @@ The current demo funnels into a sandbox, which buries the thing worth showing.
 - Throughout: "memo" rather than name/note, pre-filled so minting needs no typing; GitHub link in the header on every page; `/admin` labelled **Admin**, not "Console".
 - Drop "I just opened a link — retry". It's a workaround wearing a feature's clothes: the real fix is `refetchOnWindowFocus` with `staleTime: 0` while signed out, so a tab notices when another tab redeemed a link.
 
-[Multiple logins and account switching]: multiple-logins-and-account-switching.md
+[Multiple logins and account switching]: done/multiple-logins-and-account-switching.md
 [D1's batch API]: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch
 [Cross-service SSO]: cross-service-sso.md
 [Retained hardening]: retained-hardening.md

@@ -1,6 +1,6 @@
 # Multiple logins, account switching, and incoming link credentials
 
-Status: implementation in progress (2026-10-24). The backend phase is done: a gate's opt-in `retained` mode with email and share-link logins, switching, incoming-link holding, sign-out of one or all, and the selection-context guard (see "Gate Checkpoint" below). Client and React integration (hooks, account picker, cross-tab notices) and the demo walkthrough remain. Origin: the CW storage dashboard's detailed OpenGraph sharing discussion on October 13, 2026. This is upstream library work for `@open-athena/auth`, not a CW-specific account picker or an instruction to change a live deployment. Update the spec alongside implementation phases, then move it under `specs/done/` with the completed implementation. Deployments and live migrations require separate authorization.
+Status (2026-11-14): **done**, with app-chosen link handling deferred. The server side (a gate's opt-in `retained` mode), client, React and demo phases shipped (checkpoints below). Atomic email-proof completion and gate-wide allocation admission landed under [retained hardening]. Deferred until an app needs it: the resolution policy beyond `keep` / `switch` / a function (choices based on what each identity can access), and the demo example of choosing it. The sections after the checkpoints are the original design, kept as the contract the implementation follows. Origin: the CW storage dashboard's detailed OpenGraph sharing discussion on October 13, 2026. Deployments and live migrations require separate authorization.
 
 ## Storage Checkpoint (2026-10-19)
 
@@ -64,11 +64,11 @@ The D1 implementation guards every write with the expected browser, version and 
   - `test-browser/live/accounts.spec.ts` (held link, accept, switch back via the menu, sign out of all; desktop and mobile);
   - the existing live suite passes against retained mode.
 
-**Remaining:**
-- the configurable resolution policy beyond `keep` / `switch` / a function (capability-aware choices);
-- gate-wide pending/bootstrap rate limits (the store's per-gate quotas exist; request-rate admission is still the app's);
-- the demo's explicit "selectable consumer policy" example;
-- atomic email-proof completion: an email code is consumed before the login is added.
+**Remaining at this checkpoint, and where each went (2026-11-14):**
+- the configurable resolution policy beyond `keep` / `switch` / a function (capability-aware choices): **deferred** until an app asks for it;
+- gate-wide pending/bootstrap rate limits: **done** as gate-wide allocation admission in [retained hardening]. Per-request rate limiting stays the app's, by design;
+- the demo's explicit "selectable consumer policy" example: **deferred** with the policy above;
+- atomic email-proof completion: **done** in [retained hardening].
 
 ## Goal and first-class simplicity requirement
 
@@ -187,5 +187,6 @@ Use exact structured assertions for identities, cookies/store changes, redemptio
 3. Implement headless React transitions and picker/chip composition, then wire OIDC/email/link flows and the demo. Keep zero/one-account behavior an explicit release gate.
 4. Publish a tested auth build and consumer adoption notes. Shared disk-tree `cloud` adopts preserve-current-user link resolution and optional account UI; CW/GCS consume those shared changes rather than making parallel auth forks. No consumer deployment, permission widening, credential minting or live migration is authorized by this spec alone.
 
-[The existing session-registry proposal]: sessions-resources-idp.md
+[The existing session-registry proposal]: ../sessions-resources-idp.md
+[retained hardening]: ../retained-hardening.md
 [D1 batch documentation]: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch

@@ -68,6 +68,6 @@ Apply root migrations through `0004_retained_principals.sql`, then the additive 
 - Run `pnpm exec vitest run test/retained-admission.test.ts` for SQLite and `pnpm test:retained-runtime` for ephemeral local workerd/D1. The package script and CI include the admission suite alongside the existing retained-store/proof suites. All 164 runtime tests passed on integration. No production bindings or credentials are used.
 - TFFP: before the implementation, the new-handle/recreated-adapter regression failed because a third bootstrap resolved true; after the implementation it rejects with 429. Logs: `tmp/retained-admission-before.log`, `tmp/retained-admission-http.log`.
 
-[multiple logins]: multiple-logins-and-account-switching.md
+[multiple logins]: done/multiple-logins-and-account-switching.md
 [D1's transactional batch contract]: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch
 [retained admission migration]: ../migrations/retained-login/0001_admission.sql
