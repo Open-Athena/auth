@@ -4,9 +4,9 @@
  * rendering is pinned by tests.
  */
 import { type SessionPage, type StoredEvent } from '../../core/session-log-shape.js';
-/** `1h 02m`, `3m 07s`, `12s`, `450ms`. */
+/** Two-unit durations: `4d 12h`, `1h 02m`, `3m 07s`, `12s`, `450ms`. */
 export declare function fmtDuration(ms: number): string;
-/** `+1:02.345` (offset into the session). */
+/** Millisecond precision under a minute; compact two-unit offsets afterward. */
 export declare function fmtOffset(ms: number): string;
 /** A local wall-clock time to the ms (`19:43:09.433`), led by the date (`Oct 13 19:43:09.433`) when its day isn't
  *  `startMs`'s (the session header carries the start's date). */

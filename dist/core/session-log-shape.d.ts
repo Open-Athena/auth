@@ -17,12 +17,13 @@ export declare const BUILTIN_FIELDS: {
     readonly filter: readonly ["n", "q"];
     readonly pick: readonly ["n", "v"];
     readonly prefetch: readonly ["w", "p", "d"];
-    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b"];
+    readonly api: readonly ["m", "u", "s", "ms", "c", "qe", "err", "b", "id", "end", "wall", "on0", "on", "vis0", "vis", "visMs", "gapMs", "gapAgo", "ray", "rt", "cancel", "online", "visibility", "visible_ms"];
     readonly error: readonly ["msg", "src", "st"];
     readonly reject: readonly ["msg", "st"];
     readonly console: readonly ["msg"];
     readonly viewport: readonly ["w", "h", "dpr"];
     readonly vis: readonly ["s"];
+    readonly life: readonly ["s", "on", "vis", "ms", "persisted", "discarded"];
     readonly dropped: readonly ["n"];
 };
 export type BuiltinKind = keyof typeof BUILTIN_FIELDS;
@@ -81,11 +82,44 @@ export declare const TRUNC: {
     readonly msg: 300;
     readonly stack: 1500;
 };
-/** Kinds (and api statuses) that count as errors in the session summary. */
-export declare const isErrorEvent: (e: {
-    k: Kind;
+/** Chrome's ResizeObserver scheduling warnings are not application exceptions. */
+export declare const benignError: (msg: unknown) => boolean;
+/** A client-classified cancellation, not proof that server-side work was cancelled. */
+export declare const isCancelled: (e: {
+    k?: unknown;
     s?: unknown;
+    err?: unknown;
 }) => boolean;
+/** Batches normally arrive within ~16 s (the logger flushes every 10 s); a failure received later than this was reported by a device that went to sleep or offline. */
+export declare const OFFLINE_LAG_MS = 60000;
+type ApiFields = {
+    k?: unknown;
+    t?: unknown;
+    s?: unknown;
+    err?: unknown;
+    on?: unknown;
+    vis?: unknown;
+    online?: unknown;
+    visibility?: unknown;
+};
+/**
+ * A network failure nobody saw fail: the browser was offline, the tab hidden,
+ * or its batch arrived over `OFFLINE_LAG_MS` after the request (a laptop closed
+ * mid-request reports `online: true` on wake). It counts as a request, not an
+ * error. Without `receivedMs` (epoch ms the server received the batch), only
+ * the client's own context decides.
+ */
+export declare const offlineFailure: (e: ApiFields, receivedMs?: number) => boolean;
+/** A request that failed: a 5xx, or no response other than a cancellation or an `offlineFailure`. */
+export declare const isFailedApi: (e: ApiFields, receivedMs?: number) => boolean;
+/**
+ * Kinds and API statuses that count as errors; cancellations and offline
+ * failures do not. Pass `receivedMs` explicitly: not as a bare `filter` / `map`
+ * callback, whose index would land there.
+ */
+export declare const isErrorEvent: (e: ApiFields & {
+    k: Kind;
+}, receivedMs?: number) => boolean;
 /** The end (exclusive) of the UTC day `days` after `now`'s. */
 export declare const endOfUtcDay: (now: number, days: number) => number;
 /** Turning the switch on with no date: through the UTC day `LIMITS.defaultDays` from now. */
@@ -160,6 +194,10 @@ export interface SessionRow {
     sid: string;
     email: string | null;
     via: string | null;
+    /** Trusted share-link ID; omitted when absent (including rows predating actor logging). */
+    grant_id?: string;
+    /** Trusted recipient name, never a private grant memo; omitted when absent. */
+    subject_name?: string;
     build: string | null;
     ua: string | null;
     started_ms: number;
@@ -195,9 +233,11 @@ export interface SessionPage {
     next: string | null;
 }
 /** A stored event with where it came from (the page load and batch), as the session view gets it. */
+/** An event as the viewer gets it: tagged with its page load, batch, and when the server received that batch (`_`: no client field can take the name). */
 export type StoredEvent = SlogEvent & {
     pid: string;
     seq: number;
+    _received_ms?: number;
 };
 /** `GET <base>/sessions/:sid`. */
 export interface SessionDetail {

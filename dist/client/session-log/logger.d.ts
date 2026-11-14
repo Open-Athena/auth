@@ -3,15 +3,20 @@
  * (`./index.ts`) only while the admin switch is on. `Logger` buffers and
  * flushes (pure: clock, transport and timers are the caller's); `install` wires
  * it to the page (URL changes, clicks on controls, opted-in input fields,
- * pickers, fetches, errors, console errors, viewport and visibility) and
+ * pickers, fetches, errors, console errors, viewport, visibility and browser
+ * lifecycle) and
  * returns its undo.
  */
 import { type AppEvents, bodySummary, type Kind, type SlogEvent } from '../../core/session-log-shape.js';
 export { bodySummary };
 export declare const DEFAULT_ENDPOINT = "/api/session-log";
 export declare const FLUSH_MS = 10000;
+export declare const LEAVE_MS = 5000;
 export declare const FILTER_DEBOUNCE_MS = 800;
 export declare const RESIZE_DEBOUNCE_MS = 500;
+/** The lifecycle pulse's period, and the silence between pulses logged as a timer gap. */
+export declare const PULSE_MS = 10000;
+export declare const GAP_MS = 30000;
 type Fields = Record<string, unknown>;
 /** Sends one batch body; `beacon` on page hide. Resolves to the HTTP status (null: unknown / failed). */
 export type Send = (body: string, beacon: boolean) => Promise<number | null>;
@@ -95,10 +100,15 @@ export interface Page {
         innerHeight: number;
         devicePixelRatio: number;
         fetch: typeof fetch;
+        navigator?: {
+            onLine?: boolean;
+        };
     };
+    /** `wasDiscarded`: Chrome's flag for a tab reloaded after the browser discarded it. */
     doc: EventTarget & {
         visibilityState: string;
         referrer: string;
+        wasDiscarded?: boolean;
     };
     con: {
         error: (...a: unknown[]) => void;

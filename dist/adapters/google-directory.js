@@ -150,6 +150,18 @@ export async function listGroupMembers(group, { token, api = 'cloud-identity', f
 }
 /** The allowlist `source` a synced group owns: `sync:<group>`. */
 export const syncSource = (group) => `sync:${group.toLowerCase()}`;
+/** Fetch all groups before writing; a failed listing never refreshes freshness. */
+export async function syncGroupSnapshots(store, { groups, api = 'directory', key, subject, fetch = globalThis.fetch, nowMs = Date.now() }) {
+    const scope = api === 'directory' ? DIRECTORY_SCOPE : CLOUD_IDENTITY_SCOPE;
+    const { accessToken } = await googleAccessToken({ key, scopes: [scope], subject, fetch, nowMs });
+    const snapshots = [];
+    for (const group of new Set(groups.map(g => g.toLowerCase()))) {
+        snapshots.push({ group, members: await listGroupMembers(group, { token: accessToken, api, fetch }), fetchedAt: Math.floor(nowMs / 1000) });
+    }
+    for (const snapshot of snapshots)
+        await store.put(snapshot);
+    return snapshots;
+}
 /**
  * One token, then per group: list → `replaceSource`. Rows carry the group's
  * scopes and `addedBy: <service account email>`. A listing that throws stops

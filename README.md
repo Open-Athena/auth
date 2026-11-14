@@ -191,7 +191,9 @@ const gate = createGate({
 })
 ```
 
-It needs migrations `0003` and `0004`. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
+It needs root migrations `0003` and `0004`, followed by `migrations/retained-login/0001_admission.sql` **before deploying this adapter**. The nested track is not applied by a root-directory migration run: copy it into your app's ordered sequence under a unique filename or use separate migration history. No live retained-mode migration has been performed for this release, including the demo. Run `store.cleanup(nowS)` now and then; Pages Functions have no cron, so the demo runs it on a small share of requests.
+
+Retained email-code/link sign-in consumes proof and adds/selects the login in one transaction: a full roster or stale selection no longer burns valid proof. The D1 adapter implements `commitEmail`; custom retained adapters must implement that atomic operation as well. New browser and pending-link allocations also have atomic gate-wide fixed-window admission: defaults are 120 browser sets and 240 pending links per 60 seconds. Optional `admissionWindowS`, `gateBootstrapsPerWindow` and `gatePendingsPerWindow` overrides must be positive integers and identical across writers. Cookie churn cannot reset these counters. Global rate pressure returns `429`, hard storage pressure `503`, and browser capacity/context conflicts remain `409`; custom handlers should honor `RetainedLoginError.status`. This is not a general request/email limiter or recoverable response replay; see `specs/retained-hardening.md` for boundaries.
 
 - **Signing in** (Google, an emailed code, One Tap) adds the address and selects it. The browser's other logins stay.
 - **A share link** opened while signed in is held, unspent, as an account to switch to (`incoming: 'keep'`, the default), so a member following a guest link stays the member. `'switch'` changes to it at once, or a function decides per link. With no login, a link signs in as before.
@@ -212,6 +214,7 @@ It's off by default. An admin turns it on for a few days (default 7, at most 31,
 | `@open-athena/auth/session-log` | `sessionLogRoutes({ store, identify, requireAdmin, appEvents? })` and `fromGate(gate, { adminScope })`; the shared shapes |
 | `@open-athena/auth/session-log/d1` | `d1SessionLogStore(db)`; schema in `migrations/session-log/` |
 | `@open-athena/auth/session-log/client` | `bootSessionLog({ build })` and `slog(kind, fields)`; the logger itself is a lazily imported chunk |
+| `@open-athena/auth/session-log/model` | framework-free timeline/formatting helpers, also usable by non-React viewers |
 | `@open-athena/auth/react/session-log` | `SessionLogSwitch`, `SessionList`, `SessionView` (needs a `QueryClientProvider`) |
 | `@open-athena/auth/react/session-log.css` | optional styles |
 
@@ -231,11 +234,36 @@ slog('movie.queued', { query, format })
 
 The identity on every batch is the request's (`identify`), never the client's. App events must be declared on the server: the client drops undeclared ones and undeclared fields, and the server refuses them, so an app event can't carry an arbitrary object. `filterEvents`, `onStored` (run through `waitUntil`) and `onPurge` hook in an app's own muting, activity feed and derived tables.
 
-The migration is a track of its own (`migrations/session-log/0001_session_log.sql`, `CREATE … IF NOT EXISTS`), so apps that don't use the session log carry no tables for it. Apply it with `wrangler d1 execute <db> --file …`, or copy it into your own migrations. Its tables are disky's, so disky adopts with no migration.
+Fetch cancellations remain visible as `cancelled` without inflating error counts. Explicit `AbortError` is classified immediately; other network failures wait up to five seconds so an intervening `pagehide` can classify them as navigation cancellations. That is a client heuristic, not proof that backend work stopped. Failures on a surviving page remain errors, unless nobody could have seen them fail (`offlineFailure`): the browser reported itself offline or the tab was hidden when the request ended, or the batch reached the server over a minute (`OFFLINE_LAG_MS`) after the request, as when a laptop is closed mid-request. Those count as requests, not errors, in the session list, the viewer and the activity bridge. Every request records a page-local number (`id`), the connectivity hint and visibility at its start and end (`on0`/`on`, `vis0`/`vis`), time since the tab was last shown (`visMs`), the latest long timer gap (`gapMs`, `gapAgo`), its end and wall time, and a well-formed Cloudflare Ray ID (`ray`) when there is one. A cancellation records which evidence said so (`cancel`: `signal`, `AbortError` or `pagehide`), never the abort reason. A `life` event records connectivity changes, freeze and resume, BFCache `pageshow`/`pagehide`, a prior tab discard, and timer gaps over 30 s from a 10-second pulse; a gap may be throttling, suspension or a busy main thread, not necessarily sleep. The viewer links a later successful repeat of an exact, unmasked same-page read to the failure it followed. Benign ResizeObserver scheduling reports are dropped by the client. Anonymous config reads never trigger retention writes, including opted-in public viewers.
+
+The migrations are a track of their own (`migrations/session-log/`), so apps that don't use the session log carry no tables for it. Apply the track in order through your migration system (or copy into your app's sequence). `0002_actor.sql` adds nullable `grant_id`/`subject_name`: apply it once after `0001_session_log.sql` before deploying this version, including existing disky-shaped databases. Do not blindly re-run the ALTER statements. `fromGate` attaches trusted recipient identity, and the viewer's filter matches email, recipient name and grant ID; the private grant memo is never used. Old rows are not retrospectively attributed. The summary row tracks the tab's latest identity, not immutable per-event identity evidence.
+
+## Staff Activity Feed (Backend)
+
+`/activity` is an optional feed with a separate `migrations/activity/` track. It groups one actor's events on one origin into bursts (15-minute gap by default), deduplicates stable event IDs, and independently controls each kind's recording and notification detail (`off`, `count`, `line`). Slack and Discord sinks are separate imports; without sinks, it only records. `activityRoutes` mounts staff-authorized reads and settings, never public event ingestion. `/react/activity` supplies `ActivityAdmin`, `ActivityList` and `ActivityKindSettings` (TanStack Query provider required); styles are an optional `/react/activity.css` import.
+
+```ts
+import { activityFeed } from '@open-athena/auth/activity'
+import { d1ActivityStore } from '@open-athena/auth/activity/d1'
+
+const store = d1ActivityStore(env.DB)
+const feed = activityFeed({ store })
+await feed.record({
+  id: 'access-row:123', // stable retry key, never a token
+  actor: { id: 'grant:abc', name: 'Guest recipient', via: 'grant' },
+  origin: 'https://app.example.org',
+  ts: Math.floor(Date.now() / 1000),
+  kind: 'view', path: '/report',
+})
+```
+
+`sessionLogActivity` provides `onStored`/`onPurge` hooks with an explicit trusted actor resolver; `accessLogActivity` accepts persisted access rows and their stable IDs. `activityActorFromAuth` resolves a gate identity without exposing the grant memo. Use only one source for overlapping browser/page observations unless you deliberately want both. Hook failures need application-level retry/replay; recording a source row and bridging it are not one database transaction.
+
+For posting, import `slackActivitySink` from `/activity/slack` or `discordActivitySink` from `/activity/discord`, supply a stable destination ID and `staffOnly: true`, and pass the sinks to `activityFeed`. That flag acknowledges a privacy requirement; it cannot verify channel privacy. Explicitly await `feed.flush()` (or use `waitUntil`), schedule retries yourself, and protect all `store.list`/`get` and `feed.setKind` calls with staff authorization. Delivery leases prevent simultaneous database acknowledgements, not exactly-once remote API calls: a crash after posting may duplicate a message. `feed.purge(cutoffS)` incrementally removes old inactive bursts; it does not delete already-posted remote messages. Mount `activityRoutes({ feed, store, requireAdmin })` with an application callback returning `{ who }` only after staff authorization (or a refusing Response); mutations require this site's Origin header. See [Activity Adoption][activity-adoption] for migration and integration steps.
 
 ## Signing In Through a Broker (OIDC Provider)
 
-Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: sign in once at the broker (Google, an emailed code, any of its retained accounts), and every other app gets you with no page in between. It's deliberately narrow: authorization code with PKCE S256 only, confidential clients from a static registry, exact redirect URIs, no consent screen, no refresh tokens. What it leaves out it refuses.
+Experimental (`specs/oidc-provider.md`). `@open-athena/auth/provider` turns a gate into an OpenID Connect provider for a fixed set of your own apps: a valid, unambiguous broker login can admit you to another app without another sign-in click, subject to that app's policy. It's deliberately narrow: authorization code with PKCE S256 by default, confidential clients from a static or D1-backed registry, exact redirect URIs, no consent screen, no refresh tokens. OA's deployed `login.oa.dev` uses Google Workspace sign-in and the D1 client registry. It does not share app cookies or revoke all app sessions when its own cookie is cleared.
 
 ```ts
 // the broker: discovery at /.well-known/openid-configuration, endpoints under /oidc
@@ -257,6 +285,16 @@ oidcCallback(rp)  // a refusal comes back as `?sso=login_required` (or `access_d
 ```
 
 Only a verified person at the broker vouches for anyone: a share-link session there never signs anyone in to an app. For an organization-only broker, give its own Google sign-in `hostedDomain: 'example.org'` (and `authParams: { hd: 'example.org' }`): an address at the domain isn't proof of a managed account, `hd` is. The relying party sends PKCE S256 on every sign-in, Google's included, with the verifier derived from the nonce, so it stays storage-free. The demo runs a broker at `/oidc` and a second app, "App B", at [`/rp`](https://auth.oa.dev/rp) that signs in only through it.
+
+### Conformance Testing (Not Certification)
+
+Tested against the OpenID Foundation's **Basic OP** conformance plan, suite **v5.3.4**, in November 2026: **20 passed, 6 warnings, 4 awaiting review, 5 skipped; no failures**. These are historical results for the demo deployment at `auth.oa.dev`, not a separate conformance run against `login.oa.dev`, a security audit, or OpenID certification. Manual reviews and warning dispositions remain open. See [results, limitations and follow-ups][conformance-evidence].
+
+**Cross-app logout is not enabled.** Optional `/backchannel` and `/backchannel/d1` exports provide a strict signed logout-token receiver, replay receipts and SID revocation tombstones (`migrations/backchannel/`). This is a foundation, not automatic logout: the broker does not yet issue correlated SIDs or fan out events, and existing app sessions do not consult these tombstones. Never advertise these exports alone as global sign-out. See `specs/broker-revocation.md` for the remaining provider/RP correlation, enforcement and durable-delivery work.
+
+**PR-preview clients.** A client marked `preview: true` may register `https://*.<host>/<path>` callbacks (and post-logout URIs), where `*` is exactly one DNS label: one client for every branch host of a Cloudflare Pages project (`pr-12.<project>.pages.dev`). Because a preview runs unreviewed branch code, it never signs anyone in silently. The first sign-in per host, account and client is one click on a broker page naming the host, remembered for 7 days; until then `prompt=none` gets `interaction_required`. Give the preview its own client, so its tokens' `aud` differs from the app's, and its own secret, held only in the preview environment. Registration accepts a pattern only for hosts on the deployment's allowlist (`redirectUriProblem(uri, domains, { previewSuffixes })`). The relying party takes `redirectUri: redirectFromOrigin('/auth/oa/callback')` to follow whichever branch host the request came to.
+
+**Delegated broker registration.** `/provider` also exports `clientManagementRoutes` and `managementTokenAuth`: an optional hash-only, expiring machine capability scoped to exact app IDs, callback URLs and operations. Matching create retries never rotate a credential; explicit rotation uses atomic compare-and-swap and audit. Metadata responses contain no secret hashes, and browser cookies grant no access. The reference broker leaves the API disabled until configured. See [the agent-facing contract](docs/client-management.md) for wiring, secret delivery/recovery and the optional MCP boundary (not implemented).
 
 ## Minimal Demo Routes
 
@@ -441,7 +479,27 @@ A link can put its recipient on the list too. `POST <basePath>/grants` with `ema
 
 If you only learn the address after sending the link, bind it later: `PATCH <basePath>/grants/:id` with `email` (and optionally `allowlist: true`, with the same `allowed` result). Nothing is re-sent. A link session re-reads its grant on every request, so the holder's existing session is email-bound from its next request: `whoami` carries the address, and with `allowGrantSelfEdit` they can edit their own profile. `email: null` (or blank) unbinds it and leaves any allowlist row alone. A revoked link refuses with 409. The access log's `update` row names what changed, and a rebind also names the address it replaced (`email; was old@x.org`).
 
-**Google groups, synced.** Google's OIDC id_token carries no Workspace group membership (by design — enterprise IdPs emit a `groups` claim; Google doesn't, over OIDC), and nothing pushes a group change to a custom app (Google's Shared Signals role is *receiver*, session-revocation only). So "gate this to `board@`" is a periodic pull into the table above, and `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`:
+**Freshness-bounded Google Groups authorization.** For security-sensitive permissions, use `/groups` with its optional `migrations/groups/` track. Unlike the legacy allowlist sync below, snapshots keep overlapping memberships independent and expire after 15 minutes by default, even if Google or the sync job is unavailable. Apply the policy at each authorization request, not only when issuing an OAuth token. Missing, future-dated and stale snapshots contribute no scopes. Snapshot writes are monotonic per group, not one transaction across all groups; authorize a union of the independently fresh groups, not an all-or-nothing directory revision.
+
+```ts
+import { groupPolicy } from '@open-athena/auth/groups'
+import { d1GroupSnapshots } from '@open-athena/auth/groups/d1'
+import { syncGroupSnapshots } from '@open-athena/auth/google-directory'
+
+const groups = { 'owners@example.org': ['admin', 'view'] }
+const snapshots = d1GroupSnapshots(env.DB)
+const policy = groupPolicy(snapshots, { groups })
+// Pass `policy` to createGate. Run the sync in a cron every 5 minutes:
+await syncGroupSnapshots(snapshots, {
+  key: env.GOOGLE_SA_KEY,
+  groups: Object.keys(groups),
+  api: 'directory',
+})
+```
+
+Directory mode requires a service account with Workspace directory read privileges (prefer Groups Reader, not group ownership). No new credentials are included or provisioned by this library. The policy does not revoke independent share-link grants or bypass other policies an app deliberately composes with it. A central broker's membership claim alone cannot revoke app sessions that never consult current membership. See [the setup and unsent Workspace-admin request](docs/group-authorization-setup.md) for the GCP/Workspace permission split, and `specs/group-snapshots.md` for the rollout boundary.
+
+**Google groups, synced into the legacy allowlist.** Google's OIDC id_token carries no Workspace group membership. For a simple periodically maintained address list, `@open-athena/auth/google-directory` makes it one call — a service-account token minted with WebCrypto (no dependency, no `nodejs_compat`), one paginated list, one `replaceSource`. This older path retains previous rows indefinitely after sync failures and has one row per email, so overlapping groups can overwrite each other's scopes; use snapshots above for group-based admin decisions:
 
 ```ts
 import { syncGroupsToAllowlist } from '@open-athena/auth/google-directory'
@@ -536,3 +594,5 @@ cd demo && pnpm dev    # the whole thing running, on :4187
 [demo-vue]: https://auth.oa.dev/vue
 [demo-react]: https://auth.oa.dev/react
 [clear-site-data]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data
+[conformance-evidence]: docs/conformance-results.md
+[activity-adoption]: docs/activity-adoption.md

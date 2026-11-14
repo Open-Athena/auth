@@ -5,12 +5,14 @@
  *
  * Deliberately narrow (see `specs/oidc-provider.md`): authorization code with
  * PKCE S256 only, confidential clients from a registry, exact redirect URIs, no consent screen (every client is first-party), no refresh tokens.
+ * The one exception to the last two is a PR-preview client (`ProviderClient.preview`): see `redirects.ts`.
  * What it leaves out it refuses, rather than half-supporting.
  */
-import { b64uEncode } from '../core/base64.js';
+import { b64uDecodeString, b64uEncode } from '../core/base64.js';
 import { generateToken, hashToken } from '../core/tokens.js';
 import { keySet } from './keys.js';
 import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js';
+import { redirectAllowed } from './redirects.js';
 /** What a client registry stores in place of a secret. */
 export const hashClientSecret = (secret) => hashToken(secret);
 const STANDARD_SCOPES = ['openid', 'email', 'profile'];
@@ -19,17 +21,27 @@ const RESERVED = new Set(['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce
 /** RFC 7636: 43–128 unreserved characters. */
 const VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/;
 const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/;
-/** The marker `/authorize` adds when it sends someone to sign in afresh. */
-const LOGIN_AFTER = 'oa_login_after';
 const PICTURE_PATH = '/picture/';
 const enc = new TextEncoder();
 const sec = (ms) => Math.floor(ms / 1000);
+/** How long one click on the preview consent page lasts, and how many hosts a browser remembers. */
+const PREVIEW_CONSENT_TTL_S = 7 * 86400;
+const PREVIEW_CONSENT_MAX = 20;
+const esc = (s) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body) + '\n', {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', pragma: 'no-cache', ...headers },
 });
 /** An error the browser sees here, because there's no trustworthy place to send it. */
 const page = (status, message) => new Response(`${message}\n`, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+function cookieValue(req, name) {
+    for (const part of (req.headers.get('cookie') ?? '').split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0 && part.slice(0, i).trim() === name)
+            return part.slice(i + 1).trim();
+    }
+    return null;
+}
 const redirect = (location, cookies = []) => {
     const headers = new Headers({ location, 'cache-control': 'no-store' });
     for (const c of cookies)
@@ -66,6 +78,70 @@ export function oidcProviderRoutes(opts) {
     const ks = () => (keys ??= keySet(opts.keys));
     const scopesSupported = [...STANDARD_SCOPES, ...(opts.scopes ?? [])];
     const tickets = pictureTickets(subjectSecret);
+    const secure = new URL(issuer).protocol === 'https:';
+    const consentCookieName = `${secure ? '__Host-' : ''}oa_preview_ok`;
+    /** The unexpired preview consents this browser carries, if its cookie is ours. */
+    async function previewConsents(req, nowS) {
+        const raw = cookieValue(req, consentCookieName);
+        const dot = raw?.lastIndexOf('.') ?? -1;
+        if (!raw || dot < 0)
+            return [];
+        const body = raw.slice(0, dot);
+        if (!same(raw.slice(dot + 1), await hmac(subjectSecret, `preview-consent:${body}`)))
+            return [];
+        try {
+            const list = JSON.parse(b64uDecodeString(body));
+            return Array.isArray(list) ? list.filter(c => typeof c?.x === 'number' && c.x > nowS) : [];
+        }
+        catch {
+            return [];
+        }
+    }
+    async function previewConsentCookie(list) {
+        const body = b64uEncode(enc.encode(JSON.stringify(list.slice(-PREVIEW_CONSENT_MAX))));
+        const value = `${body}.${await hmac(subjectSecret, `preview-consent:${body}`)}`;
+        return `${consentCookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${PREVIEW_CONSENT_TTL_S}${secure ? '; Secure' : ''}`;
+    }
+    /** The one click a preview client needs: posts back to this same `/authorize` request. */
+    function previewConsentPage(url, client, email, redirectUri) {
+        const target = new URL(redirectUri);
+        const app = client.name ?? client.id;
+        const body = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to a preview?</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; padding: 16px; display: grid; place-items: center; min-height: 90vh; }
+main { max-width: 32rem; }
+.host { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.muted { opacity: 0.7; font-size: 0.9em; }
+button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
+</style></head>
+<body><main>
+<h1>Sign in to a preview?</h1>
+<p><strong class="host">${esc(target.host)}</strong> wants to sign you in as <strong>${esc(email)}</strong>.</p>
+<p>It's a preview of ${esc(app)}, built from a branch whose code may not have been reviewed. Continue only if you meant to open it.</p>
+<form method="post" action="${esc(`${url.pathname}${url.search}`)}">
+<button name="decision" value="allow">Continue</button><button name="decision" value="deny">Cancel</button>
+</form>
+<p class="muted">You won't be asked again for this address for 7 days.</p>
+</main></body></html>
+`;
+        return new Response(body, {
+            status: 200,
+            headers: {
+                'content-type': 'text/html; charset=utf-8',
+                'cache-control': 'no-store',
+                'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${target.origin}; frame-ancestors 'none'; base-uri 'none'`,
+                'x-frame-options': 'DENY',
+                // Not `no-referrer`: under it a browser sends `Origin: null` on the form's own POST, which
+                // `authorize` must refuse. `same-origin` keeps the real Origin there, and still sends no
+                // Referer (with the authorize URL's state and PKCE challenge) anywhere else.
+                'referrer-policy': 'same-origin',
+                'x-content-type-options': 'nosniff',
+            },
+        });
+    }
     const discovery = () => ({
         issuer,
         authorization_endpoint: endpoint('/authorize'),
@@ -81,8 +157,8 @@ export function oidcProviderRoutes(opts) {
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
         code_challenge_methods_supported: ['S256'],
         scopes_supported: scopesSupported,
-        claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'email', 'email_verified', 'name', 'picture'],
-        prompt_values_supported: ['none', 'login', 'select_account'],
+        claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture'],
+        prompt_values_supported: ['none', 'select_account'],
         authorization_response_iss_parameter_supported: true,
         request_parameter_supported: false,
         request_uri_parameter_supported: false,
@@ -124,6 +200,15 @@ export function oidcProviderRoutes(opts) {
     async function authorize(req) {
         const url = new URL(req.url);
         const q = url.searchParams;
+        // A POST is only the preview consent page's answer, and only from that page.
+        let decision = null;
+        if (req.method === 'POST') {
+            if (req.headers.get('origin') !== origin)
+                return page(403, 'This form has to come from this site.');
+            decision = new URLSearchParams(await req.text()).get('decision');
+            if (decision !== 'allow' && decision !== 'deny')
+                return page(400, 'bad decision');
+        }
         // Repeated parameters are ambiguous, and ambiguity is how parsers get split.
         for (const k of new Set(q.keys()))
             if (q.getAll(k).length > 1)
@@ -134,14 +219,17 @@ export function oidcProviderRoutes(opts) {
         const redirectUri = q.get('redirect_uri');
         // Exact, before anything is redirected: an unregistered URI must never
         // receive anything, an error included, or this is an open redirect.
-        if (!redirectUri || !client.redirectUris.includes(redirectUri))
+        if (!redirectUri || !redirectAllowed(client.redirectUris, redirectUri, client.preview === true)) {
             return page(400, 'redirect_uri is not registered for this client');
+        }
+        if (decision !== null && !client.preview)
+            return page(405, 'GET only');
         const state = q.get('state');
-        const back = (params) => {
+        const back = (params, cookies = []) => {
             const to = new URL(redirectUri);
             for (const [k, v] of Object.entries({ ...params, ...(state !== null ? { state } : {}), iss: issuer }))
                 to.searchParams.set(k, v);
-            return redirect(to.toString());
+            return redirect(to.toString(), cookies);
         };
         const fail = (error, description) => back({ error, ...(description ? { error_description: description } : {}) });
         if (q.has('request') || q.has('request_uri'))
@@ -163,20 +251,19 @@ export function oidcProviderRoutes(opts) {
         const maxAge = q.has('max_age') ? Number(q.get('max_age')) : null;
         if (maxAge !== null && !(Number.isInteger(maxAge) && maxAge >= 0))
             return fail('invalid_request', 'bad max_age');
+        // A newly minted local session is not evidence of active upstream
+        // authentication. Refuse freshness constraints until that proof is carried
+        // through sign-in; redirecting to a chooser would only manufacture freshness.
+        if (prompts.has('login') || maxAge !== null)
+            return fail('login_required', 'Verified authentication freshness is not supported');
         const nowMs = Date.now();
         const nowS = sec(nowMs);
         const result = await gate.authenticateResult(req, nowMs, { logView: false });
         // Only a verified person at the broker vouches for anyone: a share-link
         // session here is a guest, and an app must never take it for an account.
         const email = result.auth?.kind === 'sso' ? result.auth.email : null;
-        const authTime = email && result.issuedAt ? result.issuedAt : null;
-        // A sign-in this flow sent someone to must have happened after it did.
-        const after = Number(q.get(LOGIN_AFTER) ?? NaN);
-        const freshEnough = (!Number.isFinite(after) || (authTime !== null && authTime >= Math.min(after, nowS))) &&
-            (maxAge === null || (authTime !== null && nowS - authTime <= maxAge));
-        const wantLogin = prompts.has('login') && !Number.isFinite(after);
         const wantChooser = prompts.has('select_account');
-        if (!email || !freshEnough || wantLogin || wantChooser) {
+        if (!email || wantChooser) {
             // No one selected (or a guest), but the browser holds verified accounts
             // here: a choice is what's missing, not a sign-in.
             const choosable = !email && gate.retained
@@ -184,18 +271,13 @@ export function oidcProviderRoutes(opts) {
                 : false;
             if (prompts.has('none'))
                 return fail(choosable ? 'account_selection_required' : 'login_required');
-            // Back here afterwards, without the prompt that sent them (or this loops),
-            // and with the time it sent them, so an older session can't satisfy it.
+            // Account selection is not reauthentication; don't repeat the chooser.
             const next = new URL(url);
             next.searchParams.delete('prompt');
-            if (wantLogin || (email && !freshEnough))
-                next.searchParams.set(LOGIN_AFTER, String(nowS));
             const to = new URL(loginUrl, origin);
             to.searchParams.set('next', `${next.pathname}${next.search}`);
-            if (wantChooser || (choosable && !wantLogin))
+            if (wantChooser || choosable)
                 to.searchParams.set('prompt', 'select_account');
-            else if (wantLogin || email)
-                to.searchParams.set('prompt', 'login');
             const hint = q.get('login_hint');
             if (hint)
                 to.searchParams.set('login_hint', hint);
@@ -203,6 +285,21 @@ export function oidcProviderRoutes(opts) {
         }
         if (!(await admitted(email, client)))
             return fail('access_denied');
+        // A preview is unreviewed code: one click per host before it learns who this is.
+        const cookies = [];
+        if (client.preview) {
+            const host = new URL(redirectUri).host;
+            const sub = await subOf(email);
+            const held = await previewConsents(req, nowS);
+            const mine = (c) => c.s === sub && c.c === client.id && c.h === host;
+            if (!held.some(mine)) {
+                if (decision === 'deny')
+                    return fail('access_denied');
+                if (decision !== 'allow')
+                    return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri);
+                cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, x: nowS + PREVIEW_CONSENT_TTL_S }]));
+            }
+        }
         const code = generateToken();
         await store.putCode({
             codeHash: await hashToken(code),
@@ -213,10 +310,10 @@ export function oidcProviderRoutes(opts) {
             nonce: q.get('nonce'),
             email,
             scope: granted.join(' '),
-            authTime,
+            authTime: null,
             expiresAt: nowS + codeTtlS,
         });
-        return back({ code });
+        return back({ code }, cookies);
     }
     // ---- /token --------------------------------------------------------------
     /** The authenticated client, or the error response. */
@@ -314,7 +411,6 @@ export function oidcProviderRoutes(opts) {
             aud: client.id,
             iat: nowS,
             exp: nowS + tokenTtlS,
-            ...(rec.authTime !== null ? { auth_time: rec.authTime } : {}),
             ...(rec.nonce !== null ? { nonce: rec.nonce } : {}),
         });
         const accessToken = await ks().sign({ iss: issuer, sub, aud: userinfoAud, client_id: client.id, scope: rec.scope, email: rec.email, jti: codeHash, iat: nowS, exp: nowS + tokenTtlS }, 'at+jwt');
@@ -374,7 +470,7 @@ export function oidcProviderRoutes(opts) {
         const client = claims && claims.iss === issuer ? await clientOf(String(claims.aud)) : null;
         const postLogout = params.get('post_logout_redirect_uri');
         const cookies = await gate.signOutCookies(req);
-        if (client && postLogout && (client.postLogoutRedirectUris ?? []).includes(postLogout)) {
+        if (client && postLogout && redirectAllowed(client.postLogoutRedirectUris ?? [], postLogout, client.preview === true)) {
             const to = new URL(postLogout);
             const state = params.get('state');
             if (state !== null)
@@ -399,7 +495,7 @@ export function oidcProviderRoutes(opts) {
             case '/jwks':
                 return json(ks().jwks, 200, { 'cache-control': 'public, max-age=300' });
             case '/authorize':
-                return req.method === 'GET' ? authorize(req) : page(405, 'GET only');
+                return req.method === 'GET' || req.method === 'POST' ? authorize(req) : page(405, 'GET or POST only');
             case '/token':
                 return token(req);
             case '/userinfo':

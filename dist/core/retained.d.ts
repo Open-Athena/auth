@@ -1,5 +1,5 @@
 import type { AccountsResponse } from './http.js';
-import type { RetainedStore } from './retained-store.js';
+import type { EmailProof, RetainedStore } from './retained-store.js';
 import type { Auth, Grant } from './types.js';
 /** What an incoming share link does while another login is active. */
 export type IncomingDecision = 'keep' | 'switch';
@@ -23,14 +23,15 @@ export interface RetainedOptions {
      */
     incoming?: IncomingPolicy;
 }
-/** A retained-mode refusal the routes answer with 409. */
+/** A retained-mode refusal; invalid email proof keeps the email flow's uniform failure. */
 export declare class RetainedLoginError extends Error {
-    readonly code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict'
+    readonly code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid' | 'retained-rate-limit' | 'retained-storage-capacity'
     /** A held link that can't become a login now: the browser is full, the link used up, or the offer lapsed. */
      | 'incoming-unavailable';
-    constructor(code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict'
+    constructor(code: 'retained-login-capacity' | 'pending-link-capacity' | 'selection_context_conflict' | 'email-proof-invalid' | 'retained-rate-limit' | 'retained-storage-capacity'
     /** A held link that can't become a login now: the browser is full, the link used up, or the offer lapsed. */
      | 'incoming-unavailable');
+    get status(): 409 | 429 | 503;
 }
 /** The gate's side of a retained login: turn a principal into a live identity (or not). */
 export type ResolveSub = (req: Request, claims: {
@@ -66,7 +67,7 @@ export declare function retainedMode(opts: RetainedOptions, deps: Deps): {
     /** The serialized selection context for this request's set, or null without one. */
     selection(req: Request, nowMs: number): Promise<string | null>;
     /** An IdP or emailed code vouched for `email`: add that login and make it the active one. */
-    signIn(req: Request, email: string, nowMs: number): Promise<string[]>;
+    signIn(req: Request, email: string, nowMs: number, proof?: EmailProof): Promise<string[]>;
     /**
      * An incoming share link (already found valid and redeemable by the gate).
      * With no usable active login it signs in (one redemption, or none if this

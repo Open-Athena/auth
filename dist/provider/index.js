@@ -8,4 +8,6 @@
 export { generateSigningKey, keySet } from './keys.js';
 export { brokerProvider, hashClientSecret, oidcProviderRoutes } from './routes.js';
 export { clientIdProblem, clientLookup, mintClientSecret, redirectUriProblem, } from './registry.js';
+export { previewPattern, redirectAllowed } from './redirects.js';
 export { memoryProviderStore } from './store.js';
+export { clientManagementRoutes, managementTokenAuth } from './management.js';

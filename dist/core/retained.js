@@ -17,13 +17,16 @@ import { b64uEncode } from './base64.js';
 import { clearCookie, emailSub, grantSub, inspectSessionClaims, isSecureRequest, readCookie } from './session.js';
 import { SELECTION_CONTEXT_HEADER, parseSelectionContext, serializeSelectionContext } from './selection-context.js';
 import { generateId } from './tokens.js';
-/** A retained-mode refusal the routes answer with 409. */
+/** A retained-mode refusal; invalid email proof keeps the email flow's uniform failure. */
 export class RetainedLoginError extends Error {
     code;
     constructor(code) {
         super(code);
         this.code = code;
         this.name = 'RetainedLoginError';
+    }
+    get status() {
+        return this.code === 'retained-rate-limit' ? 429 : this.code === 'retained-storage-capacity' ? 503 : 409;
     }
 }
 const enc = new TextEncoder();
@@ -72,7 +75,7 @@ export function retainedMode(opts, deps) {
         const handle = b64uEncode(crypto.getRandomValues(new Uint8Array(32)));
         const binding = { gateId, browserSetId: generateId(), handleHash: await handleHash(handle) };
         if (!(await store.bootstrap(binding, nowS)))
-            throw new RetainedLoginError('retained-login-capacity');
+            throw new RetainedLoginError('retained-storage-capacity');
         let browser = (await store.browser(binding, nowS));
         if (legacy !== null) {
             const claims = await inspectSessionClaims(legacy, deps.secret, nowMs);
@@ -182,10 +185,29 @@ export function retainedMode(opts, deps) {
             return h ? serializeSelectionContext(contextOf(h.browser)) : null;
         },
         /** An IdP or emailed code vouched for `email`: add that login and make it the active one. */
-        async signIn(req, email, nowMs) {
+        async signIn(req, email, nowMs, proof) {
             const nowS = sec(nowMs);
+            if (proof && proof.email !== email)
+                throw new RetainedLoginError('email-proof-invalid');
             const { h, cookies } = await ensure(req, nowMs);
-            await add(h, emailSub(email), nowS, nowS + deps.sessionTtlS, nowS);
+            if (proof) {
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const browser = attempt ? await store.browser(h.binding, nowS) : h.browser;
+                    if (!browser)
+                        throw new RetainedLoginError('selection_context_conflict');
+                    const result = await store.commitEmail({
+                        ...h.binding, expected: contextOf(browser), sessionId: generateId(), proof,
+                        issuedAt: nowS, expiresAt: nowS + deps.sessionTtlS, select: true,
+                    }, nowS);
+                    if (result.ok)
+                        return cookies;
+                    if (result.error !== 'selection_context_conflict' || attempt === 1)
+                        throw new RetainedLoginError(result.error);
+                }
+            }
+            else {
+                await add(h, emailSub(email), nowS, nowS + deps.sessionTtlS, nowS);
+            }
             return cookies;
         },
         /**

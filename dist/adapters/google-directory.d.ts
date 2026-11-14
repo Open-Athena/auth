@@ -1,4 +1,5 @@
 import type { AllowlistStore } from '../core/store.js';
+import type { GroupSnapshot, GroupSnapshotStore } from '../groups/index.js';
 export declare const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 export declare const DIRECTORY_API = "https://admin.googleapis.com/admin/directory/v1";
 export declare const CLOUD_IDENTITY_API = "https://cloudidentity.googleapis.com/v1";
@@ -82,6 +83,10 @@ export interface SyncResult {
 }
 /** The allowlist `source` a synced group owns: `sync:<group>`. */
 export declare const syncSource: (group: string) => string;
+/** Fetch all groups before writing; a failed listing never refreshes freshness. */
+export declare function syncGroupSnapshots(store: Pick<GroupSnapshotStore, 'put'>, { groups, api, key, subject, fetch, nowMs }: Omit<SyncOptions, 'groups'> & {
+    groups: readonly string[];
+}): Promise<GroupSnapshot[]>;
 /**
  * One token, then per group: list → `replaceSource`. Rows carry the group's
  * scopes and `addedBy: <service account email>`. A listing that throws stops

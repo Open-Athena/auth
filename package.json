@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.cbd3bc2",
+  "version": "0.1.0-dist.0d69009",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -43,6 +43,43 @@
       "types": "./dist/adapters/google-directory.d.ts",
       "default": "./dist/adapters/google-directory.js"
     },
+    "./groups": {
+      "types": "./dist/groups/index.d.ts",
+      "default": "./dist/groups/index.js"
+    },
+    "./groups/d1": {
+      "types": "./dist/adapters/d1-groups.d.ts",
+      "default": "./dist/adapters/d1-groups.js"
+    },
+    "./backchannel": {
+      "types": "./dist/backchannel/index.d.ts",
+      "default": "./dist/backchannel/index.js"
+    },
+    "./backchannel/d1": {
+      "types": "./dist/adapters/d1-backchannel.d.ts",
+      "default": "./dist/adapters/d1-backchannel.js"
+    },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "default": "./dist/activity/index.js"
+    },
+    "./activity/d1": {
+      "types": "./dist/adapters/d1-activity.d.ts",
+      "default": "./dist/adapters/d1-activity.js"
+    },
+    "./activity/slack": {
+      "types": "./dist/activity/slack.d.ts",
+      "default": "./dist/activity/slack.js"
+    },
+    "./activity/discord": {
+      "types": "./dist/activity/discord.d.ts",
+      "default": "./dist/activity/discord.js"
+    },
+    "./react/activity": {
+      "types": "./dist/react/activity/index.d.ts",
+      "default": "./dist/react/activity/index.js"
+    },
+    "./react/activity.css": "./dist/react/activity/activity.css",
     "./session-log": {
       "types": "./dist/session-log/index.d.ts",
       "default": "./dist/session-log/index.js"
@@ -50,6 +87,10 @@
     "./session-log/d1": {
       "types": "./dist/adapters/d1-session-log.d.ts",
       "default": "./dist/adapters/d1-session-log.js"
+    },
+    "./session-log/model": {
+      "types": "./dist/react/session-log/model.d.ts",
+      "default": "./dist/react/session-log/model.js"
     },
     "./session-log/client": {
       "types": "./dist/client/session-log/index.d.ts",

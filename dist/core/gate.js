@@ -305,7 +305,7 @@ export function createGate(opts) {
         return policy(email);
     }
     /** Mint a session for an identity an IdP just vouched for. Null if policy denies. */
-    async function signIn(email, req, nowMs = Date.now()) {
+    async function signIn(email, req, nowMs = Date.now(), proof) {
         const nowS = sec(nowMs);
         const scopes = await policy(email);
         if (!scopes) {
@@ -314,7 +314,7 @@ export function createGate(opts) {
         }
         // Retained mode adds the login to this browser and selects it, keeping its others.
         const cookies = retained
-            ? await retained.signIn(req, email, nowMs)
+            ? await retained.signIn(req, email, nowMs, proof)
             : [cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)];
         await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS);
         const auth = { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) };

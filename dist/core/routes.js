@@ -172,7 +172,7 @@ export function authRoutes(gate, opts = {}) {
             }
             catch (e) {
                 if (e instanceof RetainedLoginError)
-                    return json({ error: e.code }, 409);
+                    return json({ error: e.code }, e.status);
                 throw e;
             }
             if (!res.ok)
@@ -236,7 +236,7 @@ export function authRoutes(gate, opts = {}) {
             }
             catch (e) {
                 if (e instanceof RetainedLoginError) {
-                    return e.code === 'selection_context_conflict' ? selectionConflict() : json({ error: e.code }, 409);
+                    return e.code === 'selection_context_conflict' ? selectionConflict() : json({ error: e.code }, e.status);
                 }
                 throw e;
             }

@@ -2,8 +2,8 @@ import type { SelectionContext } from './selection-context.js';
 /** The retained-login registry behind a gate's opt-in `retained` mode.
  * Caller owns gate IDs, random selectors and a stable >=256-bit HttpOnly handle;
  * handleHash must be a keyed hash, never the cookie value. All times are seconds.
- * Gate-wide admission/rate limiting and atomic email-proof completion are not here:
- * the gate consumes an email code, then adds the login (see the spec).
+ * Gate IDs must be trusted, stable configuration, never request-controlled.
+ * D1 admission is gate-wide and transactional with allocation.
  */
 export interface RetainedBinding {
     gateId: string;
@@ -19,6 +19,12 @@ export interface RetainedLimits {
     pendingTtlS: number;
     retryTtlS: number;
     defaultSessionTtlS: number;
+    /** Epoch-aligned fixed window (default 60 seconds); keep consistent across writers. */
+    admissionWindowS?: number;
+    /** Successful browser allocations per gate/window (default 120). Positive safe integer; no disable value. */
+    gateBootstrapsPerWindow?: number;
+    /** Successful pending-link allocations per gate/window (default 240). */
+    gatePendingsPerWindow?: number;
 }
 export interface PendingIncoming extends RetainedBinding {
     expected: SelectionContext;
@@ -79,13 +85,38 @@ export interface AddSession extends RetainedBinding {
     /** Make it the active selection (a normal sign-in does). */
     select: boolean;
 }
+/** Hashed evidence from the email flow, never a pending ID or email alone. */
+export type EmailProof = {
+    pendingId: string;
+    email: string;
+} & ({
+    kind: 'link';
+    hash: string;
+} | {
+    kind: 'code';
+    hash: string;
+    maxAttempts: number;
+});
+export interface CommitEmail extends Omit<AddSession, 'sub'> {
+    proof: EmailProof;
+}
+export type CommitEmailResult = {
+    ok: true;
+    selection: SelectionContext;
+} | {
+    ok: false;
+    error: 'email-proof-invalid' | 'selection_context_conflict' | 'retained-login-capacity';
+};
 /** Change the active selection (`sessionId` null = signed out here, keeping the others), or remove one login. */
 export interface SelectSession extends RetainedBinding {
     expected: SelectionContext;
     sessionId: string | null;
 }
 export interface RetainedStore {
-    /** Empty bootstrap only. Caller must establish the cookie before completion. */
+    /** Empty bootstrap only. Caller must establish the cookie before completion.
+     * D1 atomically admits allocation or throws RetainedLoginError: global rate
+     * pressure (429) / hard storage pressure (503). Legacy false means storage.
+     */
     bootstrap(binding: RetainedBinding, nowS: number): Promise<boolean>;
     /** The live browser set this handle names in this gate, or null. */
     browser(binding: Omit<RetainedBinding, 'browserSetId'>, nowS: number): Promise<RetainedBrowser | null>;
@@ -95,6 +126,14 @@ export interface RetainedStore {
     pendings(binding: RetainedBinding, nowS: number): Promise<RetainedPending[]>;
     /** null: a stale `expected`, a dead set, or no room (`limits.sessions`, not counting the login it replaces). */
     addSession(input: AddSession, nowS: number): Promise<SelectionContext | null>;
+    /**
+     * Consume email proof and create/replace/select its login in one transaction.
+     * Rechecks proof hash, email, expiry and (for codes) guess cap inside the write
+     * boundary. A refusal leaves proof, sessions and selection untouched; faults
+     * throw. `pending_auth` must live in this store's database. No replay minting.
+     * The gate applies live email policy before calling, outside the transaction.
+     */
+    commitEmail(input: CommitEmail, nowS: number): Promise<CommitEmailResult>;
     /** Select a live member login, or none. null: stale `expected`, or not a live member. Never extends evidence. */
     select(input: SelectSession, nowS: number): Promise<SelectionContext | null>;
     /**
@@ -114,6 +153,9 @@ export interface RetainedStore {
      * whether or not this runs. Returns how many rows went.
      */
     cleanup(nowS: number, limit?: number): Promise<number>;
+    /** Atomic admission + allocation. null preserves browser capacity/context/proof
+     * refusals (409); global pressure throws as for bootstrap, without redemption.
+     */
     createPending(input: PendingIncoming, nowS: number): Promise<SelectionContext | null>;
     /** null: rejected guards/input mismatch/expired replay; SQL/storage faults throw.
      * All grant, pending and retained rows must reside in this same database.
