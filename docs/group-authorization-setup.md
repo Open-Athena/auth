@@ -1,6 +1,6 @@
 # OA Groups authorization setup
 
-Status (2026-11-09): setup/request draft only; not sent. The snapshot library is implemented, but this document does not establish a created OA service account, a Workspace grant, a running central sync or deployed Groups policy. SA email: **pending creation** (`<SA_EMAIL_PENDING_CREATION>`). No credentials were read or provisioned for this draft.
+Status (2026-11-14): the SA exists; the request below is ready to send but not sent. `groups-reader@oa-auth-509611.iam.gserviceaccount.com` (unique ID 118214575437799181928) was created in GCP project `oa-auth-509611`, with the IAM and Admin SDK (`admin.googleapis.com`) APIs enabled there. It has no key, no Workspace role and no domain-wide delegation yet. The first group to sync is `marin-owners@openathena.ai`, which should drive admin access on gcs.oa.dev. Still not established: the Workspace grant, a credential, a running central sync and any deployed Groups policy.
 
 ## Copyable Workspace Admin Request
 
@@ -9,7 +9,9 @@ Subject: Read-only Google Groups access for OA app authorization
 
 Could an OA Google Workspace superadmin assign the prebuilt Groups Reader role to our directory-sync service account once it is created?
 
-Service-account email: <SA_EMAIL_PENDING_CREATION> (not created/confirmed yet; we will supply the actual email before assignment).
+Service-account email: groups-reader@oa-auth-509611.iam.gserviceaccount.com
+
+The first group we need to read is marin-owners@openathena.ai; please confirm the role assignment covers it.
 
 Admin console: Account > Admin roles > Groups Reader > Assign admin > Assign service accounts > enter the confirmed SA email > Add > Assign role. Please confirm the assignment and any group-category restrictions; the grant must cover the authorization groups we agree to sync.
 
@@ -18,7 +20,7 @@ This is read-only membership lookup, not group ownership or membership managemen
 We will handle GCP project/SA creation, API enablement and secure runtime credential placement separately with the GCP project operator. No private key or token is needed in this reply. Please flag any tenant restriction that prevents this role assignment rather than broadening access.
 ```
 
-Google documents direct [service-account role assignment] and the read-only [Groups Reader role]. Its optional restrictions distinguish categories such as security/non-security groups; do not assume an arbitrary per-group allowlist. The request needs the real SA email before it can be executed.
+Google documents direct [service-account role assignment] and the read-only [Groups Reader role]. Its optional restrictions distinguish categories such as security/non-security groups; do not assume an arbitrary per-group allowlist. The request names the real SA email above.
 
 ## Who Needs Which Permission?
 
