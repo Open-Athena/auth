@@ -79,8 +79,10 @@ export interface GrantLinkProps {
   buildLink: BuildGrantLink
   /** Scopes whose entries are shown elsewhere (`GrantCard` puts them on the scope rows); "Copy all" still includes them. */
   omitScopes?: readonly string[]
+  /** The key is kept, so these links can be shown again: say so instead of "copy this now". */
+  kept?: boolean
   onDismiss?: () => void
-  labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyAll' | 'copyKey' | 'copyFailed' | 'dismiss', ReactNode>>
+  labels?: Partial<Record<'warning' | 'keptWarning' | 'copy' | 'copied' | 'copyAll' | 'copyKey' | 'copyFailed' | 'dismiss', ReactNode>>
   classNames?: GrantsClassNames
 }
 
@@ -106,7 +108,7 @@ function useCopy() {
  * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy
  * of each, of all of them, and of just the key, and say it won't come back.
  */
-export function GrantLink({ grant, token, buildLink, omitScopes = [], onDismiss, labels = {}, classNames }: GrantLinkProps) {
+export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = false, onDismiss, labels = {}, classNames }: GrantLinkProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const clip = useCopy()
   const all = linkEntries(buildLink(grant, token))
@@ -116,7 +118,9 @@ export function GrantLink({ grant, token, buildLink, omitScopes = [], onDismiss,
   return (
     <div className={cx.token}>
       <p className={cx.muted}>
-        {labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again."}
+        {kept
+          ? (labels.keptWarning ?? 'This key is kept (sealed): Show links brings these back.')
+          : (labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again.")}
       </p>
       {shown.map(({ label, url }) => (
         <div key={url} className={cx.copyRow}>
@@ -204,8 +208,14 @@ export interface GrantMintFormProps {
   avatarEndpoint?: string
   /** Match the app's `<WhoamiChip anon=…>`, so the anon checkbox says what the recipient will see. Default `label`. */
   anonChip?: AnonChipMode
+  /**
+   * Keep each new link's key, sealed, so staff can copy it again later (`Grant.kept`); a checkbox offers the other
+   * choice. Default false: a key is shown once.
+   */
+  keepTokens?: boolean
   labels?: Partial<
     Record<
+      | 'keepKey' | 'forgetKey'
       | 'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired'
       | 'anon' | 'service',
       ReactNode
@@ -228,6 +238,7 @@ export function GrantMintForm({
   allowlist = false,
   avatarEndpoint,
   anonChip = 'label',
+  keepTokens = false,
   labels = {},
   classNames,
 }: GrantMintFormProps) {
@@ -242,6 +253,8 @@ export function GrantMintForm({
   const [max, setMax] = useState(0)
   const [noScope, setNoScope] = useState(false)
   const [anon, setAnon] = useState(false)
+  /** The non-default choice: forget (when keys are kept by default) or keep (when they aren't). */
+  const [otherKeep, setOtherKeep] = useState(false)
   const [service, setService] = useState(false)
 
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -268,6 +281,7 @@ export function GrantMintForm({
       expiresInS: days > 0 ? days * DAY_S : null,
       ...(anon ? { anon: true } : {}),
       ...(service ? { service: true } : {}),
+      keepToken: keepTokens !== otherKeep,
     }
     if (await onMint(input)) {
       setMemo(resolveMemo(defaultMemo))
@@ -276,6 +290,7 @@ export function GrantMintForm({
       setAvatar(null)
       setAnon(false)
       setService(false)
+      setOtherKeep(false)
     }
   }
 
@@ -321,6 +336,14 @@ export function GrantMintForm({
       <label className={cx.check}>
         <input type="checkbox" name="service" checked={service} onChange={e => setService(e.target.checked)} />
         <span>{labels.service ?? 'Service account: for a job, not a person (no email)'}</span>
+      </label>
+      <label className={cx.check}>
+        <input type="checkbox" name="keep" checked={otherKeep} onChange={e => setOtherKeep(e.target.checked)} />
+        <span>
+          {keepTokens
+            ? (labels.forgetKey ?? "Forget the key after this (it's shown only once)")
+            : (labels.keepKey ?? 'Keep the key (sealed), so staff can copy this link again')}
+        </span>
       </label>
       <fieldset>
         <legend>{labels.scopes ?? 'Opens'}</legend>
@@ -444,6 +467,58 @@ function ScopeChecks({ grant, grants, scopes, busy, className, link }: {
   )
 }
 
+/** A link whose key isn't kept: the shown-once note, and a way to keep it by pasting the key (links already sent keep working). */
+function KeepExisting({ grant, grants, busy, labels, cx }: {
+  grant: Grant
+  grants: UseGrantsResult
+  busy: boolean
+  labels: NonNullable<GrantCardProps['labels']>
+  cx: typeof DEFAULT_CLASSES
+}) {
+  const [open, setOpen] = useState(false)
+  const [key, setKey] = useState('')
+  return (
+    <>
+      <p className={cx.muted}>
+        {labels.lostToken ?? 'Link shown once at mint. Rotate it for a fresh one if you lost it.'}{' '}
+        {!open && (
+          <button className={cx.linkish} type="button" onClick={() => setOpen(true)}>
+            {labels.keepExisting ?? "keep this link's key"}
+          </button>
+        )}
+      </p>
+      {open && (
+        <form
+          className={cx.row}
+          onSubmit={async e => {
+            e.preventDefault()
+            if (await grants.keepToken(grant.id, key.trim())) {
+              setKey('')
+              setOpen(false)
+            }
+          }}
+        >
+          <input
+            className={cx.input}
+            name="key"
+            value={key}
+            onChange={e => setKey(e.target.value)}
+            placeholder={typeof labels.keepExistingHint === 'string' ? labels.keepExistingHint : 'its key, or the whole link'}
+            aria-label="This link's key"
+            {...NO_AUTOFILL}
+          />
+          <button className={cx.button} type="submit" disabled={busy || !key.trim()}>
+            {labels.keepExistingSave ?? 'Keep'}
+          </button>
+          <button className={cx.button} type="button" onClick={() => setOpen(false)}>
+            {labels.cancel ?? 'Cancel'}
+          </button>
+        </form>
+      )}
+    </>
+  )
+}
+
 export interface GrantCardProps {
   grant: Grant
   grants: UseGrantsResult
@@ -467,7 +542,8 @@ export interface GrantCardProps {
       Record<
         | 'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm'
         | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes'
-        | 'anon' | 'service' | 'anonToggle' | 'serviceToggle',
+        | 'anon' | 'service' | 'anonToggle' | 'serviceToggle'
+        | 'showLinks' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave',
         ReactNode
       >
     >
@@ -674,9 +750,32 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
       )}
 
       {token ? (
-        <GrantLink grant={grant} token={token} buildLink={buildLink} omitScopes={[...scoped.keys()]} onDismiss={grants.dismissToken} labels={labels} classNames={classNames} />
+        <GrantLink
+          grant={grant}
+          token={token}
+          buildLink={buildLink}
+          omitScopes={[...scoped.keys()]}
+          kept={grant.kept}
+          onDismiss={grants.dismissToken}
+          labels={labels}
+          classNames={classNames}
+        />
+      ) : revoked ? null : grant.kept ? (
+        <div className={cx.row}>
+          <button className={cx.button} type="button" disabled={busy} onClick={() => void grants.reveal(grant.id)}>
+            {labels.showLinks ?? 'Show links'}
+          </button>
+          <span className={cx.muted}>{labels.keptNote ?? 'Its key is kept, sealed; each look is logged.'}</span>
+          <ConfirmButton
+            className={cx.linkish}
+            disabled={busy}
+            label={labels.forgetKept ?? 'forget key'}
+            confirm={labels.forgetKeptConfirm ?? 'Only rotating brings it back. Forget?'}
+            onConfirm={() => void grants.forgetToken(grant.id)}
+          />
+        </div>
       ) : (
-        !revoked && <p className={cx.muted}>{labels.lostToken ?? 'Link shown once at mint. Rotate it for a fresh one if you lost it.'}</p>
+        <KeepExisting grant={grant} grants={grants} busy={busy} labels={labels} cx={cx} />
       )}
     </article>
   )
@@ -766,7 +865,7 @@ function HolderEditor({
 }
 
 export type GrantsPanelProps = ({ client: AuthClient; controller?: undefined } | { controller: GrantsController; client?: undefined }) &
-  Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint' | 'anonChip'> & {
+  Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint' | 'anonChip' | 'keepTokens'> & {
     buildLink: BuildGrantLink
     /** Re-read the list this often. Off by default. */
     pollMs?: number
@@ -812,6 +911,7 @@ export function GrantsPanel({
   allowlist,
   avatarEndpoint,
   anonChip,
+  keepTokens,
 }: GrantsPanelProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const grants = useGrants(controller ? { controller, pollMs } : { client: client!, pollMs })
@@ -842,6 +942,7 @@ export function GrantsPanel({
           {...(allowlist === undefined ? {} : { allowlist })}
           {...(avatarEndpoint === undefined ? {} : { avatarEndpoint })}
           {...(anonChip === undefined ? {} : { anonChip })}
+          {...(keepTokens === undefined ? {} : { keepTokens })}
         />
       </section>
       <section className={classNames?.section}>

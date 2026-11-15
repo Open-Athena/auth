@@ -81,6 +81,11 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
       enable: (id: string) => request<'enable'>(`${grantPath(id)}/enable`, 'POST'),
       rotate: (id: string, input: RotateInput = {}) => request<'rotate'>(`${grantPath(id)}/rotate`, 'POST', input),
       activity: (id: string) => request<'activity'>(`${grantPath(id)}/activity`),
+      /** A kept link's key (404 when none is kept). Logged server-side. */
+      token: (id: string) => request<'token'>(`${grantPath(id)}/token`),
+      /** Keep this link's current key (a pasted key or link), without rotating it. */
+      keepToken: (id: string, token: string) => request<'keep'>(`${grantPath(id)}/token`, 'PUT', { token }),
+      forgetToken: (id: string) => request<'forget'>(`${grantPath(id)}/token`, 'DELETE'),
     },
     log: ({ grant, limit }: LogInput = {}) => {
       const query = new URLSearchParams()

@@ -16,7 +16,7 @@ import { InvalidImageError, MAX_PREVIEW_AVATAR_BYTES, bytesToDataUri, parseAvata
 import { cleanSubject, isEmailish } from './requests.js'
 import { hashToken } from './tokens.js'
 import { hasScope } from './types.js'
-import type { AccountsResponse, AllowedForLink, AuthResponses, GrantUpdateInput, MintInput, RotateInput } from './http.js'
+import type { AccountsResponse, AllowedForLink, AuthResponses, GrantUpdateInput, KeepTokenInput, MintInput, RotateInput } from './http.js'
 import { safeNext } from './next.js'
 import { RetainedLoginError, selectionConflict } from './retained.js'
 
@@ -434,6 +434,7 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
             expiryEndsSessions: b.expiryEndsSessions ?? true,
             service: !!b.service,
             anon: !!b.anon,
+            ...(b.keepToken === undefined ? {} : { keepToken: !!b.keepToken }),
             createdBy: creatorOf(a),
           })
         } catch (e) {
@@ -471,9 +472,32 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         const owned = await ownedGrant(id, a)
         if (owned instanceof Response) return owned
         const b = await body<RotateInput>(req)
-        const res = await gate.rotate(id, { endSessions: !!b.endSessions })
+        const res = await gate.rotate(id, { endSessions: !!b.endSessions, ...(b.keepToken === undefined ? {} : { keepToken: !!b.keepToken }) })
         // The only time the re-keyed raw token is ever visible.
         return res ? reply('rotate', { id, token: res.token }) : json({ error: 'not found' }, 404)
+      }
+
+      // A kept key, read again (logged), kept from a paste (only the link's current key), or forgotten. Never in
+      // the list payload: each read is its own request, and its own log row.
+      if (id && seg[2] === 'token' && seg.length === 3) {
+        const owned = await ownedGrant(id, a)
+        if (owned instanceof Response) return owned
+        const actor = a.kind === 'sso' ? a.email : null
+        if (method === 'GET') {
+          const token = await gate.revealToken(id, actor)
+          return token ? reply('token', { id, token }) : json({ error: 'not kept' }, 404)
+        }
+        if (method === 'PUT') {
+          const b = await body<KeepTokenInput>(req)
+          if (typeof b.token !== 'string' || !b.token) return json({ error: 'token required' }, 400)
+          // Accept a whole pasted link, too: the key is its `key` param.
+          let token = b.token.trim()
+          try {
+            token = new URL(token, 'https://x.invalid').searchParams.get('key') ?? token
+          } catch { /* not a URL: the bare key */ }
+          return (await gate.keepToken(id, token, actor)) ? reply('keep', { ok: true }) : json({ error: "that isn't this link's current key" }, 400)
+        }
+        if (method === 'DELETE') return reply('forget', { ok: await gate.keepToken(id, null, actor) })
       }
 
       // Disable/enable are the reversible half: they stop new redemptions and

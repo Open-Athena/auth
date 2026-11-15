@@ -32,7 +32,7 @@ describe('GrantMintForm', () => {
     await user.type(screen.getByRole('textbox', { name: 'Holder' }), ' Ada ')
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
     expect(onMint.mock.calls).toEqual([[{
-      name: 'Board', subjectName: 'Ada', email: null, scopes: ['alpha', 'beta'], maxRedeems: null, expiresInS: 30 * 86400,
+      name: 'Board', subjectName: 'Ada', email: null, scopes: ['alpha', 'beta'], maxRedeems: null, expiresInS: 30 * 86400, keepToken: false,
     }]])
   })
 
@@ -72,6 +72,8 @@ describe('GrantMintForm', () => {
 /** The grant routes, in memory: enough to run the panel end to end. */
 function backend(patches: unknown[] = []) {
   const grants: Grant[] = []
+  /** Current key per link, and whether it's kept: the server's side of `GET/PUT/DELETE /grants/:id/token`. */
+  const keys = new Map<string, string>()
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const path = String(input)
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -80,10 +82,22 @@ function backend(patches: unknown[] = []) {
       const grant = {
         id: `g${grants.length + 1}`, name: body.name ?? null, note: null, subject: null, email: null, scopes: body.scopes,
         maxRedeems: null, redeems: 0, expiresAt: null, sessionTtlS: null, createdAt: 1, createdBy: 'a', disabledAt: null,
-        revokedAt: null, expiryEndsSessions: true, sessionsInvalidBefore: null, firstUsedAt: null, lastUsedAt: null, service: false, anon: false,
+        revokedAt: null, expiryEndsSessions: true, sessionsInvalidBefore: null, firstUsedAt: null, lastUsedAt: null, service: false, anon: false, kept: !!body.keepToken,
       } satisfies Grant
       grants.push(grant)
+      keys.set(grant.id, `token-${grant.id}`)
       return reply({ grant, token: `token-${grant.id}` })
+    }
+    const keyRoute = /^\/api\/auth\/grants\/([^/]+)\/token$/.exec(path)
+    if (keyRoute) {
+      const grant = grants.find(g => g.id === keyRoute[1])!
+      if (init?.method === 'PUT') {
+        if ((JSON.parse(String(init.body)) as { token: string }).token !== keys.get(grant.id)) return reply({ error: "that isn't this link's current key" }, 400)
+        grant.kept = true
+        return reply({ ok: true })
+      }
+      if (init?.method === 'DELETE') return reply({ ok: (grant.kept = false, true) })
+      return grant.kept ? reply({ id: grant.id, token: keys.get(grant.id) }) : reply({ error: 'not kept' }, 404)
     }
     if (path === '/api/auth/grants') return reply({ grants })
     const patched = /^\/api\/auth\/grants\/([^/]+)$/.exec(path)
@@ -235,7 +249,7 @@ describe('anonymous and service links', () => {
     expect((screen.getByRole('textbox', { name: 'Email' }) as HTMLInputElement).disabled).toBe(true)
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
     expect(onMint.mock.calls).toEqual([[{
-      name: null, email: null, scopes: ['reports'], maxRedeems: null, expiresInS: 30 * 86400, anon: true, service: true,
+      name: null, email: null, scopes: ['reports'], maxRedeems: null, expiresInS: 30 * 86400, anon: true, service: true, keepToken: false,
     }]])
   })
 
@@ -374,5 +388,46 @@ describe('links beside their scopes', () => {
     ]))
     await user.click(screen.getByRole('button', { name: 'Done' }))
     expect([urls(), screen.getByRole('article').querySelector('dd')!.textContent]).toEqual([[], 'Alpha, Beta'])
+  })
+})
+
+describe('kept keys', () => {
+  it('the mint form offers the choice that isn\'t the default', async () => {
+    const onMint = vi.fn(async (_: MintInput) => ({ id: 'g' }))
+    renderWithQuery(<GrantMintForm scopes={[{ id: 'reports', label: 'Reports' }]} onMint={onMint} keepTokens />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    await user.click(screen.getByRole('checkbox', { name: "Forget the key after this (it's shown only once)" }))
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    expect(onMint.mock.calls.map(([i]) => i.keepToken)).toEqual([true, false])
+  })
+
+  it('a kept link shows its links again on demand, and forgets them when dismissed', async () => {
+    const client = backend()
+    const { grant } = await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'], keepToken: true })
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={(_, t) => `https://x.test/?key=${t}`} />)
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article')
+    await user.click(within(card).getByRole('button', { name: 'Show links' }))
+    await waitFor(() => expect((within(card).getByRole('textbox', { name: 'Share link' }) as HTMLInputElement).value).toBe(`https://x.test/?key=token-${grant.id}`))
+    expect(within(card).getByText('This key is kept (sealed): Show links brings these back.')).toBeTruthy()
+    await user.click(within(card).getByRole('button', { name: 'Done' }))
+    expect([within(card).queryByRole('textbox', { name: 'Share link' }), within(card).getByRole('button', { name: 'Show links' }).textContent]).toEqual([null, 'Show links'])
+  })
+
+  it("an existing link's key is kept by pasting it, and a wrong one says so", async () => {
+    const client = backend()
+    const { grant } = await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'] })
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} />)
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article')
+    await user.click(within(card).getByRole('button', { name: "keep this link's key" }))
+    await user.type(within(card).getByRole('textbox', { name: "This link's key" }), 'wrong')
+    await user.click(within(card).getByRole('button', { name: 'Keep' }))
+    await waitFor(() => expect(within(card).getByRole('alert').textContent).toBe("that isn't this link's current key"))
+    await user.clear(within(card).getByRole('textbox', { name: "This link's key" }))
+    await user.type(within(card).getByRole('textbox', { name: "This link's key" }), `token-${grant.id}`)
+    await user.click(within(card).getByRole('button', { name: 'Keep' }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Show links' })).toBeTruthy())
   })
 })

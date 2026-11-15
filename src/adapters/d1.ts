@@ -34,10 +34,11 @@ interface GrantRow {
   last_used_at: number | null
   service: number
   anon: number
+  kept: number
 }
 
 const COLS =
-  'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon'
+  'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon, token_enc IS NOT NULL AS kept'
 
 function parseSubject(json: string | null): Subject | null {
   if (!json) return null
@@ -71,6 +72,7 @@ const toGrant = (r: GrantRow): Grant => ({
   lastUsedAt: r.last_used_at,
   service: r.service !== 0,
   anon: r.anon !== 0,
+  kept: r.kept !== 0,
 })
 
 export function d1GrantStore(db: D1Database): GrantStore {
@@ -142,7 +144,7 @@ export function d1GrantStore(db: D1Database): GrantStore {
     },
 
     async revoke(id, nowS) {
-      const res = await db.prepare(`UPDATE grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(nowS, id).run()
+      const res = await db.prepare(`UPDATE grants SET revoked_at = ?, token_enc = NULL WHERE id = ? AND revoked_at IS NULL`).bind(nowS, id).run()
       return (res.meta?.changes ?? 0) > 0
     },
 
@@ -164,6 +166,7 @@ export function d1GrantStore(db: D1Database): GrantStore {
         .prepare(
           `UPDATE grants
               SET token_hash = ?,
+                  token_enc = NULL,
                   sessions_invalid_before = COALESCE(?, sessions_invalid_before)
             WHERE id = ? AND revoked_at IS NULL
             RETURNING ${COLS}`,
@@ -171,6 +174,22 @@ export function d1GrantStore(db: D1Database): GrantStore {
         .bind(newTokenHash, sessionsInvalidBefore, id)
         .first<GrantRow>()
       return row ? toGrant(row) : null
+    },
+
+    async keptToken(id) {
+      const row = await db
+        .prepare('SELECT token_enc, token_hash FROM grants WHERE id = ? AND token_enc IS NOT NULL')
+        .bind(id)
+        .first<{ token_enc: string; token_hash: string }>()
+      return row ? { tokenEnc: row.token_enc, tokenHash: row.token_hash } : null
+    },
+
+    async keepToken(id, tokenHash, tokenEnc) {
+      const res = await db
+        .prepare('UPDATE grants SET token_enc = ? WHERE id = ? AND token_hash = ? AND revoked_at IS NULL')
+        .bind(tokenEnc, id, tokenHash)
+        .run()
+      return (res.meta?.changes ?? 0) > 0
     },
 
     async update(id, patch) {

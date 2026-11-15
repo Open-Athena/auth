@@ -4,8 +4,8 @@
  * (`useGrants` in `/react`; Vue and Svelte stores wrap the same two calls).
  *
  * The raw token exists only in this object's memory, from the response that
- * minted or rotated it until `dismissToken()`, a newer token, or revoking that
- * link. It isn't persisted or logged, and the actions don't return it: render it
+ * minted, rotated or (for a kept key) revealed it until `dismissToken()`, a newer
+ * token, or revoking that link. It isn't persisted or logged, and the actions don't return it: render it
  * from the snapshot, once, for the admin to copy.
  */
 import { AuthClientError } from './api.js'
@@ -14,7 +14,7 @@ import { reportUnauthenticated } from './auth-events.js'
 import type { Grant, GrantActivity, GrantUpdateInput, MintInput, RotateInput } from '../core/http.js'
 import type { SessionLossReason } from '../core/denial.js'
 
-export type GrantAction = 'update' | 'disable' | 'enable' | 'revoke' | 'rotate'
+export type GrantAction = 'update' | 'disable' | 'enable' | 'revoke' | 'rotate' | 'reveal' | 'keep' | 'forget'
 
 export interface GrantsFailure {
   action: GrantAction | 'mint' | 'refresh' | 'activity'
@@ -28,7 +28,8 @@ export interface GrantsFailure {
 export interface OneTimeToken {
   grantId: string
   token: string
-  source: 'mint' | 'rotate'
+  /** `reveal`: a kept key, fetched again. */
+  source: 'mint' | 'rotate' | 'reveal'
 }
 
 export interface GrantsSnapshot {
@@ -185,6 +186,22 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
       return { token: { grantId: id, token, source: 'rotate' as const } }
     })
 
+  /** Fetch a kept key into the snapshot, as if just minted. */
+  const reveal = (id: string) =>
+    change(id, 'reveal', async () => {
+      const { token } = await client.grants.token(id)
+      return { token: { grantId: id, token, source: 'reveal' as const } }
+    })
+
+  /** Keep this link's current key (pasted), so it can be revealed later. */
+  const keepToken = (id: string, token: string) => change(id, 'keep', async () => (await client.grants.keepToken(id, token), {}))
+
+  const forgetToken = (id: string) =>
+    change(id, 'forget', async () => {
+      await client.grants.forgetToken(id)
+      return snapshot.token?.grantId === id && snapshot.token.source === 'reveal' ? { token: null } : {}
+    })
+
   async function activity(id: string): Promise<void> {
     const mine = (activityRequests.get(id) ?? 0) + 1
     activityRequests.set(id, mine)
@@ -213,6 +230,9 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
     enable,
     revoke,
     rotate,
+    reveal,
+    keepToken,
+    forgetToken,
     activity,
     dismissToken(): void {
       if (snapshot.token) set({ token: null })

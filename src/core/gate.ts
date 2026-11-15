@@ -60,6 +60,7 @@ import {
   readDecisionToken,
 } from './decisions.js'
 import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, holderIdentity, type NewGrant, type Subject } from './types.js'
+import { openToken, sealToken } from './token-vault.js'
 import { generateId, generateToken, hashToken } from './tokens.js'
 import { type RetainedOptions, retainedMode } from './retained.js'
 import type { EmailProof } from './retained-store.js'
@@ -68,6 +69,17 @@ export interface GateOptions {
   store: GrantStore
   /** HMAC key for session cookies and IP hashing. */
   secret: string
+  /**
+   * Keep each new link's key, sealed, so staff can copy it again (a mint's `keepToken` overrides). Default false: a
+   * key is shown once. Kept keys are sealed under a key derived from `tokenSecret`.
+   */
+  keepTokens?: boolean
+  /**
+   * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
+   * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
+   * not kept until kept again or rotated).
+   */
+  tokenSecret?: string
   /** Which SSO identities are allowed, and what scopes they get. Default: admins only. */
   policy?: EmailPolicy
   /** Always allowed, always `*`. Checked ahead of `policy`. */
@@ -299,6 +311,7 @@ export function createGate(opts: GateOptions) {
   const {
     store,
     secret,
+    keepTokens = false,
     adminEmails = [],
     cookieName = DEFAULT_COOKIE_NAME,
     sessionTtlS = DEFAULT_SESSION_TTL_S,
@@ -314,6 +327,7 @@ export function createGate(opts: GateOptions) {
     avatarFetchTimeoutMs = 5000,
     fetch: fetchImpl = globalThis.fetch,
   } = opts
+  const tokenSecret = opts.tokenSecret ?? secret
   const policy: EmailPolicy = opts.policy
     ? firstMatch(adminPolicy(adminEmails), opts.policy)
     : adminPolicy(adminEmails)
@@ -660,8 +674,13 @@ export function createGate(opts: GateOptions) {
       lastUsedAt: null,
       service: draft.service ?? false,
       anon: draft.anon ?? false,
+      kept: false,
     }
-    await store.insert(grant, await hashToken(token))
+    const tokenHash = await hashToken(token)
+    await store.insert(grant, tokenHash)
+    if (draft.keepToken ?? keepTokens) {
+      if (await store.keepToken(grant.id, tokenHash, await sealToken(token, grant.id, tokenSecret))) grant.kept = true
+    }
     // Without this the timeline starts at `redeem`, so "who handed this link
     // out" is only recoverable from `grants.created_by` — not from the log an
     // admin would actually read, and not at all once the grant is deleted.
@@ -905,15 +924,49 @@ export function createGate(opts: GateOptions) {
    */
   async function rotate(
     id: string,
-    { endSessions = false }: { endSessions?: boolean } = {},
+    { endSessions = false, keepToken }: { endSessions?: boolean; keepToken?: boolean } = {},
     nowMs = Date.now(),
   ): Promise<MintResult | null> {
     const nowS = sec(nowMs)
     const token = generateToken()
-    const grant = await store.rotate(id, await hashToken(token), endSessions ? nowS : null)
+    const tokenHash = await hashToken(token)
+    // A kept key stays kept across a rotation (the new one replaces it), unless the caller says otherwise.
+    const keep = keepToken ?? (await store.byId(id))?.kept ?? false
+    let grant = await store.rotate(id, tokenHash, endSessions ? nowS : null)
     if (!grant) return null
+    if (keep && (await store.keepToken(id, tokenHash, await sealToken(token, id, tokenSecret)))) grant = { ...grant, kept: true }
     await log({ ts: nowS, event: 'rotate', grantId: id, reason: endSessions ? 'end-sessions' : null })
     return { grant, token }
+  }
+
+  /**
+   * A kept link's key, for staff to copy the link again; null when none is kept (or it no longer opens, or no longer
+   * matches the link's hash). Every read is logged.
+   */
+  async function revealToken(id: string, actor: string | null = null, nowMs = Date.now()): Promise<string | null> {
+    const kept = await store.keptToken(id)
+    if (!kept) return null
+    const token = await openToken(kept.tokenEnc, id, tokenSecret)
+    if (token === null || (await hashToken(token)) !== kept.tokenHash) return null
+    await log({ ts: sec(nowMs), event: 'reveal', grantId: id, sessionSub: actor && isEmailish(actor) ? emailSub(actor) : null })
+    return token
+  }
+
+  /**
+   * Keep an existing link's key, pasted by staff, without rotating it (links already sent keep working). False unless
+   * it is that link's current key and the link isn't revoked. `null` forgets a kept key.
+   */
+  async function keepToken(id: string, token: string | null, actor: string | null = null, nowMs = Date.now()): Promise<boolean> {
+    const current = token === null ? (await store.keptToken(id))?.tokenHash : await hashToken(token)
+    if (!current) return token === null
+    const ok = await store.keepToken(id, current, token === null ? null : await sealToken(token, id, tokenSecret))
+    if (ok) {
+      await log({
+        ts: sec(nowMs), event: 'keep', grantId: id, reason: token === null ? 'forget' : null,
+        sessionSub: actor && isEmailish(actor) ? emailSub(actor) : null,
+      })
+    }
+    return ok
   }
 
   /**
@@ -1218,6 +1271,8 @@ export function createGate(opts: GateOptions) {
     mint,
     revoke,
     rotate,
+    revealToken,
+    keepToken,
     disable,
     enable,
     update,

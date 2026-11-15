@@ -67,7 +67,15 @@ export interface UpdateResponse { grant: Grant; allowed?: AllowedForLink }
 export interface GrantsResponse { grants: Grant[] }
 export interface GrantResponse { grant: Grant }
 export interface OkResponse { ok: boolean }
-export interface RotateInput { endSessions?: boolean }
+export interface RotateInput {
+  endSessions?: boolean
+  /** Keep the new key, sealed (default: kept if the old one was). */
+  keepToken?: boolean
+}
+/** `GET /grants/:id/token`: a kept link's key, for staff to copy the link again. */
+export interface TokenResponse { id: string; token: string }
+/** `PUT /grants/:id/token`: keep this link's current key without rotating it. */
+export interface KeepTokenInput { token: string }
 export interface RotateResponse { id: string; token: string }
 export interface GrantListInput { active?: boolean }
 export interface LogInput { grant?: string; limit?: number }
@@ -85,6 +93,9 @@ export interface AuthResponses {
   disable: OkResponse
   enable: OkResponse
   rotate: RotateResponse
+  token: TokenResponse
+  keep: OkResponse
+  forget: OkResponse
   activity: GrantActivity
   log: LogResponse
 }

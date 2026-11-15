@@ -21,3 +21,12 @@ A share link is a bearer token made to be handed to outside people. It already l
 ## What `jobs` will do after this lands
 
 Set `keepTokens: true`, apply the migration, paste Hilary's key into her card; bump the dist.
+
+## Status: done
+
+- Migration `0006_kept_tokens.sql`: `grants.token_enc TEXT`. `Grant.kept` (staff-only) says whether one is kept.
+- Sealing (`src/core/token-vault.ts`): AES-GCM, key from HKDF-SHA-256 over `tokenSecret` (default the gate's `secret`; whoever holds that can already sign a session for any link, so a separate secret adds little, but one can be passed), info `oa-auth kept grant token v1`, the grant id as associated data (a sealed key copied to another row won't open), stored as `v1.<b64u(iv‖ciphertext)>`. The hash stays the lookup path. A key that won't open, or no longer hashes to the row's `token_hash`, reads as not kept.
+- Gate: `keepTokens` (default false) and a mint's `keepToken`; `rotate(id, { keepToken })` keeps the new key if the old one was kept unless told otherwise (the store's rotate clears `token_enc` in the same statement); revoke clears it; `revealToken(id, actor)` logs `reveal`; `keepToken(id, token | null, actor)` keeps a pasted key only if it hashes to the current `token_hash` (checked in the UPDATE's WHERE) and logs `keep` (`reason: 'forget'` for null).
+- Routes: `GET /grants/:id/token` (404 `not kept`), `PUT` with `{ token }` accepting a bare key or a whole link (400 "that isn't this link's current key"), `DELETE`. Same admin and ownership checks as the other grant routes; the list payload never carries a key.
+- Client/UI: `client.grants.token/keepToken/forgetToken`; controller `reveal` (puts the key in the snapshot as `source: 'reveal'`), `keepToken`, `forgetToken`. `GrantsPanel`/`GrantMintForm` `keepTokens`: the mint checkbox offers the non-default choice ("Forget the key after this (it's shown only once)" when kept by default). `GrantCard`: "Show links" plus a "forget key" confirm for a kept key, whose links then render with the scope-row placement from `grant-links-beside-scopes.md` and a "This key is kept (sealed)" note; otherwise the shown-once note with "keep this link's key" (paste the key or the link).
+- Deploys sharing `migrations/` (the broker and the demo) need `db:remote` before their next deploy, as `0006` adds a column the grant queries read.

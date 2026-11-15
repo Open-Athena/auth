@@ -18,6 +18,10 @@ export type AccessEventKind =
   | 'update'
   | 'revoke'
   | 'rotate'
+  /** Staff fetched a kept link key (`gate.revealToken`). */
+  | 'reveal'
+  /** Staff kept an existing link's key (`gate.keepToken`), or forgot it (`reason: 'forget'`). */
+  | 'keep'
   | 'request'
   | 'view'
   | 'signin'
