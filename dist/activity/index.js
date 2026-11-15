@@ -3,7 +3,7 @@
  * `record` never sends network requests; explicitly await `deliver`/`flush`
  * (or pass their promises to waitUntil). A cron/queue may retry `flush`.
  *
- * Limits: no durable job scheduler, throttling, session resumption, admin
+ * Limits: no durable job scheduler, throttling, admin
  * routes, or UI. Policies are captured at ingestion, not retroactive.
  * Dedupe lasts until retention deletes the receipt. Reusing an event ID
  * with changed content is still a duplicate (first accepted write wins).
@@ -11,12 +11,12 @@
  * timeout/crash after a remote create, or a send outliving its lease, may
  * duplicate a message. A stale remote edit may need a later flush to repair.
  */
-import { activityInteger, activityText, checkActivityEvent, checkActivityKind, checkActivityKinds } from './shape.js';
-import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS } from './types.js';
+import { activityInteger, activityText, checkActivityEvent, checkActivityGrouping, checkActivityKind, checkActivityKinds } from './shape.js';
+import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, RESUME_S } from './types.js';
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export { activityRoutes } from './routes.js';
-export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, sessionTag, SLACK_FMT } from './render.js';
 /** Marks a service burst that was judged routine: delivered, with nothing posted. */
 const QUIET = '-';
 /** Why a service burst is notable, by default: a run of errors, any refused request, or a client it hasn't used before. */
@@ -38,7 +38,7 @@ export function activityFeed(options) {
     const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options;
     const defaults = { ...DEFAULT_ACTIVITY_KINDS, ...options.kinds };
     checkActivityKinds(defaults);
-    activityInteger(gapS, 'gap', 1);
+    const grouping = checkActivityGrouping({ gapS, resumeS: options.resumeS ?? RESUME_S, maxSpanS: options.maxSpanS ?? null, by: options.by ?? 'actor' });
     activityInteger(leaseS, 'lease', 1);
     const sinks = [...(options.sinks ?? [])];
     const ids = new Set();
@@ -114,7 +114,7 @@ export function activityFeed(options) {
             if (!policy || policy.record === 'off')
                 return { status: 'off', burstId: null };
             const resumePolicy = Object.hasOwn(configured, 'resume') ? configured.resume : undefined;
-            return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), gapS);
+            return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), grouping);
         },
         async deliver(burstId) {
             const results = [];

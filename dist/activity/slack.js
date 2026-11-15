@@ -1,5 +1,5 @@
 import { activityText } from './shape.js';
-import { bound, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
+import { bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
 /** Slack's error codes are short fixed strings (`not_in_channel`); anything else is left out of logs. */
 function slackErrorCode(error) {
     return typeof error === 'string' && /^[a-z_]{1,64}$/.test(error) ? ` (${error})` : '';
@@ -20,7 +20,9 @@ export function slackActivitySink(options) {
         ...(options.eventHref ? { eventHref: options.eventHref } : {}),
         ...(options.sessionHref ? { sessionHref: options.sessionHref } : {}),
         ...(options.burstHref ? { burstHref: options.burstHref } : {}),
+        ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     };
+    checkTimeZone(options.timeZone);
     async function call(method, body) {
         const response = await (options.fetch ?? fetch)(`https://slack.com/api/${method}`, {
             method: 'POST',
