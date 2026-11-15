@@ -1,5 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useState } from 'react';
+import { shareKey } from '../client/api.js';
 import { pseudonym } from '../client/identity.js';
 import { Avatar } from './Avatar.js';
 import { AvatarField } from './AvatarField.js';
@@ -46,24 +47,40 @@ const ago = (ts) => {
  * details, never the admin's own, and `autoComplete="off"` doesn't stop them.
  */
 export const NO_AUTOFILL = { autoComplete: 'off', 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' };
-/**
- * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy,
- * and say it won't come back.
- */
-export function GrantLink({ grant, token, buildLink, onDismiss, labels = {}, classNames }) {
-    const cx = { ...DEFAULT_CLASSES, ...classNames };
-    /** Which copy last succeeded (a row's index, or `all`), or that one failed. */
-    const [copy, setCopy] = useState('idle');
-    const built = buildLink(grant, token);
-    const entries = typeof built === 'string' ? [{ label: null, url: built }] : built.map(e => ({ ...e }));
-    const copyText = async (text, which) => {
-        const ok = await navigator.clipboard.writeText(text).then(() => true, () => false);
-        setCopy(ok ? { copied: which } : 'failed');
-        if (ok)
-            setTimeout(() => setCopy(c => (typeof c === 'object' && c.copied === which ? 'idle' : c)), 1500);
+/** A link's entries, normalized: a bare string is one unlabeled entry. */
+const linkEntries = (built) => typeof built === 'string' ? [{ label: null, url: built }] : built.map(e => ({ ...e }));
+/** Clipboard writes with a brief "Copied" on whichever button did it, and a failure flag. */
+function useCopy() {
+    const [state, setState] = useState('idle');
+    return {
+        failed: state === 'failed',
+        copied: (id) => typeof state === 'object' && state.copied === id,
+        async copy(text, id) {
+            const ok = await navigator.clipboard.writeText(text).then(() => true, () => false);
+            setState(ok ? { copied: id } : 'failed');
+            if (ok)
+                setTimeout(() => setState(c => (typeof c === 'object' && c.copied === id ? 'idle' : c)), 1500);
+        },
     };
-    const copied = (which) => typeof copy === 'object' && copy.copied === which;
-    return (_jsxs("div", { className: cx.token, children: [_jsx("p", { className: cx.muted, children: labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again." }), entries.map(({ label, url }, i) => (_jsxs("div", { className: cx.copyRow, children: [label !== null && _jsx("span", { children: label }), _jsx("input", { className: cx.input, readOnly: true, value: url, "aria-label": label ?? 'Share link', onFocus: e => e.currentTarget.select() }), _jsx("button", { className: cx.button, type: "button", onClick: () => void copyText(url, i), children: copied(i) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy') }), onDismiss && entries.length === 1 && (_jsx("button", { className: cx.button, type: "button", onClick: onDismiss, children: labels.dismiss ?? 'Done' }))] }, i))), entries.length > 1 && (_jsxs("div", { className: cx.row, children: [_jsx("button", { className: cx.button, type: "button", onClick: () => void copyText(entries.map(e => `${e.label}: ${e.url}`).join('\n'), 'all'), children: copied('all') ? (labels.copied ?? 'Copied') : (labels.copyAll ?? 'Copy all') }), onDismiss && (_jsx("button", { className: cx.button, type: "button", onClick: onDismiss, children: labels.dismiss ?? 'Done' }))] })), copy === 'failed' && (_jsx("p", { className: cx.error, role: "alert", children: labels.copyFailed ?? "Couldn't reach the clipboard. Select the link and copy it by hand." }))] }));
+}
+/**
+ * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy
+ * of each, of all of them, and of just the key, and say it won't come back.
+ */
+export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = false, onDismiss, labels = {}, classNames }) {
+    const cx = { ...DEFAULT_CLASSES, ...classNames };
+    const clip = useCopy();
+    const all = linkEntries(buildLink(grant, token));
+    const shown = all.filter(e => !(e.scope !== undefined && omitScopes.includes(e.scope)));
+    const key = shareKey(token);
+    const copyLabel = (id, idle) => (clip.copied(id) ? (labels.copied ?? 'Copied') : idle);
+    return (_jsxs("div", { className: cx.token, children: [_jsx("p", { className: cx.muted, children: kept
+                    ? (labels.keptWarning ?? 'This key is kept (sealed): Show links brings these back.')
+                    : (labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again.") }), shown.map(({ label, url }) => (_jsxs("div", { className: cx.copyRow, children: [label !== null && _jsx("span", { children: label }), _jsx("input", { className: cx.input, readOnly: true, value: url, "aria-label": label ?? 'Share link', onFocus: e => e.currentTarget.select() }), _jsx("button", { className: cx.button, type: "button", onClick: () => void clip.copy(url, url), children: copyLabel(url, labels.copy ?? 'Copy') })] }, url))), _jsxs("div", { className: cx.row, children: [_jsx("button", { className: cx.button, type: "button", onClick: () => void clip.copy(key, 'key'), children: copyLabel('key', labels.copyKey ?? 'Copy key') }), all.length > 1 && (_jsx("button", { className: cx.button, type: "button", onClick: () => void clip.copy([...all.map(e => `${e.label}: ${e.url}`), `Key: ${key}`].join('\n'), 'all'), children: copyLabel('all', labels.copyAll ?? 'Copy all') })), onDismiss && (_jsx("button", { className: cx.button, type: "button", onClick: onDismiss, children: labels.dismiss ?? 'Done' }))] }), clip.failed && (_jsx("p", { className: cx.error, role: "alert", children: labels.copyFailed ?? "Couldn't reach the clipboard. Select the link and copy it by hand." }))] }));
+}
+/** A scope row's own link, while the token is on screen. */
+function ScopeLink({ label, url, clip, cx, labels }) {
+    return (_jsxs("span", { className: cx.copyRow, children: [_jsx("input", { className: cx.input, readOnly: true, value: url, "aria-label": `${typeof label === 'string' ? label : 'Scope'} link`, onFocus: e => e.currentTarget.select() }), _jsx("button", { className: cx.button, type: "button", onClick: () => void clip.copy(url, url), children: clip.copied(url) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy') })] }));
 }
 const DAY_S = 86400;
 const ANON_COPY = {
@@ -72,7 +89,7 @@ const ANON_COPY = {
     hidden: 'Anonymous: the recipient sees no name, photo or account menu',
 };
 const resolveMemo = (memo) => (typeof memo === 'function' ? memo() : (memo ?? ''));
-export function GrantMintForm({ scopes, onMint, busy = false, error, defaultMemo, expiryDays = [0, 1, 7, 30], defaultExpiryDays = 30, maxRedeems = [0, 1, 3], allowlist = false, avatarEndpoint, anonChip = 'label', labels = {}, classNames, }) {
+export function GrantMintForm({ scopes, onMint, busy = false, error, defaultMemo, expiryDays = [0, 1, 7, 30], defaultExpiryDays = 30, maxRedeems = [0, 1, 3], allowlist = false, avatarEndpoint, anonChip = 'label', keepTokens = false, labels = {}, classNames, }) {
     const cx = { ...DEFAULT_CLASSES, ...classNames };
     const [memo, setMemo] = useState(() => resolveMemo(defaultMemo));
     const [holder, setHolder] = useState('');
@@ -84,6 +101,8 @@ export function GrantMintForm({ scopes, onMint, busy = false, error, defaultMemo
     const [max, setMax] = useState(0);
     const [noScope, setNoScope] = useState(false);
     const [anon, setAnon] = useState(false);
+    /** The non-default choice: forget (when keys are kept by default) or keep (when they aren't). */
+    const [otherKeep, setOtherKeep] = useState(false);
     const [service, setService] = useState(false);
     async function submit(e) {
         e.preventDefault();
@@ -109,6 +128,7 @@ export function GrantMintForm({ scopes, onMint, busy = false, error, defaultMemo
             expiresInS: days > 0 ? days * DAY_S : null,
             ...(anon ? { anon: true } : {}),
             ...(service ? { service: true } : {}),
+            keepToken: keepTokens !== otherKeep,
         };
         if (await onMint(input)) {
             setMemo(resolveMemo(defaultMemo));
@@ -117,9 +137,12 @@ export function GrantMintForm({ scopes, onMint, busy = false, error, defaultMemo
             setAvatar(null);
             setAnon(false);
             setService(false);
+            setOtherKeep(false);
         }
     }
-    return (_jsxs("form", { className: cx.form, onSubmit: submit, children: [_jsxs("label", { children: [_jsx("span", { children: labels.memo ?? 'Memo' }), _jsx("input", { className: cx.input, name: "memo", value: memo, onChange: e => setMemo(e.target.value), ...NO_AUTOFILL, placeholder: "private: never shown to the recipient" })] }), _jsxs("label", { children: [_jsx("span", { children: labels.holder ?? 'Holder' }), _jsx("input", { className: cx.input, name: "holder", value: holder, onChange: e => setHolder(e.target.value), ...NO_AUTOFILL })] }), _jsxs("label", { children: [_jsx("span", { children: labels.email ?? 'Email' }), _jsx("input", { className: cx.input, name: "email", type: "email", value: service ? '' : email, disabled: service, onChange: e => setEmail(e.target.value), ...NO_AUTOFILL })] }), allowlist && !service && (_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", checked: allow, onChange: e => setAllow(e.target.checked) }), _jsx("span", { children: labels.allowlist ?? 'Also let this email sign in' })] })), avatarEndpoint && (_jsxs("div", { className: cx.avatarField, children: [_jsx("label", { htmlFor: "oa-grant-avatar", children: labels.avatar ?? 'Face' }), _jsx(AvatarField, { id: "oa-grant-avatar", endpoint: avatarEndpoint, value: avatar, onChange: setAvatar, email: email, name: holder.trim() || null, size: 36, ...(classNames?.avatar ? { classNames: classNames.avatar } : {}) })] })), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "anon", checked: anon, onChange: e => setAnon(e.target.checked) }), _jsx("span", { children: labels.anon ?? ANON_COPY[anonChip] })] }), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "service", checked: service, onChange: e => setService(e.target.checked) }), _jsx("span", { children: labels.service ?? 'Service account: for a job, not a person (no email)' })] }), _jsxs("fieldset", { children: [_jsx("legend", { children: labels.scopes ?? 'Opens' }), scopes.map(scope => (_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", checked: chosen.has(scope.id), onChange: e => {
+    return (_jsxs("form", { className: cx.form, onSubmit: submit, children: [_jsxs("label", { children: [_jsx("span", { children: labels.memo ?? 'Memo' }), _jsx("input", { className: cx.input, name: "memo", value: memo, onChange: e => setMemo(e.target.value), ...NO_AUTOFILL, placeholder: "private: never shown to the recipient" })] }), _jsxs("label", { children: [_jsx("span", { children: labels.holder ?? 'Holder' }), _jsx("input", { className: cx.input, name: "holder", value: holder, onChange: e => setHolder(e.target.value), ...NO_AUTOFILL })] }), _jsxs("label", { children: [_jsx("span", { children: labels.email ?? 'Email' }), _jsx("input", { className: cx.input, name: "email", type: "email", value: service ? '' : email, disabled: service, onChange: e => setEmail(e.target.value), ...NO_AUTOFILL })] }), allowlist && !service && (_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", checked: allow, onChange: e => setAllow(e.target.checked) }), _jsx("span", { children: labels.allowlist ?? 'Also let this email sign in' })] })), avatarEndpoint && (_jsxs("div", { className: cx.avatarField, children: [_jsx("label", { htmlFor: "oa-grant-avatar", children: labels.avatar ?? 'Face' }), _jsx(AvatarField, { id: "oa-grant-avatar", endpoint: avatarEndpoint, value: avatar, onChange: setAvatar, email: email, name: holder.trim() || null, size: 36, ...(classNames?.avatar ? { classNames: classNames.avatar } : {}) })] })), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "anon", checked: anon, onChange: e => setAnon(e.target.checked) }), _jsx("span", { children: labels.anon ?? ANON_COPY[anonChip] })] }), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "service", checked: service, onChange: e => setService(e.target.checked) }), _jsx("span", { children: labels.service ?? 'Service account: for a job, not a person (no email)' })] }), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "keep", checked: otherKeep, onChange: e => setOtherKeep(e.target.checked) }), _jsx("span", { children: keepTokens
+                            ? (labels.forgetKey ?? "Forget the key after this (it's shown only once)")
+                            : (labels.keepKey ?? 'Keep the key (sealed), so staff can copy this link again') })] }), _jsxs("fieldset", { children: [_jsx("legend", { children: labels.scopes ?? 'Opens' }), scopes.map(scope => (_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", checked: chosen.has(scope.id), onChange: e => {
                                     const next = new Set(chosen);
                                     if (e.target.checked)
                                         next.add(scope.id);
@@ -139,12 +162,24 @@ function ConfirmButton({ className, disabled, label, confirm, onConfirm, }) {
         }, children: armed ? confirm : label }));
 }
 /** The offered scopes, then any on the link no longer offered. The last one checked can't be unchecked. */
-function ScopeChecks({ grant, grants, scopes, busy, className }) {
+function ScopeChecks({ grant, grants, scopes, busy, className, link }) {
     const listed = [...scopes.map(s => s.id), ...grant.scopes.filter(id => !scopes.some(s => s.id === id))];
     return (_jsx(_Fragment, { children: listed.map(id => {
             const on = grant.scopes.includes(id);
-            return (_jsxs("label", { className: className, children: [_jsx("input", { type: "checkbox", checked: on, disabled: busy || (on && grant.scopes.length === 1), onChange: () => void grants.update(grant.id, { scopes: listed.filter(s => (s === id ? !on : grant.scopes.includes(s))) }) }), _jsx("span", { children: scopes.find(s => s.id === id)?.label ?? id })] }, id));
+            return (_jsxs("label", { className: className, children: [_jsx("input", { type: "checkbox", checked: on, disabled: busy || (on && grant.scopes.length === 1), onChange: () => void grants.update(grant.id, { scopes: listed.filter(s => (s === id ? !on : grant.scopes.includes(s))) }) }), _jsx("span", { children: scopes.find(s => s.id === id)?.label ?? id }), on && link(id, scopes.find(s => s.id === id)?.label ?? id)] }, id));
         }) }));
+}
+/** A link whose key isn't kept: the shown-once note, and a way to keep it by pasting the key (links already sent keep working). */
+function KeepExisting({ grant, grants, busy, labels, cx }) {
+    const [open, setOpen] = useState(false);
+    const [key, setKey] = useState('');
+    return (_jsxs(_Fragment, { children: [_jsxs("p", { className: cx.muted, children: [labels.lostToken ?? 'Link shown once at mint. Rotate it for a fresh one if you lost it.', ' ', !open && (_jsx("button", { className: cx.linkish, type: "button", onClick: () => setOpen(true), children: labels.keepExisting ?? "keep this link's key" }))] }), open && (_jsxs("form", { className: cx.row, onSubmit: async (e) => {
+                    e.preventDefault();
+                    if (await grants.keepToken(grant.id, key.trim())) {
+                        setKey('');
+                        setOpen(false);
+                    }
+                }, children: [_jsx("input", { className: cx.input, name: "key", value: key, onChange: e => setKey(e.target.value), placeholder: typeof labels.keepExistingHint === 'string' ? labels.keepExistingHint : 'its key, or the whole link', "aria-label": "This link's key", ...NO_AUTOFILL }), _jsx("button", { className: cx.button, type: "submit", disabled: busy || !key.trim(), children: labels.keepExistingSave ?? 'Keep' }), _jsx("button", { className: cx.button, type: "button", onClick: () => setOpen(false), children: labels.cancel ?? 'Cancel' })] }))] }));
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
 export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', labels = {}, classNames }) {
@@ -161,15 +196,27 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
     const disabled = grant.disabledAt !== null;
     const expired = grant.expiresAt !== null && grant.expiresAt * 1000 < Date.now();
     const token = grants.token?.grantId === grant.id ? grants.token.token : null;
+    const clip = useCopy();
+    // Re-run on every render, so a scope checked while the token is on screen gets its link, and an unchecked one loses it.
+    const scoped = new Map((token ? linkEntries(buildLink(grant, token)) : [])
+        .filter((e) => e.scope !== undefined && grant.scopes.includes(e.scope))
+        .map(e => [e.scope, e.url]));
+    const scopeLink = (id, label) => {
+        const url = scoped.get(id);
+        return url ? _jsx(ScopeLink, { label: label, url: url, clip: clip, cx: cx, labels: labels }) : null;
+    };
     const holder = grant.subject?.name || grant.subject?.email || grant.email;
     // 1–3 redemptions is one person on their phone, laptop and work machine. Many
     // more, especially across countries, is the forwarding signal: a soft badge,
     // deliberately not an alarm.
     const spread = (activity?.distinctIps ?? 0) > 3 || (activity?.countries.length ?? 0) > 2;
     const failed = grants.error?.grantId === grant.id && grants.error.action !== 'activity' ? grants.error.message : null;
-    return (_jsxs("article", { className: revoked ? cx.cardRevoked : cx.card, "data-grant": grant.id, children: [_jsxs("header", { className: cx.cardHead, children: [_jsxs("h3", { children: [grant.name ?? labels.noMemo ?? 'No memo', grant.anon && _jsxs(_Fragment, { children: [" ", _jsx("span", { className: cx.tag, title: pseudonym(grant.id), children: labels.anon ?? 'anon' })] }), grant.service && _jsxs(_Fragment, { children: [" ", _jsx("span", { className: cx.tag, children: labels.service ?? 'service' })] })] }), revoked ? (_jsx("span", { className: cx.tagDead, children: labels.revoked ?? 'revoked' })) : expired ? (_jsx("span", { className: cx.tagDead, children: labels.expired ?? 'expired' })) : (_jsxs("div", { className: cx.row, children: [disabled ? (_jsx("button", { className: cx.button, type: "button", disabled: busy, onClick: () => void grants.enable(grant.id), children: labels.enable ?? 'Enable' })) : (_jsx("button", { className: cx.button, type: "button", disabled: busy, onClick: () => void grants.disable(grant.id), children: labels.disable ?? 'Disable' })), _jsx(ConfirmButton, { className: cx.button, disabled: busy, label: labels.rotate ?? 'Rotate', confirm: labels.rotateConfirm ?? 'Kill the old link?', onConfirm: () => void grants.rotate(grant.id) }), _jsx(ConfirmButton, { className: cx.danger, disabled: busy, label: labels.revoke ?? 'Revoke', confirm: labels.revokeConfirm ?? 'End every session?', onConfirm: () => void grants.revoke(grant.id) })] }))] }), disabled && !revoked && (_jsxs("p", { className: cx.muted, children: [_jsx("span", { className: cx.tag, children: labels.disabled ?? 'disabled' }), ' ', labels.disabledNote ?? 'No new redemptions; anyone already in stays in.'] })), editing ? (_jsx(HolderEditor, { grant: grant, grants: grants, allowlist: allowlist, avatarEndpoint: avatarEndpoint, labels: labels, classNames: classNames, onDone: () => setEditing(false), ...(onHolderSaved ? { onSaved: onHolderSaved } : {}) })) : ((grant.subject || !revoked) && (_jsxs("p", { className: cx.holder, children: [grant.subject?.avatar && _jsx(Avatar, { src: grant.subject.avatar, name: holder, size: 20 }), " for ", holder ?? labels.someone ?? 'someone', !revoked && (_jsxs(_Fragment, { children: [' ', _jsx("button", { className: cx.linkish, type: "button", onClick: () => setEditing(true), children: labels.edit ?? 'edit' })] }))] }))), _jsxs("dl", { className: cx.facts, children: [_jsxs("div", { children: [_jsx("dt", { children: "scopes" }), _jsx("dd", { children: editScopes && !revoked ? (_jsx(ScopeChecks, { grant: grant, grants: grants, scopes: scopes, busy: busy, className: cx.check })) : (grant.scopes.map((id, i) => (_jsxs("span", { children: [i > 0 && ', ', scopes.find(s => s.id === id)?.label ?? id] }, id)))) })] }), _jsxs("div", { children: [_jsx("dt", { children: "redemptions" }), _jsxs("dd", { children: [grant.redeems, grant.maxRedeems !== null && ` / ${grant.maxRedeems}`] })] }), _jsxs("div", { children: [_jsx("dt", { children: "views" }), _jsx("dd", { children: activity?.views ?? 0 })] }), _jsxs("div", { children: [_jsx("dt", { children: "distinct clients" }), _jsxs("dd", { children: [activity?.distinctIps ?? 0, " ", spread && _jsx("span", { className: cx.tag, children: labels.widelyOpened ?? 'widely opened' })] })] }), _jsxs("div", { children: [_jsx("dt", { children: "last seen" }), _jsx("dd", { children: ago(grant.lastUsedAt) })] }), _jsxs("div", { children: [_jsx("dt", { children: "expires" }), _jsx("dd", { children: grant.expiresAt === null ? 'never' : new Date(grant.expiresAt * 1000).toLocaleDateString() })] })] }), !revoked && (_jsxs("div", { className: cx.row, children: [_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "anon", checked: grant.anon, disabled: busy, onChange: () => void grants.update(grant.id, { anon: !grant.anon }) }), _jsx("span", { children: labels.anonToggle ?? ANON_COPY[anonChip] })] }), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "service", checked: grant.service, 
+    return (_jsxs("article", { className: revoked ? cx.cardRevoked : cx.card, "data-grant": grant.id, children: [_jsxs("header", { className: cx.cardHead, children: [_jsxs("h3", { children: [grant.name ?? labels.noMemo ?? 'No memo', grant.anon && _jsxs(_Fragment, { children: [" ", _jsx("span", { className: cx.tag, title: pseudonym(grant.id), children: labels.anon ?? 'anon' })] }), grant.service && _jsxs(_Fragment, { children: [" ", _jsx("span", { className: cx.tag, children: labels.service ?? 'service' })] })] }), revoked ? (_jsx("span", { className: cx.tagDead, children: labels.revoked ?? 'revoked' })) : expired ? (_jsx("span", { className: cx.tagDead, children: labels.expired ?? 'expired' })) : (_jsxs("div", { className: cx.row, children: [disabled ? (_jsx("button", { className: cx.button, type: "button", disabled: busy, onClick: () => void grants.enable(grant.id), children: labels.enable ?? 'Enable' })) : (_jsx("button", { className: cx.button, type: "button", disabled: busy, onClick: () => void grants.disable(grant.id), children: labels.disable ?? 'Disable' })), _jsx(ConfirmButton, { className: cx.button, disabled: busy, label: labels.rotate ?? 'Rotate', confirm: labels.rotateConfirm ?? 'Kill the old link?', onConfirm: () => void grants.rotate(grant.id) }), _jsx(ConfirmButton, { className: cx.danger, disabled: busy, label: labels.revoke ?? 'Revoke', confirm: labels.revokeConfirm ?? 'End every session?', onConfirm: () => void grants.revoke(grant.id) })] }))] }), disabled && !revoked && (_jsxs("p", { className: cx.muted, children: [_jsx("span", { className: cx.tag, children: labels.disabled ?? 'disabled' }), ' ', labels.disabledNote ?? 'No new redemptions; anyone already in stays in.'] })), editing ? (_jsx(HolderEditor, { grant: grant, grants: grants, allowlist: allowlist, avatarEndpoint: avatarEndpoint, labels: labels, classNames: classNames, onDone: () => setEditing(false), ...(onHolderSaved ? { onSaved: onHolderSaved } : {}) })) : ((grant.subject || !revoked) && (_jsxs("p", { className: cx.holder, children: [grant.subject?.avatar && _jsx(Avatar, { src: grant.subject.avatar, name: holder, size: 20 }), " for ", holder ?? labels.someone ?? 'someone', !revoked && (_jsxs(_Fragment, { children: [' ', _jsx("button", { className: cx.linkish, type: "button", onClick: () => setEditing(true), children: labels.edit ?? 'edit' })] }))] }))), _jsxs("dl", { className: cx.facts, children: [_jsxs("div", { children: [_jsx("dt", { children: "scopes" }), _jsx("dd", { children: editScopes && !revoked ? (_jsx(ScopeChecks, { grant: grant, grants: grants, scopes: scopes, busy: busy, className: cx.check, link: scopeLink })) : scoped.size ? (grant.scopes.map(id => {
+                                    const label = scopes.find(s => s.id === id)?.label ?? id;
+                                    return (_jsxs("div", { className: cx.check, children: [_jsx("span", { children: label }), scopeLink(id, label)] }, id));
+                                })) : (grant.scopes.map((id, i) => (_jsxs("span", { children: [i > 0 && ', ', scopes.find(s => s.id === id)?.label ?? id] }, id)))) })] }), _jsxs("div", { children: [_jsx("dt", { children: "redemptions" }), _jsxs("dd", { children: [grant.redeems, grant.maxRedeems !== null && ` / ${grant.maxRedeems}`] })] }), _jsxs("div", { children: [_jsx("dt", { children: "views" }), _jsx("dd", { children: activity?.views ?? 0 })] }), _jsxs("div", { children: [_jsx("dt", { children: "distinct clients" }), _jsxs("dd", { children: [activity?.distinctIps ?? 0, " ", spread && _jsx("span", { className: cx.tag, children: labels.widelyOpened ?? 'widely opened' })] })] }), _jsxs("div", { children: [_jsx("dt", { children: "last seen" }), _jsx("dd", { children: ago(grant.lastUsedAt) })] }), _jsxs("div", { children: [_jsx("dt", { children: "expires" }), _jsx("dd", { children: grant.expiresAt === null ? 'never' : new Date(grant.expiresAt * 1000).toLocaleDateString() })] })] }), !revoked && (_jsxs("div", { className: cx.row, children: [_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "anon", checked: grant.anon, disabled: busy, onChange: () => void grants.update(grant.id, { anon: !grant.anon }) }), _jsx("span", { children: labels.anonToggle ?? ANON_COPY[anonChip] })] }), _jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", name: "service", checked: grant.service, 
                                 // A link bound to an email is a person's; unbind it first.
-                                disabled: busy || (!grant.service && grant.email !== null), onChange: () => void grants.update(grant.id, { service: !grant.service }) }), _jsx("span", { children: labels.serviceToggle ?? 'Service account' })] })] })), editScopes && allowlist && !revoked && grant.email && (_jsx("p", { className: cx.muted, children: labels.allowlistKeepsScopes ?? `This doesn't change what ${grant.email} gets by signing in, if they're on the allowlist.` })), activity && activity.topPaths.length > 0 && (_jsxs("p", { className: cx.muted, children: ["mostly ", activity.topPaths.map(p => `${p.path} (${p.views})`).join(', '), activity.countries.length > 0 && ` · from ${activity.countries.join(', ')}`] })), failed && (_jsx("p", { className: cx.error, role: "alert", children: failed })), token ? (_jsx(GrantLink, { grant: grant, token: token, buildLink: buildLink, onDismiss: grants.dismissToken, labels: labels, classNames: classNames })) : (!revoked && _jsx("p", { className: cx.muted, children: labels.lostToken ?? 'Link shown once at mint. Rotate it for a fresh one if you lost it.' }))] }));
+                                disabled: busy || (!grant.service && grant.email !== null), onChange: () => void grants.update(grant.id, { service: !grant.service }) }), _jsx("span", { children: labels.serviceToggle ?? 'Service account' })] })] })), editScopes && allowlist && !revoked && grant.email && (_jsx("p", { className: cx.muted, children: labels.allowlistKeepsScopes ?? `This doesn't change what ${grant.email} gets by signing in, if they're on the allowlist.` })), activity && activity.topPaths.length > 0 && (_jsxs("p", { className: cx.muted, children: ["mostly ", activity.topPaths.map(p => `${p.path} (${p.views})`).join(', '), activity.countries.length > 0 && ` · from ${activity.countries.join(', ')}`] })), failed && (_jsx("p", { className: cx.error, role: "alert", children: failed })), token ? (_jsx(GrantLink, { grant: grant, token: token, buildLink: buildLink, omitScopes: [...scoped.keys()], kept: grant.kept, onDismiss: grants.dismissToken, labels: labels, classNames: classNames })) : revoked ? null : grant.kept ? (_jsxs("div", { className: cx.row, children: [_jsx("button", { className: cx.button, type: "button", disabled: busy, onClick: () => void grants.reveal(grant.id), children: labels.showLinks ?? 'Show links' }), _jsx("span", { className: cx.muted, children: labels.keptNote ?? 'Its key is kept, sealed; each look is logged.' }), _jsx(ConfirmButton, { className: cx.linkish, disabled: busy, label: labels.forgetKept ?? 'forget key', confirm: labels.forgetKeptConfirm ?? 'Only rotating brings it back. Forget?', onConfirm: () => void grants.forgetToken(grant.id) })] })) : (_jsx(KeepExisting, { grant: grant, grants: grants, busy: busy, labels: labels, cx: cx }))] }));
 }
 /**
  * Rename the link's holder or change their face after minting; a link minted
@@ -199,7 +246,7 @@ function HolderEditor({ grant, grants, allowlist, avatarEndpoint, labels, classN
         }, children: [_jsxs("label", { children: [_jsx("span", { children: l.holderName ?? "Holder's name" }), _jsx("input", { className: cx.input, type: "text", value: name, onChange: e => setName(e.target.value), autoFocus: true, ...NO_AUTOFILL })] }), grant.email === null && !grant.service && (_jsxs("label", { children: [_jsx("span", { children: l.holderEmail ?? 'Their email' }), _jsx("input", { className: cx.input, type: "email", value: email, placeholder: "optional", onChange: e => setEmail(e.target.value), ...NO_AUTOFILL })] })), bind && allowlist && (_jsxs("label", { className: cx.check, children: [_jsx("input", { type: "checkbox", checked: allow, onChange: e => setAllow(e.target.checked) }), _jsx("span", { children: l.allowlist ?? 'Also let this email sign in' })] })), avatarEndpoint && (_jsxs("div", { className: cx.avatarField, children: [_jsx("span", { children: l.face ?? 'Face' }), _jsx(AvatarField, { id: `oa-holder-avatar-${grant.id}`, endpoint: avatarEndpoint, value: avatar === undefined ? (grant.subject?.avatar ?? null) : avatar, onChange: setAvatar, email: grant.email, autoGravatar: false, name: name.trim() || null, size: 36, ...(classNames?.avatar ? { classNames: classNames.avatar } : {}) })] })), _jsxs("div", { className: cx.row, children: [_jsx("button", { className: cx.button, type: "submit", disabled: grants.pending[grant.id] !== undefined, children: l.save ?? 'Save' }), _jsx("button", { className: cx.button, type: "button", onClick: onDone, children: l.cancel ?? 'Cancel' })] })] }));
 }
 /** A mint form over the list of links, composed from the exported parts. */
-export function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading = 'Mint a share link', listHeading = 'Share links', emptyLabel = 'None yet.', labels, cardLabels, editScopes = false, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, }) {
+export function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading = 'Mint a share link', listHeading = 'Share links', emptyLabel = 'None yet.', labels, cardLabels, editScopes = false, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, keepTokens, }) {
     const cx = { ...DEFAULT_CLASSES, ...classNames };
     const grants = useGrants(controller ? { controller, pollMs } : { client: client, pollMs });
     const listFailed = grants.error?.action === 'refresh' ? grants.error.message : null;
@@ -210,5 +257,5 @@ export function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onM
                                 onChanged?.();
                             }
                             return grant;
-                        }, labels: labels, classNames: classNames, ...(defaultMemo === undefined ? {} : { defaultMemo }), ...(expiryDays === undefined ? {} : { expiryDays }), ...(defaultExpiryDays === undefined ? {} : { defaultExpiryDays }), ...(maxRedeems === undefined ? {} : { maxRedeems }), ...(allowlist === undefined ? {} : { allowlist }), ...(avatarEndpoint === undefined ? {} : { avatarEndpoint }), ...(anonChip === undefined ? {} : { anonChip }) })] }), _jsxs("section", { className: classNames?.section, children: [_jsx("h2", { children: listHeading }), listIntro, listFailed && (_jsx("p", { className: cx.error, role: "alert", children: listFailed })), !grants.loaded && grants.loading && _jsx("p", { className: cx.muted, children: "Loading\u2026" }), grants.loaded && grants.grants.length === 0 && _jsx("p", { className: cx.muted, children: emptyLabel }), _jsx("div", { className: cx.list, children: grants.grants.map(grant => (_jsx(GrantCard, { grant: grant, grants: grants, scopes: scopes, editScopes: editScopes, buildLink: buildLink, allowlist: allowlist ?? false, labels: cardLabels, classNames: classNames, ...(onChanged ? { onHolderSaved: onChanged } : {}), ...(avatarEndpoint === undefined ? {} : { avatarEndpoint }), ...(anonChip === undefined ? {} : { anonChip }) }, grant.id))) })] })] }));
+                        }, labels: labels, classNames: classNames, ...(defaultMemo === undefined ? {} : { defaultMemo }), ...(expiryDays === undefined ? {} : { expiryDays }), ...(defaultExpiryDays === undefined ? {} : { defaultExpiryDays }), ...(maxRedeems === undefined ? {} : { maxRedeems }), ...(allowlist === undefined ? {} : { allowlist }), ...(avatarEndpoint === undefined ? {} : { avatarEndpoint }), ...(anonChip === undefined ? {} : { anonChip }), ...(keepTokens === undefined ? {} : { keepTokens }) })] }), _jsxs("section", { className: classNames?.section, children: [_jsx("h2", { children: listHeading }), listIntro, listFailed && (_jsx("p", { className: cx.error, role: "alert", children: listFailed })), !grants.loaded && grants.loading && _jsx("p", { className: cx.muted, children: "Loading\u2026" }), grants.loaded && grants.grants.length === 0 && _jsx("p", { className: cx.muted, children: emptyLabel }), _jsx("div", { className: cx.list, children: grants.grants.map(grant => (_jsx(GrantCard, { grant: grant, grants: grants, scopes: scopes, editScopes: editScopes, buildLink: buildLink, allowlist: allowlist ?? false, labels: cardLabels, classNames: classNames, ...(onChanged ? { onHolderSaved: onChanged } : {}), ...(avatarEndpoint === undefined ? {} : { avatarEndpoint }), ...(anonChip === undefined ? {} : { anonChip }) }, grant.id))) })] })] }));
 }

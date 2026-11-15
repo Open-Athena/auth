@@ -1,4 +1,4 @@
-export { AuthClientError, createAuthClient, shareUrl } from './api.js';
+export { AuthClientError, createAuthClient, shareKey, shareUrl } from './api.js';
 export { createGrantsController } from './grants.js';
 export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope, pseudonym } from './identity.js';
 export { exchangeKeyParam, hasKeyParam } from './exchange.js';

@@ -55,6 +55,16 @@ export interface GrantStore {
      * revoked (revocation is terminal); returns the updated grant, or null.
      */
     rotate(id: string, newTokenHash: string, sessionsInvalidBefore: number | null): Promise<Grant | null>;
+    /** The sealed kept key and the current hash, or null when none is kept. `rotate` and `revoke` clear it. */
+    keptToken(id: string): Promise<{
+        tokenEnc: string;
+        tokenHash: string;
+    } | null>;
+    /**
+     * Keep (or with null, forget) a grant's sealed key, only while `tokenHash` is still its hash and it isn't revoked,
+     * so a key from before a rotation can't be kept. Returns whether it changed the row.
+     */
+    keepToken(id: string, tokenHash: string, tokenEnc: string | null): Promise<boolean>;
     list(opts?: GrantListOpts): Promise<Grant[]>;
 }
 export interface RequestListOpts {

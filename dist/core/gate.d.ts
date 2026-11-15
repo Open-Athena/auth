@@ -24,6 +24,17 @@ export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
     secret: string;
+    /**
+     * Keep each new link's key, sealed, so staff can copy it again (a mint's `keepToken` overrides). Default false: a
+     * key is shown once. Kept keys are sealed under a key derived from `tokenSecret`.
+     */
+    keepTokens?: boolean;
+    /**
+     * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
+     * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
+     * not kept until kept again or rotated).
+     */
+    tokenSecret?: string;
     /** Which SSO identities are allowed, and what scopes they get. Default: admins only. */
     policy?: EmailPolicy;
     /** Always allowed, always `*`. Checked ahead of `policy`. */
@@ -292,9 +303,12 @@ export declare function createGate(opts: GateOptions): {
     } | null;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
-    rotate: (id: string, { endSessions }?: {
+    rotate: (id: string, { endSessions, keepToken }?: {
         endSessions?: boolean;
+        keepToken?: boolean;
     }, nowMs?: number) => Promise<MintResult | null>;
+    revealToken: (id: string, actor?: string | null, nowMs?: number) => Promise<string | null>;
+    keepToken: (id: string, token: string | null, actor?: string | null, nowMs?: number) => Promise<boolean>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
     update: (id: string, edit: GrantEdit, nowMs?: number, alsoLogged?: string[]) => Promise<Grant | null>;

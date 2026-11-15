@@ -2,9 +2,13 @@ import { generateId } from '../core/tokens.js';
 export function memoryGrantStore() {
     const rows = new Map();
     const hashes = new Map();
+    const sealed = new Map();
+    const hashOf = (id) => [...hashes].find(([, gid]) => gid === id)?.[0] ?? null;
+    const withKept = (g) => ({ ...g, kept: sealed.has(g.id) });
     return {
         rows,
         hashes,
+        sealed,
         async byId(id) {
             return rows.get(id) ?? null;
         },
@@ -45,7 +49,8 @@ export function memoryGrantStore() {
             const g = rows.get(id);
             if (!g || g.revokedAt !== null)
                 return false;
-            rows.set(id, { ...g, revokedAt: nowS });
+            sealed.delete(id);
+            rows.set(id, { ...g, revokedAt: nowS, kept: false });
             return true;
         },
         async setDisabled(id, nowS) {
@@ -67,9 +72,26 @@ export function memoryGrantStore() {
                     hashes.delete(h);
             hashes.set(newTokenHash, id);
             // COALESCE semantics: a plain re-key (null) keeps any prior epoch.
-            const next = { ...g, sessionsInvalidBefore: sessionsInvalidBefore ?? g.sessionsInvalidBefore };
+            sealed.delete(id);
+            const next = { ...g, sessionsInvalidBefore: sessionsInvalidBefore ?? g.sessionsInvalidBefore, kept: false };
             rows.set(id, next);
             return next;
+        },
+        async keptToken(id) {
+            const tokenEnc = sealed.get(id);
+            const tokenHash = hashOf(id);
+            return tokenEnc && tokenHash ? { tokenEnc, tokenHash } : null;
+        },
+        async keepToken(id, tokenHash, tokenEnc) {
+            const g = rows.get(id);
+            if (!g || g.revokedAt !== null || hashOf(id) !== tokenHash)
+                return false;
+            if (tokenEnc === null)
+                sealed.delete(id);
+            else
+                sealed.set(id, tokenEnc);
+            rows.set(id, withKept(g));
+            return true;
         },
         async update(id, patch) {
             const g = rows.get(id);

@@ -51,6 +51,8 @@ export interface Grant {
     sessionsInvalidBefore: number | null;
     firstUsedAt: number | null;
     lastUsedAt: number | null;
+    /** Whether staff can copy this link again: its key is kept, sealed (`gate.mint({ keepToken })`). Staff-only. */
+    kept: boolean;
     /**
      * Held by a job, not a person: never bound to an email, and its activity is
      * reported only when something is notable. Staff may change it after minting.
@@ -73,6 +75,8 @@ export interface NewGrant {
     sessionTtlS?: number | null;
     /** Default true — see `Grant.expiryEndsSessions`. */
     expiryEndsSessions?: boolean;
+    /** Keep the key, sealed, so staff can copy the link again (`Grant.kept`). Default: the gate's `keepTokens`. */
+    keepToken?: boolean;
     /** Default false — see `Grant.service`. Refused together with `email`. */
     service?: boolean;
     /** Default false — see `Grant.anon`. */
