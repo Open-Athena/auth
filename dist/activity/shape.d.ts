@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityKind, ActivityKinds, ActivityWrite } from './types.js';
+import type { ActivityEvent, ActivityGrouping, ActivityKind, ActivityKinds, ActivityWrite } from './types.js';
 export declare function activityText(value: string, field: string, max?: number): void;
 export declare function activityInteger(value: number, field: string, min?: number): void;
 export declare function checkActivityKind(kind: string, policy: ActivityKind): void;
@@ -7,3 +7,4 @@ export declare function checkActivityKinds(kinds: ActivityKinds): void;
 export declare function activityPath(value: string): string;
 export declare function checkActivityEvent(e: ActivityEvent): void;
 export declare function checkActivityWrite(e: ActivityWrite): void;
+export declare function checkActivityGrouping(g: ActivityGrouping): ActivityGrouping;

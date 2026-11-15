@@ -6,7 +6,7 @@ Jobs is the first intended adopter. Disky should reconcile its existing `auth-se
 
 ## Database and Identity
 
-Apply `migrations/activity/0001_activity.sql`, then `0002_post_failures.sql` and `0003_threads.sql` (once each; they contain `ALTER TABLE`s) through an app-owned migration sequence. It adds independent activity tables and does not modify grants or session logs. If using the package's session log, also apply `migrations/session-log/0002_actor.sql` once after its `0001_session_log.sql`: it adds nullable `grant_id` and `subject_name` columns to existing `session_log`. Do not re-run ALTER statements or silently drop/recreate existing tables.
+Apply `migrations/activity/0001_activity.sql`, then `0002_post_failures.sql`, `0003_threads.sql` and `0004_session_groups.sql` (once each; they contain `ALTER TABLE`s) through an app-owned migration sequence. It adds independent activity tables and does not modify grants or session logs. If using the package's session log, also apply `migrations/session-log/0002_actor.sql` once after its `0001_session_log.sql`: it adds nullable `grant_id` and `subject_name` columns to existing `session_log`. Do not re-run ALTER statements or silently drop/recreate existing tables.
 
 Existing logs remain in their own deployment database. There is no backfill claiming to know who old unbound links belonged to. New batches from `fromGate` carry server-trusted grant ID and recipient name; the session summary uses the latest batch's identity. Filters match address, subject name and grant ID. A private grant memo is not a recipient identity. Remove app workarounds that put a memo/name into `via` only after checking the new fields on real data.
 
@@ -45,15 +45,25 @@ Add `slackActivitySink` or `discordActivitySink` only after confirming a staff-o
 
 ### Slack threads
 
-The Slack sink posts one thread per burst: a parent line (who, the notified counts, when, a link), a details reply (the pages visited, in order, and the burst's sessions), and one reply per notify=`line` kind (errors, access events, resumptions). Each is edited in place as the burst grows; each reply's message ID is saved as soon as it's posted, so a failure partway through never posts the parent twice. A tab's session (`sessionId`) rejoins its own earlier burst for up to 7 days (`RESUME_S`), adding a `resume` line ("after 2h 00m"), so one tab keeps one thread. Text is Slack mrkdwn with `<`, `>` and `&` escaped, so nothing a visitor types can form a link or a mention.
+The Slack sink posts one thread per burst: a parent line (who, the notified counts, when, a link), a details reply (the pages visited, in order, and the burst's sessions), and one reply per notify=`line` kind (errors, access events, resumptions). Each is edited in place as the burst grows; each reply's message ID is saved as soon as it's posted, so a failure partway through never posts the parent twice. A tab's session (`sessionId`) rejoins its own earlier burst for up to 7 days (`resumeS`), adding a `resume` line ("after 2h 00m"), so one tab keeps one thread. Each line in a reply leads with its session's tag (`🐳sj`: an emoji and two characters by hash, from `sessionTag`), so several tabs' lines can share a thread; a line with no session (a server's) takes the latest tab's before it, and the details reply lists the burst's tags, each linked by `sessionHref`. A kind with its own reply (say `view` set to notify `line`) leaves the details reply's page trail, and a line that names its page (`view /rs`) links it rather than adding "on /rs". Text is Slack mrkdwn with `<`, `>` and `&` escaped, so nothing a visitor types can form a link or a mention.
 
 Hooks, all optional, on `slackActivitySink` (and the link ones on `discordActivitySink`):
 
 - `actorSender(actor, burst) → { username, iconUrl? } | null`: post as the actor, with a name and an https face from your own trusted data (a grant's subject, a profile). It needs the bot's `chat:write.customize` scope; add it to the app manifest's `oauth_config.scopes.bot` and reinstall the app. Without it, or when the hook returns null, posts come from the bot with the actor named in the text.
 - `eventHref(line, burst)`, `sessionHref(sessionId, burst)`, `burstHref(burst)`: links for page lines, a burst's sessions (and each line's time), and the burst in your own admin UI.
+- `timeZone`: an IANA zone (`America/New_York`) for every time shown, with its abbreviation (`20:18–20:40 EST`). Default UTC (`01:18Z`). An unknown zone throws at construction.
 - `renderBurst({ burst, asActor, links }) → { text }`: replace the parent line (escape what you include, e.g. with `SLACK_FMT.esc`).
 
 Discord stays one message per burst (webhooks have no threads to edit into), rendered the same way and cut to 2000 characters.
+
+### Grouping: what a burst (a thread) is
+
+A burst is one actor's events with no gap longer than `gapS`: web analytics' "sessionization" by inactivity timeout (Catledge & Pitkow, 1995, measured 25.5 minutes; most tools default to 30). `activityFeed` takes:
+
+- `gapS` (default 15 minutes): the inactivity timeout.
+- `resumeS` (default 7 days; 0 never): how long a tab's session rejoins its own burst after a gap.
+- `maxSpanS` (default none): the longest a burst may span; past it a new one starts even without a gap, so a tab left open for days doesn't keep one thread forever. It also bounds resuming.
+- `by` (default `'actor'`): one burst for a person across their tabs (their lines told apart by session tags), or `'session'`: one per tab, with events that carry no session joining the actor's latest.
 
 ### Service links
 

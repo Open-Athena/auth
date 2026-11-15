@@ -14,6 +14,6 @@ export { DEFAULT_WHOAMI_ENDPOINT, displayName, hasScope, pseudonym } from './typ
 export { WHOAMI_KEY, useForgetWhoami, useWhoami } from './useWhoami.js';
 export { WhoamiChip } from './WhoamiChip.js';
 export { ACCOUNTS_KEY, AccountSwitcher, useAccounts } from './Accounts.js';
-export { GrantCard, GrantLink, GrantMintForm, GrantsPanel } from './Grants.js';
+export { GrantCard, GrantLink, GrantMintForm, GrantsPanel, NO_AUTOFILL } from './Grants.js';
 export { useGrants } from './useGrants.js';
 export { useUserMenu } from './useUserMenu.js';

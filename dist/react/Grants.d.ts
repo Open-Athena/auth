@@ -38,18 +38,41 @@ declare const DEFAULT_CLASSES: {
 export type GrantsClassNames = Partial<typeof DEFAULT_CLASSES> & {
     avatar?: AvatarFieldProps['classNames'];
 };
+/** One page a link opens: the same key works on any path the app serves. */
+export interface GrantLinkEntry {
+    label: string;
+    url: string;
+}
+/** A link's URL, or one URL per page it opens (labeled), for a link with several scopes. */
+export type GrantLinks = string | readonly GrantLinkEntry[];
+/** Link shape is the app's: e.g. `(g, t) => shareUrl(t, `${origin}/${g.scopes[0]}/`)`, or one entry per scope. */
+export type BuildGrantLink = (grant: Grant, token: string) => GrantLinks;
+/**
+ * Keeps password managers (1Password, LastPass, Bitwarden) from offering to fill a field: these are a recipient's
+ * details, never the admin's own, and `autoComplete="off"` doesn't stop them.
+ */
+export declare const NO_AUTOFILL: {
+    readonly autoComplete: "off";
+    readonly 'data-1p-ignore': "true";
+    readonly 'data-lpignore': "true";
+    readonly 'data-bwignore': "true";
+};
 export interface GrantLinkProps {
     grant: Grant;
     /** The one-time token. Never kept anywhere but the controller's memory. */
     token: string;
-    /** Link shape is the app's: e.g. `(g, t) => shareUrl(t, `${origin}/${g.scopes[0]}/`)`. */
-    buildLink: (grant: Grant, token: string) => string;
+    buildLink: BuildGrantLink;
     onDismiss?: () => void;
-    labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyFailed' | 'dismiss', ReactNode>>;
+    labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyAll' | 'copyFailed' | 'dismiss', ReactNode>>;
     classNames?: GrantsClassNames;
 }
-/** The moment a link exists outside its recipient's browser: show it, offer a copy, and say it won't come back. */
+/**
+ * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy,
+ * and say it won't come back.
+ */
 export declare function GrantLink({ grant, token, buildLink, onDismiss, labels, classNames }: GrantLinkProps): import("react").JSX.Element;
+/** How the app's `WhoamiChip` shows an `anon` link to its recipient; picks the anon checkbox's default wording. */
+export type AnonChipMode = 'label' | 'pseudonym' | 'hidden';
 export interface GrantMintFormProps {
     /** Rendered as checkboxes; at least one must be chosen. A lone scope starts checked. */
     scopes: readonly GrantScope[];
@@ -68,10 +91,12 @@ export interface GrantMintFormProps {
     allowlist?: boolean;
     /** The `<basePath>/avatar` route, to offer choosing the holder's face. */
     avatarEndpoint?: string;
+    /** Match the app's `<WhoamiChip anon=…>`, so the anon checkbox says what the recipient will see. Default `label`. */
+    anonChip?: AnonChipMode;
     labels?: Partial<Record<'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired' | 'anon' | 'service', ReactNode>>;
     classNames?: GrantsClassNames;
 }
-export declare function GrantMintForm({ scopes, onMint, busy, error, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, labels, classNames, }: GrantMintFormProps): import("react").JSX.Element;
+export declare function GrantMintForm({ scopes, onMint, busy, error, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, labels, classNames, }: GrantMintFormProps): import("react").JSX.Element;
 export interface GrantCardProps {
     grant: Grant;
     grants: UseGrantsResult;
@@ -83,24 +108,26 @@ export interface GrantCardProps {
      * A scope no longer offered stays listed, so a save can't drop it unnoticed.
      */
     editScopes?: boolean;
-    buildLink: (grant: Grant, token: string) => string;
+    buildLink: BuildGrantLink;
     allowlist?: boolean;
     avatarEndpoint?: string;
     /** After the holder is edited: binding an email may have added an allowlist row. */
     onHolderSaved?: () => void;
+    /** See `GrantMintFormProps.anonChip`. */
+    anonChip?: AnonChipMode;
     labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes' | 'anon' | 'service' | 'anonToggle' | 'serviceToggle', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, labels, classNames }: GrantCardProps): import("react").JSX.Element;
+export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, anonChip, labels, classNames }: GrantCardProps): import("react").JSX.Element;
 export type GrantsPanelProps = ({
     client: AuthClient;
     controller?: undefined;
 } | {
     controller: GrantsController;
     client?: undefined;
-}) & Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint'> & {
-    buildLink: (grant: Grant, token: string) => string;
+}) & Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint' | 'anonChip'> & {
+    buildLink: BuildGrantLink;
     /** Re-read the list this often. Off by default. */
     pollMs?: number;
     /** A new link. Its token stays in the panel, not here. */
@@ -122,5 +149,5 @@ export type GrantsPanelProps = ({
     };
 };
 /** A mint form over the list of links, composed from the exported parts. */
-export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, }: GrantsPanelProps): import("react").JSX.Element;
+export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, }: GrantsPanelProps): import("react").JSX.Element;
 export {};

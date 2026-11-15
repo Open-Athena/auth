@@ -1,15 +1,22 @@
-import { type ActivityEvent, type ActivityKind, type ActivityKinds, type ActivityBurst, type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js';
+import { type ActivityGrouping, type ActivityEvent, type ActivityKind, type ActivityKinds, type ActivityBurst, type ActivityRecordResult, type ActivitySink, type ActivityStore } from './types.js';
 export * from './types.js';
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js';
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js';
 export { activityRoutes, type ActivityRoutesOptions } from './routes.js';
-export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT, type ActivityFmt, type ActivityLinks } from './render.js';
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, sessionTag, SLACK_FMT, type ActivityFmt, type ActivityLinks } from './render.js';
 export interface ActivityFeedOptions {
     store: ActivityStore;
     /** Custom kinds and overrides for the generic defaults. Undeclared kinds are off. */
     kinds?: ActivityKinds;
     sinks?: readonly ActivitySink[];
+    /** Inactivity timeout, seconds (default `BATCH_GAP_S`, 15 min; web analytics' convention is 30). See `ActivityGrouping`. */
     gapS?: number;
+    /** How long a tab's session rejoins its own burst after a gap (default `RESUME_S`, 7 days; 0 never). */
+    resumeS?: number;
+    /** Start a new burst once one spans this long, even without a gap (default none). */
+    maxSpanS?: number | null;
+    /** One burst per actor across their tabs (default), or one per tab's session. */
+    by?: ActivityGrouping['by'];
     leaseS?: number;
     /** Epoch seconds; injectable for deterministic tests. */
     now?: () => number;

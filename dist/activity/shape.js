@@ -51,3 +51,12 @@ export function checkActivityWrite(e) {
     if (e.policy.record === 'off')
         throw new TypeError('activity: cannot append an off kind');
 }
+export function checkActivityGrouping(g) {
+    activityInteger(g.gapS, 'gap', 1);
+    activityInteger(g.resumeS, 'resume window');
+    if (g.maxSpanS !== null)
+        activityInteger(g.maxSpanS, 'max span', 1);
+    if (g.by !== 'actor' && g.by !== 'session')
+        throw new TypeError('activity: group by actor or session');
+    return g;
+}

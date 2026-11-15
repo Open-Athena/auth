@@ -1,5 +1,5 @@
 import { activityText } from './shape.js';
-import { renderDiscordMessage } from './render.js';
+import { checkTimeZone, renderDiscordMessage } from './render.js';
 /** The webhook is a secret; errors never interpolate it or a provider response body. */
 export function discordActivitySink(options) {
     activityText(options.id, 'sink id');
@@ -10,6 +10,7 @@ export function discordActivitySink(options) {
     }
     if (options.staffOnly !== true)
         throw new TypeError('activity: Discord destination must be staff-only');
+    checkTimeZone(options.timeZone);
     return {
         id: options.id,
         staffOnly: true,

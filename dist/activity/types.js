@@ -9,6 +9,7 @@ export const DEFAULT_ACTIVITY_KINDS = {
     /** A refused request: an expired, revoked or disabled link, a bad token (`accessLogActivity` maps `deny` rows here). */
     denied: { record: 'line', notify: 'line' },
 };
+/** Inactivity that ends a burst. Web analytics' usual session timeout is 30 minutes (Catledge & Pitkow, 1995). */
 export const BATCH_GAP_S = 15 * 60;
 /** How far back a tab's session resumes its own earlier burst. */
 export const RESUME_S = 7 * 86400;
