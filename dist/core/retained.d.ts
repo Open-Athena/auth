@@ -109,6 +109,11 @@ export declare function retainedMode(opts: RetainedOptions, deps: Deps): {
      * login is active now, since a sign-out can only ever take access away.
      */
     signOut(req: Request, nowMs: number): Promise<string[]>;
+    /**
+     * `?key=-`: take every share-link login off this browser (never an email sign-in), then, if nothing is active,
+     * select its latest email sign-in. Returns the removed logins' subs (`g:<grant id>`), for the log.
+     */
+    clearLinks(req: Request, nowMs: number): Promise<string[]>;
     /** Sign this browser out of every login it holds; the handle is cleared. Other browsers are untouched. */
     signOutAll(req: Request, nowMs: number): Promise<string[]>;
     /**

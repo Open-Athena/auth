@@ -1,5 +1,14 @@
+/**
+ * D1 (Cloudflare's SQLite) adapter — a file boundary, not an abstraction layer.
+ * Row I/O plus the one piece of logic that must be SQL: the atomic redeem CAS.
+ * Any other SQLite (Turso, better-sqlite3) or Postgres backend is a sibling
+ * file of about this size; nothing here needs a plugin registry to swap.
+ *
+ * Apply `migrations/` first.
+ */
+import { previewBot } from '../core/bots.js';
 import { formatScopes, parseScopes } from '../core/types.js';
-const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon';
+const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon, token_enc IS NOT NULL AS kept';
 function parseSubject(json) {
     if (!json)
         return null;
@@ -33,6 +42,7 @@ const toGrant = (r) => ({
     lastUsedAt: r.last_used_at,
     service: r.service !== 0,
     anon: r.anon !== 0,
+    kept: r.kept !== 0,
 });
 export function d1GrantStore(db) {
     return {
@@ -78,7 +88,7 @@ export function d1GrantStore(db) {
                 .run();
         },
         async revoke(id, nowS) {
-            const res = await db.prepare(`UPDATE grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(nowS, id).run();
+            const res = await db.prepare(`UPDATE grants SET revoked_at = ?, token_enc = NULL WHERE id = ? AND revoked_at IS NULL`).bind(nowS, id).run();
             return (res.meta?.changes ?? 0) > 0;
         },
         async setDisabled(id, nowS) {
@@ -97,12 +107,27 @@ export function d1GrantStore(db) {
             const row = await db
                 .prepare(`UPDATE grants
               SET token_hash = ?,
+                  token_enc = NULL,
                   sessions_invalid_before = COALESCE(?, sessions_invalid_before)
             WHERE id = ? AND revoked_at IS NULL
             RETURNING ${COLS}`)
                 .bind(newTokenHash, sessionsInvalidBefore, id)
                 .first();
             return row ? toGrant(row) : null;
+        },
+        async keptToken(id) {
+            const row = await db
+                .prepare('SELECT token_enc, token_hash FROM grants WHERE id = ? AND token_enc IS NOT NULL')
+                .bind(id)
+                .first();
+            return row ? { tokenEnc: row.token_enc, tokenHash: row.token_hash } : null;
+        },
+        async keepToken(id, tokenHash, tokenEnc) {
+            const res = await db
+                .prepare('UPDATE grants SET token_enc = ? WHERE id = ? AND token_hash = ? AND revoked_at IS NULL')
+                .bind(tokenEnc, id, tokenHash)
+                .run();
+            return (res.meta?.changes ?? 0) > 0;
         },
         async update(id, patch) {
             const cols = {};
@@ -281,18 +306,45 @@ export async function rollupAccessLog(db, { olderThanDays = 90, nowS = Math.floo
 export function d1AuditQuery(db) {
     return {
         async activity(grantId) {
-            const summary = await db
-                .prepare(`SELECT COUNT(DISTINCT ip_hash) AS ips,
-                  SUM(CASE WHEN event = 'view' THEN 1 ELSE 0 END) AS views,
-                  MIN(ts) AS first_seen,
-                  MAX(ts) AS last_seen
-             FROM access_log WHERE grant_id = ?`)
-                .bind(grantId)
-                .first();
-            const countries = await db
-                .prepare(`SELECT DISTINCT country FROM access_log WHERE grant_id = ? AND country IS NOT NULL ORDER BY country`)
+            // Grouped, so the row count is bounded by distinct clients, not by events. A preview bot's rows (or an older
+            // `redeem` by one) count as previews, and stay out of the clients, countries and dates that say who opened it.
+            const groups = await db
+                .prepare(`SELECT event, ip_hash, ua, country, CASE WHEN event = 'preview' THEN reason END AS bot,
+                  CASE WHEN event = 'staff-click' THEN session_sub END AS staff,
+                  COUNT(*) AS n, MIN(ts) AS first_seen, MAX(ts) AS last_seen
+             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5, 6`)
                 .bind(grantId)
                 .all();
+            const ips = new Set();
+            const countrySet = new Set();
+            const bots = new Map();
+            const staff = new Map();
+            let views = 0;
+            let botRedeems = 0;
+            let firstSeen = null;
+            let lastSeen = null;
+            for (const g of groups.results) {
+                if (g.event === 'staff-click') {
+                    const who = g.staff?.startsWith('e:') ? g.staff.slice(2) : 'staff';
+                    staff.set(who, (staff.get(who) ?? 0) + g.n);
+                    continue;
+                }
+                const bot = g.event === 'preview' ? (g.bot ?? 'bot') : g.event === 'redeem' ? previewBot(g.ua) : null;
+                if (bot !== null) {
+                    bots.set(bot, (bots.get(bot) ?? 0) + g.n);
+                    if (g.event === 'redeem')
+                        botRedeems += g.n;
+                    continue;
+                }
+                if (g.ip_hash !== null)
+                    ips.add(g.ip_hash);
+                if (g.country !== null)
+                    countrySet.add(g.country);
+                if (g.event === 'view')
+                    views += g.n;
+                firstSeen = firstSeen === null ? g.first_seen : Math.min(firstSeen, g.first_seen);
+                lastSeen = lastSeen === null ? g.last_seen : Math.max(lastSeen, g.last_seen);
+            }
             const paths = await db
                 .prepare(`SELECT path, COUNT(*) AS views FROM access_log
             WHERE grant_id = ? AND event = 'view' AND path IS NOT NULL
@@ -301,12 +353,16 @@ export function d1AuditQuery(db) {
                 .all();
             return {
                 grantId,
-                distinctIps: summary?.ips ?? 0,
-                countries: countries.results.map(r => r.country),
-                views: summary?.views ?? 0,
-                firstSeen: summary?.first_seen ?? null,
-                lastSeen: summary?.last_seen ?? null,
+                distinctIps: ips.size,
+                countries: [...countrySet].sort(),
+                views,
+                firstSeen,
+                lastSeen,
                 topPaths: paths.results,
+                previews: [...bots.values()].reduce((a, b) => a + b, 0),
+                previewBots: [...bots].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([name]) => name),
+                botRedeems,
+                staffClicks: [...staff].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([who]) => who),
             };
         },
         async recent(opts) {

@@ -3,6 +3,11 @@ import type { Grant, NewGrant, GrantPatch, Subject } from './types.js';
 import type { GrantActivity, StoredEvent } from './store.js';
 import type { Whoami } from '../client/identity.js';
 export type { Grant, Subject } from './types.js';
+/**
+ * `?key=-` on any URL: sign this browser out of its share-link session (never an email sign-in), then land on the
+ * same URL without it. A real key is 32 base64url characters, so this can't be one.
+ */
+export declare const CLEAR_KEY = "-";
 export type { GrantActivity, StoredEvent, AllowEntry } from './store.js';
 export type { Whoami } from '../client/identity.js';
 export interface MintInput extends Omit<NewGrant, 'subject' | 'createdBy' | 'expiresAt'> {
@@ -74,6 +79,17 @@ export interface OkResponse {
 }
 export interface RotateInput {
     endSessions?: boolean;
+    /** Keep the new key, sealed (default: kept if the old one was). */
+    keepToken?: boolean;
+}
+/** `GET /grants/:id/token`: a kept link's key, for staff to copy the link again. */
+export interface TokenResponse {
+    id: string;
+    token: string;
+}
+/** `PUT /grants/:id/token`: keep this link's current key without rotating it. */
+export interface KeepTokenInput {
+    token: string;
 }
 export interface RotateResponse {
     id: string;
@@ -101,6 +117,9 @@ export interface AuthResponses {
     disable: OkResponse;
     enable: OkResponse;
     rotate: RotateResponse;
+    token: TokenResponse;
+    keep: OkResponse;
+    forget: OkResponse;
     activity: GrantActivity;
     log: LogResponse;
 }

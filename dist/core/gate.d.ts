@@ -1,15 +1,7 @@
-/**
- * The gate: sessions and grants as peers.
- *
- * An SSO sign-in and a share link both end at the same first-party session
- * cookie; the only difference is the `sub` it carries. Grant-backed sessions
- * re-join their grant row on *every* request, so revoking a link kills every
- * session it ever minted, instantly — that property is what makes the social
- * story (assume forwarding; make it visible and revocable) actually work.
- */
 import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
 import { type AvatarRef, type AvatarRefKind } from './avatar.js';
+import { type PreviewBot } from './bots.js';
 import type { Whoami } from './http.js';
 import type { SessionLossReason } from './denial.js';
 import { type Profile } from './profile.js';
@@ -24,6 +16,34 @@ export interface GateOptions {
     store: GrantStore;
     /** HMAC key for session cookies and IP hashing. */
     secret: string;
+    /**
+     * Keep each new link's key, sealed, so staff can copy it again (a mint's `keepToken` overrides). Default false: a
+     * key is shown once. Kept keys are sealed under a key derived from `tokenSecret`.
+     */
+    keepTokens?: boolean;
+    /**
+     * What a link-preview bot (Slack, Gmail, iMessage…; see `previewBot`) is shown for a share link, instead of
+     * redeeming it: a title, description and image for its card. Null, or no hook: the site's host only, since a preview
+     * can land somewhere the recipient didn't choose.
+     */
+    linkPreview?: (req: Request, grant: Grant) => LinkPreview | null | Promise<LinkPreview | null>;
+    /** Which user-agents are preview bots. Default `PREVIEW_BOTS`; spread it to add your own. */
+    previewBots?: readonly PreviewBot[];
+    /**
+     * A browser already signed in by email (staff, say, clicking a link drafted for someone else) keeps that session
+     * when it opens a share link: nothing is redeemed, and a `staff-click` row is logged. Default true. False, or
+     * `?as=recipient` on the link, redeems as before (for staff testing links as their recipients). With `retained`,
+     * the link is held as an account to switch to instead (see `RetainedOptions`).
+     */
+    staffKeepSession?: boolean;
+    /** The share-link query parameter, stripped from the URL `redeem`'s responses redirect to. Default `key`. */
+    keyParam?: string;
+    /**
+     * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
+     * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
+     * not kept until kept again or rotated).
+     */
+    tokenSecret?: string;
     /** Which SSO identities are allowed, and what scopes they get. Default: admins only. */
     policy?: EmailPolicy;
     /** Always allowed, always `*`. Checked ahead of `policy`. */
@@ -154,7 +174,41 @@ export type RedeemResult = {
 } | {
     ok: false;
     reason: RedeemFailure;
+}
+/**
+ * A link-preview bot, not a person: nothing was redeemed (no session, no count, the key still works for the
+ * human's click), and a `preview` row was logged. Send `response`: a small page with the link's card.
+ */
+ | {
+    ok: false;
+    reason: 'preview';
+    bot: string;
+    response: Response;
+}
+/** A browser signed in by email opened the link (`staffKeepSession`): it stays who it was. `response` drops the key. */
+ | {
+    ok: false;
+    reason: 'staff';
+    email: string;
+    response: Response;
+}
+/** `?key=-` (`CLEAR_KEY`): the browser's link session ended (an email sign-in stays). `response` drops the key. */
+ | {
+    ok: false;
+    reason: 'cleared';
+    response: Response;
+    cookies: string[];
 };
+export { CLEAR_KEY } from './http.js';
+/** A share link's card for link-preview bots (`GateOptions.linkPreview`). */
+export interface LinkPreview {
+    title: string;
+    description?: string;
+    /** An absolute https image URL. */
+    image?: string;
+}
+/** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
+export declare function linkPreviewPage(preview: LinkPreview): Response;
 export interface MintResult {
     grant: Grant;
     /** The raw token. Returned exactly once — only its hash is stored. */
@@ -287,14 +341,26 @@ export declare function createGate(opts: GateOptions): {
         remove(req: Request, sessionId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
         acceptIncoming(req: Request, pendingId: string, nowMs: number): Promise<import("./http.js").AccountsResponse | null>;
         signOut(req: Request, nowMs: number): Promise<string[]>;
+        clearLinks(req: Request, nowMs: number): Promise<string[]>;
         signOutAll(req: Request, nowMs: number): Promise<string[]>;
         checkMutation(req: Request, nowMs: number): Promise<Response | null>;
     } | null;
     mint: (draft: NewGrant, nowMs?: number) => Promise<MintResult>;
     revoke: (id: string, nowMs?: number) => Promise<boolean>;
-    rotate: (id: string, { endSessions }?: {
+    rotate: (id: string, { endSessions, keepToken }?: {
         endSessions?: boolean;
+        keepToken?: boolean;
     }, nowMs?: number) => Promise<MintResult | null>;
+    revealToken: (id: string, actor?: string | null, nowMs?: number) => Promise<string | null>;
+    keepToken: (id: string, token: string | null, actor?: string | null, nowMs?: number) => Promise<boolean>;
+    /** What a preview bot is shown for this link (`linkPreview`, or the host). */
+    previewResponse: (req: Request, grant: Grant) => Promise<Response>;
+    /**
+     * The whole `?key=` step for a page request: null without a key (or when it's refused: show your own "this link
+     * isn't active"); otherwise the response to send (the redirect that drops the key and sets the session, the
+     * preview card, staff kept as themselves, or a cleared link session).
+     */
+    handleKeyParam(req: Request, nowMs?: number): Promise<Response | null>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
     update: (id: string, edit: GrantEdit, nowMs?: number, alsoLogged?: string[]) => Promise<Grant | null>;

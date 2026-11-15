@@ -7,20 +7,39 @@
  * session it ever minted, instantly — that property is what makes the social
  * story (assume forwarding; make it visible and revocable) actually work.
  */
+import { CLEAR_KEY } from './http.js';
 import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
 import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
-import { looksAutomated } from './bots.js';
+import { looksAutomated, PREVIEW_BOTS, previewBot } from './bots.js';
 import { AVATAR_SEED_PENDING, cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
 import { DEFAULT_COOKIE_NAME, DEFAULT_SESSION_TTL_S, clearCookie, emailSub, grantSub, isSecureRequest, parseSub, readCookie, sessionCookie, signSession, inspectSessionClaims, } from './session.js';
 import { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './decisions.js';
 import { ALL_SCOPES, formatScopes, holderIdentity } from './types.js';
+import { openToken, sealToken } from './token-vault.js';
 import { generateId, generateToken, hashToken } from './tokens.js';
 import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
 const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
+export { CLEAR_KEY } from './http.js';
+const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
+export function linkPreviewPage(preview) {
+    const meta = (attr, key, value) => value === undefined ? '' : `<meta ${attr}="${key}" content="${escapeHtml(value)}">\n`;
+    const html = '<!doctype html>\n<html><head><meta charset="utf-8">\n<meta name="robots" content="noindex, nofollow">\n'
+        + `<title>${escapeHtml(preview.title)}</title>\n`
+        + meta('property', 'og:title', preview.title)
+        + meta('property', 'og:description', preview.description)
+        + meta('name', 'description', preview.description)
+        + meta('property', 'og:image', preview.image)
+        + meta('name', 'twitter:card', preview.image ? 'summary_large_image' : 'summary')
+        + '</head><body></body></html>\n';
+    return new Response(html, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex, nofollow' },
+    });
+}
 /** A service link is a job's, never a person's, so it can't also be bound to an email. */
 export class ServiceGrantEmailError extends Error {
     constructor() {
@@ -66,7 +85,8 @@ function grantAuth(grant) {
     return { kind: 'grant', grant, admin: false, scopes: grant.scopes };
 }
 export function createGate(opts) {
-    const { store, secret, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const { store, secret, keepTokens = false, linkPreview, previewBots = PREVIEW_BOTS, staffKeepSession = true, keyParam = 'key', adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const tokenSecret = opts.tokenSecret ?? secret;
     const policy = opts.policy
         ? firstMatch(adminPolicy(adminEmails), opts.policy)
         : adminPolicy(adminEmails);
@@ -132,7 +152,8 @@ export function createGate(opts) {
         };
         const url = new URL(req.url);
         const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
-        const tokenPresented = !!bearer || url.searchParams.has('key');
+        // `?key=-` (`CLEAR_KEY`) is an instruction to `redeem`, not a credential: no token, no deny row.
+        const tokenPresented = !!bearer || (url.searchParams.has('key') && url.searchParams.get('key') !== CLEAR_KEY);
         const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '');
         if (tokenPresented) {
             credential = 'token';
@@ -140,6 +161,12 @@ export function createGate(opts) {
             if (!grant) {
                 await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
                 return failed('invalid');
+            }
+            // A preview bot given `?key=` gets nothing the key opens (`redeem` shows it the link's card instead).
+            const bot = bearer ? null : previewBot(req.headers.get('User-Agent'), previewBots);
+            if (bot !== null) {
+                await logWithRequest(req, { event: 'preview', grantId: grant.id, reason: bot }, nowS);
+                return failed(null);
             }
             // A presented token is the *link* being used, not a session being
             // resumed, so disabling blocks it: "stop letting new people in" has to
@@ -249,14 +276,72 @@ export function createGate(opts) {
                 : { event: 'view', sessionSub: emailSub(auth.email) }),
         });
     }
+    /** A link-preview bot's page for this link: the app's card, or the host alone. */
+    async function previewResponse(req, grant) {
+        const preview = (await linkPreview?.(req, grant)) ?? { title: new URL(req.url).host };
+        return linkPreviewPage(preview);
+    }
+    /** The request's URL without the key (or `as`), as a same-origin redirect target. */
+    function withoutKey(req) {
+        const url = new URL(req.url);
+        url.searchParams.delete(keyParam);
+        url.searchParams.delete('as');
+        return url;
+    }
+    /** A redirect to this URL without its key, setting `cookies`. */
+    function dropKey(req, cookies = []) {
+        const url = withoutKey(req);
+        const headers = new Headers({ location: `${url.pathname}${url.search}${url.hash}`, 'cache-control': 'private, no-store' });
+        for (const c of cookies)
+            headers.append('set-cookie', c);
+        return new Response(null, { status: 302, headers });
+    }
+    /** `?key=-`: end a share-link session here, leaving an email sign-in alone. */
+    async function clearLinkSession(req, nowMs) {
+        const nowS = sec(nowMs);
+        const bare = new Request(withoutKey(req), { headers: req.headers });
+        let cookies = [];
+        let subs = [];
+        if (retained) {
+            subs = await retained.clearLinks(bare, nowMs);
+        }
+        else {
+            const { auth } = await authenticateResult(bare, nowMs, { logView: false });
+            if (auth?.kind === 'grant') {
+                cookies = [clearCookie({ name: cookieName, secure: isSecureRequest(req) })];
+                subs = [grantSub(auth.grant.id)];
+            }
+        }
+        for (const sub of subs)
+            await logWithRequest(req, { event: 'signout', sessionSub: sub, reason: 'clear-key' }, nowS);
+        return { ok: false, reason: 'cleared', response: dropKey(req, cookies), cookies };
+    }
     /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
     async function redeem(token, req, nowMs = Date.now()) {
         const nowS = sec(nowMs);
+        if (token === CLEAR_KEY)
+            return clearLinkSession(req, nowMs);
         const tokenHash = await hashToken(token);
         const existing = await store.byTokenHash(tokenHash);
         if (!existing) {
             await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
             return { ok: false, reason: 'bad-token' };
+        }
+        // An unfurler or mail scanner fetching the link isn't the recipient opening it: no session, no redemption (so a
+        // `maxRedeems` link isn't used up by previews), and the key stays good for the human's click.
+        const bot = previewBot(req.headers.get('User-Agent'), previewBots);
+        if (bot !== null && canRedeem(existing, nowS)) {
+            await logWithRequest(req, { event: 'preview', grantId: existing.id, reason: bot }, nowS);
+            return { ok: false, reason: 'preview', bot, response: await previewResponse(req, existing) };
+        }
+        // Staff opening a link drafted for someone else stay themselves, rather than becoming that someone.
+        // (Retained mode has its own answer: the link is held as an account to switch to, and spends nothing.)
+        if (staffKeepSession && !retained && new URL(req.url).searchParams.get('as') !== 'recipient') {
+            const { auth } = await authenticateResult(new Request(withoutKey(req), { headers: req.headers }), nowMs, { logView: false });
+            if (auth?.kind === 'sso') {
+                await logWithRequest(req, { event: 'staff-click', grantId: existing.id, sessionSub: emailSub(auth.email) }, nowS);
+                return { ok: false, reason: 'staff', email: auth.email, response: dropKey(req) };
+            }
         }
         if (retained) {
             // A link this browser can't redeem leaves its logins as they are: a bad
@@ -388,8 +473,14 @@ export function createGate(opts) {
             lastUsedAt: null,
             service: draft.service ?? false,
             anon: draft.anon ?? false,
+            kept: false,
         };
-        await store.insert(grant, await hashToken(token));
+        const tokenHash = await hashToken(token);
+        await store.insert(grant, tokenHash);
+        if (draft.keepToken ?? keepTokens) {
+            if (await store.keepToken(grant.id, tokenHash, await sealToken(token, grant.id, tokenSecret)))
+                grant.kept = true;
+        }
         // Without this the timeline starts at `redeem`, so "who handed this link
         // out" is only recoverable from `grants.created_by` — not from the log an
         // admin would actually read, and not at all once the grant is deleted.
@@ -610,14 +701,50 @@ export function createGate(opts) {
      *
      * Null if the grant does not exist or is revoked (revocation is terminal).
      */
-    async function rotate(id, { endSessions = false } = {}, nowMs = Date.now()) {
+    async function rotate(id, { endSessions = false, keepToken } = {}, nowMs = Date.now()) {
         const nowS = sec(nowMs);
         const token = generateToken();
-        const grant = await store.rotate(id, await hashToken(token), endSessions ? nowS : null);
+        const tokenHash = await hashToken(token);
+        // A kept key stays kept across a rotation (the new one replaces it), unless the caller says otherwise.
+        const keep = keepToken ?? (await store.byId(id))?.kept ?? false;
+        let grant = await store.rotate(id, tokenHash, endSessions ? nowS : null);
         if (!grant)
             return null;
+        if (keep && (await store.keepToken(id, tokenHash, await sealToken(token, id, tokenSecret))))
+            grant = { ...grant, kept: true };
         await log({ ts: nowS, event: 'rotate', grantId: id, reason: endSessions ? 'end-sessions' : null });
         return { grant, token };
+    }
+    /**
+     * A kept link's key, for staff to copy the link again; null when none is kept (or it no longer opens, or no longer
+     * matches the link's hash). Every read is logged.
+     */
+    async function revealToken(id, actor = null, nowMs = Date.now()) {
+        const kept = await store.keptToken(id);
+        if (!kept)
+            return null;
+        const token = await openToken(kept.tokenEnc, id, tokenSecret);
+        if (token === null || (await hashToken(token)) !== kept.tokenHash)
+            return null;
+        await log({ ts: sec(nowMs), event: 'reveal', grantId: id, sessionSub: actor && isEmailish(actor) ? emailSub(actor) : null });
+        return token;
+    }
+    /**
+     * Keep an existing link's key, pasted by staff, without rotating it (links already sent keep working). False unless
+     * it is that link's current key and the link isn't revoked. `null` forgets a kept key.
+     */
+    async function keepToken(id, token, actor = null, nowMs = Date.now()) {
+        const current = token === null ? (await store.keptToken(id))?.tokenHash : await hashToken(token);
+        if (!current)
+            return token === null;
+        const ok = await store.keepToken(id, current, token === null ? null : await sealToken(token, id, tokenSecret));
+        if (ok) {
+            await log({
+                ts: sec(nowMs), event: 'keep', grantId: id, reason: token === null ? 'forget' : null,
+                sessionSub: actor && isEmailish(actor) ? emailSub(actor) : null,
+            });
+        }
+        return ok;
     }
     /**
      * Stop handing out new sessions, without touching the people already inside.
@@ -915,6 +1042,24 @@ export function createGate(opts) {
         mint,
         revoke,
         rotate,
+        revealToken,
+        keepToken,
+        /** What a preview bot is shown for this link (`linkPreview`, or the host). */
+        previewResponse,
+        /**
+         * The whole `?key=` step for a page request: null without a key (or when it's refused: show your own "this link
+         * isn't active"); otherwise the response to send (the redirect that drops the key and sets the session, the
+         * preview card, staff kept as themselves, or a cleared link session).
+         */
+        async handleKeyParam(req, nowMs = Date.now()) {
+            const key = new URL(req.url).searchParams.get(keyParam);
+            if (key === null)
+                return null;
+            const res = await redeem(key, req, nowMs);
+            if (res.ok)
+                return dropKey(req, res.cookies);
+            return 'response' in res ? res.response : null;
+        },
         disable,
         enable,
         update,

@@ -30,3 +30,38 @@ export function isVerifiedBot(req) {
 export function looksAutomated(req) {
     return isVerifiedBot(req) || isBot(req.headers.get('User-Agent'));
 }
+/**
+ * Agents that fetch a link to show (or vet) it, not a person opening it: chat and social unfurlers, mail clients'
+ * image and link proxies, mail scanners. First match wins, so specific entries come before broad ones (iMessage
+ * sends a UA naming Facebook's and Twitter's crawlers). Extend with `previewBots` on the gate.
+ */
+export const PREVIEW_BOTS = [
+    { name: 'Slack', pattern: /Slackbot|Slack-ImgProxy/i },
+    { name: 'iMessage', pattern: /facebookexternalhit\/[\d.]+ Facebot Twitterbot/i },
+    { name: 'Facebook', pattern: /facebookexternalhit|Facebot/i },
+    // Telegram's UA says "like TwitterBot".
+    { name: 'Telegram', pattern: /TelegramBot/i },
+    { name: 'X', pattern: /Twitterbot/i },
+    { name: 'LinkedIn', pattern: /LinkedInBot/i },
+    { name: 'Discord', pattern: /Discordbot/i },
+    { name: 'WhatsApp', pattern: /WhatsApp/i },
+    { name: 'Apple', pattern: /Applebot/i },
+    { name: 'Google', pattern: /GoogleImageProxy|Google-PageRenderer|Google-Safety|Googlebot/i },
+    { name: 'Microsoft', pattern: /SkypeUriPreview|Microsoft Office|ms-office|MSOffice|BingPreview|bingbot/i },
+    { name: 'Mastodon', pattern: /Mastodon\//i },
+    { name: 'Bluesky', pattern: /Cardyb|Bluesky/i },
+    { name: 'mail scanner', pattern: /Mimecast|Proofpoint|Barracuda|urldefense/i },
+    { name: 'Embedly', pattern: /Embedly/i },
+    { name: 'Iframely', pattern: /Iframely/i },
+    // Last resort: a self-described crawler. Not bare "bot", which is in some phones' model names ("Cubot").
+    { name: 'bot', pattern: /\bbot\b|bot\/|crawler|spider|preview/i },
+];
+/**
+ * The preview agent this user-agent names, or null for anything else (a browser, `curl`, a missing UA: those are
+ * people or jobs, and redeem as before).
+ */
+export function previewBot(ua, bots = PREVIEW_BOTS) {
+    if (!ua)
+        return null;
+    return bots.find(b => b.pattern.test(ua))?.name ?? null;
+}

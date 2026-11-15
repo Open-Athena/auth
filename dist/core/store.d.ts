@@ -55,6 +55,16 @@ export interface GrantStore {
      * revoked (revocation is terminal); returns the updated grant, or null.
      */
     rotate(id: string, newTokenHash: string, sessionsInvalidBefore: number | null): Promise<Grant | null>;
+    /** The sealed kept key and the current hash, or null when none is kept. `rotate` and `revoke` clear it. */
+    keptToken(id: string): Promise<{
+        tokenEnc: string;
+        tokenHash: string;
+    } | null>;
+    /**
+     * Keep (or with null, forget) a grant's sealed key, only while `tokenHash` is still its hash and it isn't revoked,
+     * so a key from before a rotation can't be kept. Returns whether it changed the row.
+     */
+    keepToken(id: string, tokenHash: string, tokenEnc: string | null): Promise<boolean>;
     list(opts?: GrantListOpts): Promise<Grant[]>;
 }
 export interface RequestListOpts {
@@ -186,6 +196,17 @@ export interface GrantActivity {
         path: string;
         views: number;
     }[];
+    /**
+     * Fetches by link-preview bots (`preview` rows, plus older `redeem` rows whose user-agent `previewBot` names, read
+     * that way rather than rewritten). They're left out of `distinctIps`, `countries` and the dates.
+     */
+    previews: number;
+    /** The bots behind `previews`, most first: `Slack`, `Google`. */
+    previewBots: string[];
+    /** Of the link's `redeems`, how many were preview bots before previews stopped redeeming: subtract for people. */
+    botRedeems: number;
+    /** Staff who opened the link while signed in (`staff-click` rows), most first; left out of clients and countries. */
+    staffClicks: string[];
 }
 export interface AuditQuery {
     activity(grantId: string): Promise<GrantActivity>;

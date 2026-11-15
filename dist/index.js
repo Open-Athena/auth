@@ -4,13 +4,13 @@ export { DEFAULT_AVATAR_SIZE, InvalidImageError, MAX_AVATAR_DIMENSION, MAX_INLIN
 export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js';
 export { safeNext } from './core/next.js';
 export { MAX_PROFILE_NAME, cleanName } from './core/profile.js';
-export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js';
+export { isBot, isVerifiedBot, looksAutomated, PREVIEW_BOTS, previewBot } from './core/bots.js';
 export { renderDecisionPage } from './core/decision-page.js';
 export { DEFAULT_DECISION_TTL_S, DEFAULT_REVERSAL_WINDOW_S, EMAIL_LINK_ACTOR, mayReverse, mintDecisionTokens, readDecisionToken, } from './core/decisions.js';
 export { emailNotify } from './core/email.js';
 export { emailCodeAuth } from './core/email-codes.js';
 export { verifyRs256Jwt } from './core/jwt.js';
-export { ALL_SCOPES, canRedeem, createGate, isActive, ServiceGrantEmailError, sessionValid } from './core/gate.js';
+export { ALL_SCOPES, canRedeem, CLEAR_KEY, createGate, isActive, linkPreviewPage, ServiceGrantEmailError, sessionValid } from './core/gate.js';
 export { isSessionLossReason, sessionLossMessage } from './core/denial.js';
 export { DEFAULT_RATE_LIMIT, MAX_SUBJECT_FIELD, cleanSubject, isEmailish, noopNotify, subjectName } from './core/requests.js';
 export { authRoutes } from './core/routes.js';

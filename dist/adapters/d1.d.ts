@@ -1,11 +1,3 @@
-/**
- * D1 (Cloudflare's SQLite) adapter — a file boundary, not an abstraction layer.
- * Row I/O plus the one piece of logic that must be SQL: the atomic redeem CAS.
- * Any other SQLite (Turso, better-sqlite3) or Postgres backend is a sibling
- * file of about this size; nothing here needs a plugin registry to swap.
- *
- * Apply `migrations/` first.
- */
 import type { AuditSink } from '../core/audit.js';
 import type { AllowlistStore, AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
 export declare function d1GrantStore(db: D1Database): GrantStore;

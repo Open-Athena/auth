@@ -15,7 +15,7 @@
  */
 import { b64uEncode } from './base64.js';
 import { pseudonym } from '../client/identity.js';
-import { clearCookie, emailSub, grantSub, inspectSessionClaims, isSecureRequest, readCookie } from './session.js';
+import { clearCookie, emailSub, grantSub, inspectSessionClaims, isSecureRequest, parseSub, readCookie } from './session.js';
 import { SELECTION_CONTEXT_HEADER, parseSelectionContext, serializeSelectionContext } from './selection-context.js';
 import { holderIdentity } from './types.js';
 import { generateId } from './tokens.js';
@@ -329,6 +329,33 @@ export function retainedMode(opts, deps) {
             if (!ctx)
                 throw new RetainedLoginError('selection_context_conflict');
             return cookies;
+        },
+        /**
+         * `?key=-`: take every share-link login off this browser (never an email sign-in), then, if nothing is active,
+         * select its latest email sign-in. Returns the removed logins' subs (`g:<grant id>`), for the log.
+         */
+        async clearLinks(req, nowMs) {
+            const nowS = sec(nowMs);
+            const h = await held(req, nowS);
+            if (!h)
+                return [];
+            const removed = [];
+            let ctx = contextOf(h.browser);
+            for (const s of await store.sessions(h.binding, nowS)) {
+                if (parseSub(s.sub)?.kind !== 'grant')
+                    continue;
+                const next = await store.remove({ ...h.binding, expected: ctx, sessionId: s.id }, nowS);
+                if (!next)
+                    throw new RetainedLoginError('selection_context_conflict');
+                ctx = next;
+                removed.push(s.sub);
+            }
+            if (removed.length && ctx.sessionId === null) {
+                const sso = (await store.sessions(h.binding, nowS)).filter(s => parseSub(s.sub)?.kind === 'email').at(-1);
+                if (sso)
+                    await store.select({ ...h.binding, expected: ctx, sessionId: sso.id }, nowS);
+            }
+            return removed;
         },
         /** Sign this browser out of every login it holds; the handle is cleared. Other browsers are untouched. */
         async signOutAll(req, nowMs) {

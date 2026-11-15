@@ -16,3 +16,19 @@ export declare function isBot(ua: string | null | undefined): boolean;
 export declare function isVerifiedBot(req: Request): boolean;
 /** The check the gate applies before writing a `view` row. */
 export declare function looksAutomated(req: Request): boolean;
+/** A link-preview or link-scanning agent: who to name in stats, and how to recognize its user-agent. */
+export interface PreviewBot {
+    name: string;
+    pattern: RegExp;
+}
+/**
+ * Agents that fetch a link to show (or vet) it, not a person opening it: chat and social unfurlers, mail clients'
+ * image and link proxies, mail scanners. First match wins, so specific entries come before broad ones (iMessage
+ * sends a UA naming Facebook's and Twitter's crawlers). Extend with `previewBots` on the gate.
+ */
+export declare const PREVIEW_BOTS: readonly PreviewBot[];
+/**
+ * The preview agent this user-agent names, or null for anything else (a browser, `curl`, a missing UA: those are
+ * people or jobs, and redeem as before).
+ */
+export declare function previewBot(ua: string | null | undefined, bots?: readonly PreviewBot[]): string | null;

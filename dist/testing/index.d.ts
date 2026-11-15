@@ -21,6 +21,8 @@ export interface MemoryGrantStore extends GrantStore {
     rows: Map<string, Grant>;
     /** tokenHash -> grant id. */
     hashes: Map<string, string>;
+    /** grant id -> sealed kept key. */
+    sealed: Map<string, string>;
 }
 export declare function memoryGrantStore(): MemoryGrantStore;
 export interface MemoryRequestStore extends RequestStore {

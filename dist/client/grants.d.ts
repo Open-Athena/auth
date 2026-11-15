@@ -1,6 +1,6 @@
 import type { AuthClient } from './api.js';
 import type { Grant, GrantActivity, GrantUpdateInput, MintInput, RotateInput } from '../core/http.js';
-export type GrantAction = 'update' | 'disable' | 'enable' | 'revoke' | 'rotate';
+export type GrantAction = 'update' | 'disable' | 'enable' | 'revoke' | 'rotate' | 'reveal' | 'keep' | 'forget';
 export interface GrantsFailure {
     action: GrantAction | 'mint' | 'refresh' | 'activity';
     /** Null for `mint` and `refresh`, which aren't about one link. */
@@ -12,7 +12,8 @@ export interface GrantsFailure {
 export interface OneTimeToken {
     grantId: string;
     token: string;
-    source: 'mint' | 'rotate';
+    /** `reveal`: a kept key, fetched again. */
+    source: 'mint' | 'rotate' | 'reveal';
 }
 export interface GrantsSnapshot {
     grants: readonly Grant[];
@@ -44,6 +45,9 @@ export declare function createGrantsController({ client, whoamiEndpoint }: Grant
     enable: (id: string) => Promise<boolean>;
     revoke: (id: string) => Promise<boolean>;
     rotate: (id: string, input?: RotateInput) => Promise<boolean>;
+    reveal: (id: string) => Promise<boolean>;
+    keepToken: (id: string, token: string) => Promise<boolean>;
+    forgetToken: (id: string) => Promise<boolean>;
     activity: (id: string) => Promise<void>;
     dismissToken(): void;
 };

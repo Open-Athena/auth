@@ -78,6 +78,11 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
             enable: (id) => request(`${grantPath(id)}/enable`, 'POST'),
             rotate: (id, input = {}) => request(`${grantPath(id)}/rotate`, 'POST', input),
             activity: (id) => request(`${grantPath(id)}/activity`),
+            /** A kept link's key (404 when none is kept). Logged server-side. */
+            token: (id) => request(`${grantPath(id)}/token`),
+            /** Keep this link's current key (a pasted key or link), without rotating it. */
+            keepToken: (id, token) => request(`${grantPath(id)}/token`, 'PUT', { token }),
+            forgetToken: (id) => request(`${grantPath(id)}/token`, 'DELETE'),
         },
         log: ({ grant, limit } = {}) => {
             const query = new URLSearchParams();
@@ -90,6 +95,10 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
     };
 }
 /** Construct locally: the token is never sent to a server by this helper. */
+/** Just the query a share link adds (`?key=…`), for pasting onto a URL of your own. */
+export function shareKey(token) {
+    return `?${new URLSearchParams({ key: token })}`;
+}
 export function shareUrl(token, target) {
     if (target === undefined) {
         if (typeof location === 'undefined')

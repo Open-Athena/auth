@@ -4,8 +4,8 @@
  * (`useGrants` in `/react`; Vue and Svelte stores wrap the same two calls).
  *
  * The raw token exists only in this object's memory, from the response that
- * minted or rotated it until `dismissToken()`, a newer token, or revoking that
- * link. It isn't persisted or logged, and the actions don't return it: render it
+ * minted, rotated or (for a kept key) revealed it until `dismissToken()`, a newer
+ * token, or revoking that link. It isn't persisted or logged, and the actions don't return it: render it
  * from the snapshot, once, for the admin to copy.
  */
 import { AuthClientError } from './api.js';
@@ -136,6 +136,17 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
         const { token } = await client.grants.rotate(id, input);
         return { token: { grantId: id, token, source: 'rotate' } };
     });
+    /** Fetch a kept key into the snapshot, as if just minted. */
+    const reveal = (id) => change(id, 'reveal', async () => {
+        const { token } = await client.grants.token(id);
+        return { token: { grantId: id, token, source: 'reveal' } };
+    });
+    /** Keep this link's current key (pasted), so it can be revealed later. */
+    const keepToken = (id, token) => change(id, 'keep', async () => (await client.grants.keepToken(id, token), {}));
+    const forgetToken = (id) => change(id, 'forget', async () => {
+        await client.grants.forgetToken(id);
+        return snapshot.token?.grantId === id && snapshot.token.source === 'reveal' ? { token: null } : {};
+    });
     async function activity(id) {
         const mine = (activityRequests.get(id) ?? 0) + 1;
         activityRequests.set(id, mine);
@@ -166,6 +177,9 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
         enable,
         revoke,
         rotate,
+        reveal,
+        keepToken,
+        forgetToken,
         activity,
         dismissToken() {
             if (snapshot.token)
