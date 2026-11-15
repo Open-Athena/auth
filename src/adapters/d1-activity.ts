@@ -1,6 +1,6 @@
-import { activityInteger, activityPath, activityText, checkActivityKind, checkActivityWrite } from '../activity/shape.js'
+import { activityInteger, activityPath, activityText, checkActivityGrouping, checkActivityKind, checkActivityWrite } from '../activity/shape.js'
 import { fmtGap } from '../activity/render.js'
-import { ACTIVITY_LINES, ACTIVITY_SESSIONS, type ActivityBurst, type ActivityKind, type ActivityLine, type ActivityStore, RESUME_S } from '../activity/types.js'
+import { ACTIVITY_LINES, ACTIVITY_SESSIONS, type ActivityBurst, type ActivityKind, type ActivityLine, type ActivityStore } from '../activity/types.js'
 
 interface BurstRow {
   id: string
@@ -73,21 +73,30 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
       kind, policy.record, policy.notify).run()
     },
 
-    async append(e, nowS, gapS) {
+    async append(e, nowS, grouping) {
       checkActivityWrite(e)
       activityInteger(nowS, 'receipt time')
-      activityInteger(gapS, 'gap', 1)
+      const { gapS, resumeS, maxSpanS, by } = checkActivityGrouping(grouping)
       const proposed = crypto.randomUUID()
-      const latest = `SELECT id FROM activity_bursts WHERE actor_id = ? AND origin = ? AND purging = 0
-        ORDER BY last_ts DESC, id DESC LIMIT 1`
-      const eligible = `SELECT id FROM activity_bursts WHERE id = (${latest}) AND last_ts BETWEEN ? AND ?`
-      const eligibleArgs = [e.actor.id, e.origin, e.ts - gapS, e.ts + gapS] as const
-      // Past the gap, a tab's session rejoins the newest burst it was already in (within RESUME_S): one tab, one thread.
-      const resumable = `SELECT b.id FROM activity_bursts b JOIN activity_burst_sessions s ON s.burst_id = b.id
-        WHERE s.session_id = ? AND b.actor_id = ? AND b.origin = ? AND b.purging = 0 AND b.last_ts BETWEEN ? AND ?
-        ORDER BY b.last_ts DESC, b.id DESC LIMIT 1`
       const sid = e.sessionId ?? null
-      const resumeArgs = [sid, e.actor.id, e.origin, e.ts - RESUME_S, e.ts] as const
+      // `by: 'session'`: a tab's events continue the burst its session started; events with no session join the actor's latest.
+      const bySession = by === 'session' && sid !== null
+      const latest = `SELECT id FROM activity_bursts WHERE actor_id = ? AND origin = ?${bySession ? ' AND session_key = ?' : ''} AND purging = 0
+        ORDER BY last_ts DESC, id DESC LIMIT 1`
+      const latestArgs = bySession ? [e.actor.id, e.origin, sid] as const : [e.actor.id, e.origin] as const
+      // A burst never spans more than `maxSpanS`: past it, even steady activity starts a new one.
+      const spanFloor = maxSpanS === null ? -1 : e.ts - maxSpanS
+      const eligible = `SELECT id FROM activity_bursts WHERE id = (${latest}) AND last_ts BETWEEN ? AND ? AND first_ts >= ?`
+      const eligibleArgs = [...latestArgs, e.ts - gapS, e.ts + gapS, spanFloor] as const
+      // Past the gap, a tab's session rejoins the newest burst it was already in (within `resumeS`): one tab, one thread.
+      const resumable = bySession
+        ? `SELECT b.id FROM activity_bursts b WHERE b.id = (${latest}) AND b.last_ts BETWEEN ? AND ? AND b.first_ts >= ?`
+        : `SELECT b.id FROM activity_bursts b JOIN activity_burst_sessions s ON s.burst_id = b.id
+          WHERE s.session_id = ? AND b.actor_id = ? AND b.origin = ? AND b.purging = 0 AND b.last_ts BETWEEN ? AND ? AND b.first_ts >= ?
+          ORDER BY b.last_ts DESC, b.id DESC LIMIT 1`
+      const resumeArgs = bySession
+        ? [...latestArgs, e.ts - resumeS, e.ts, spanFloor] as const
+        : [sid, e.actor.id, e.origin, e.ts - resumeS, e.ts, spanFloor] as const
       const detailed = e.policy.record === 'line'
       // The resumption's own line says after how long: read the candidate first, and write the line only if the batch
       // still finds that same candidate (a racing append that changed the answer just loses the line, not the event).
@@ -98,10 +107,10 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
         : null
       const resumePolicy = e.resumePolicy
       const statements = [
-        sql(`INSERT INTO activity_bursts (id, actor_id, actor_name, via, origin, first_ts, last_ts, received_ts)
-          SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)
+        sql(`INSERT INTO activity_bursts (id, actor_id, actor_name, via, origin, first_ts, last_ts, received_ts, session_key)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)
           AND NOT EXISTS (${eligible}) AND NOT EXISTS (${resumable})`,
-        proposed, e.actor.id, e.actor.name, e.actor.via, e.origin, e.ts, e.ts, nowS, e.id, ...eligibleArgs, ...resumeArgs),
+        proposed, e.actor.id, e.actor.name, e.actor.via, e.origin, e.ts, e.ts, nowS, bySession ? sid : null, e.id, ...eligibleArgs, ...resumeArgs),
         ...(resume && resumePolicy
           ? [sql(`INSERT INTO activity_events (id, burst_id, ts, kind, record, notify, line, path, session_id)
               SELECT ?, ?, ?, 'resume', ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM activity_events WHERE id = ?)

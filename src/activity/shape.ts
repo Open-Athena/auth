@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityKind, ActivityKinds, ActivityWrite } from './types.js'
+import type { ActivityEvent, ActivityGrouping, ActivityKind, ActivityKinds, ActivityWrite } from './types.js'
 
 export function activityText(value: string, field: string, max = 512): void {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\u0000-\u001f]/.test(value)) {
@@ -47,4 +47,12 @@ export function checkActivityWrite(e: ActivityWrite): void {
   checkActivityEvent(e)
   checkActivityKind(e.kind, e.policy)
   if (e.policy.record === 'off') throw new TypeError('activity: cannot append an off kind')
+}
+
+export function checkActivityGrouping(g: ActivityGrouping): ActivityGrouping {
+  activityInteger(g.gapS, 'gap', 1)
+  activityInteger(g.resumeS, 'resume window')
+  if (g.maxSpanS !== null) activityInteger(g.maxSpanS, 'max span', 1)
+  if (g.by !== 'actor' && g.by !== 'session') throw new TypeError('activity: group by actor or session')
+  return g
 }

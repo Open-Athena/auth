@@ -21,9 +21,22 @@ export const DEFAULT_ACTIVITY_KINDS: ActivityKinds = {
   denied: { record: 'line', notify: 'line' },
 }
 
+/** Inactivity that ends a burst. Web analytics' usual session timeout is 30 minutes (Catledge & Pitkow, 1995). */
 export const BATCH_GAP_S = 15 * 60
 /** How far back a tab's session resumes its own earlier burst. */
 export const RESUME_S = 7 * 86400
+
+/** How events are grouped into bursts (one burst is one Slack thread). */
+export interface ActivityGrouping {
+  /** Inactivity timeout: an event more than this after the burst's last one starts a new burst. */
+  gapS: number
+  /** How long after a gap a tab's session still rejoins its own burst, with a `resume` line; 0 never. */
+  resumeS: number
+  /** The longest a burst may span, first event to last; past it a new one starts even without a gap. Null: no cap. */
+  maxSpanS: number | null
+  /** `actor`: one burst for a person across their tabs. `session`: one per tab (events with no session join the actor's latest). */
+  by: 'actor' | 'session'
+}
 export const ACTIVITY_LINES = 100
 
 export interface ActivityActor {
@@ -124,7 +137,7 @@ export interface ActivityFilter {
 export interface ActivityStore {
   readKinds(): Promise<Record<string, ActivityKind>>
   writeKind(kind: string, policy: ActivityKind): Promise<void>
-  append(event: ActivityWrite, nowS: number, gapS: number): Promise<Exclude<ActivityRecordResult, { status: 'off' }>>
+  append(event: ActivityWrite, nowS: number, grouping: ActivityGrouping): Promise<Exclude<ActivityRecordResult, { status: 'off' }>>
   get(id: string): Promise<ActivityBurst | null>
   list(filter?: ActivityFilter): Promise<ActivityBurst[]>
   pending(sink: string, limit: number): Promise<string[]>

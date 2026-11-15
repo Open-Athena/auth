@@ -3,7 +3,7 @@
  * `record` never sends network requests; explicitly await `deliver`/`flush`
  * (or pass their promises to waitUntil). A cron/queue may retry `flush`.
  *
- * Limits: no durable job scheduler, throttling, session resumption, admin
+ * Limits: no durable job scheduler, throttling, admin
  * routes, or UI. Policies are captured at ingestion, not retroactive.
  * Dedupe lasts until retention deletes the receipt. Reusing an event ID
  * with changed content is still a duplicate (first accepted write wins).
@@ -11,8 +11,8 @@
  * timeout/crash after a remote create, or a send outliving its lease, may
  * duplicate a message. A stale remote edit may need a later flush to repair.
  */
-import { activityInteger, activityText, checkActivityEvent, checkActivityKind, checkActivityKinds } from './shape.js'
-import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, type ActivityEvent, type ActivityKind, type ActivityKinds,
+import { activityInteger, activityText, checkActivityEvent, checkActivityGrouping, checkActivityKind, checkActivityKinds } from './shape.js'
+import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, RESUME_S, type ActivityGrouping, type ActivityEvent, type ActivityKind, type ActivityKinds,
   type ActivityBurst, type ActivityRecordResult, type ActivitySendContext, type ActivitySink, type ActivityStore } from './types.js'
 
 export * from './types.js'
@@ -26,7 +26,14 @@ export interface ActivityFeedOptions {
   /** Custom kinds and overrides for the generic defaults. Undeclared kinds are off. */
   kinds?: ActivityKinds
   sinks?: readonly ActivitySink[]
+  /** Inactivity timeout, seconds (default `BATCH_GAP_S`, 15 min; web analytics' convention is 30). See `ActivityGrouping`. */
   gapS?: number
+  /** How long a tab's session rejoins its own burst after a gap (default `RESUME_S`, 7 days; 0 never). */
+  resumeS?: number
+  /** Start a new burst once one spans this long, even without a gap (default none). */
+  maxSpanS?: number | null
+  /** One burst per actor across their tabs (default), or one per tab's session. */
+  by?: ActivityGrouping['by']
   leaseS?: number
   /** Epoch seconds; injectable for deterministic tests. */
   now?: () => number
@@ -68,7 +75,7 @@ export function activityFeed(options: ActivityFeedOptions) {
   const { store, gapS = BATCH_GAP_S, leaseS = 60, now = () => Math.floor(Date.now() / 1000) } = options
   const defaults = { ...DEFAULT_ACTIVITY_KINDS, ...options.kinds }
   checkActivityKinds(defaults)
-  activityInteger(gapS, 'gap', 1)
+  const grouping = checkActivityGrouping({ gapS, resumeS: options.resumeS ?? RESUME_S, maxSpanS: options.maxSpanS ?? null, by: options.by ?? 'actor' })
   activityInteger(leaseS, 'lease', 1)
   const sinks = [...(options.sinks ?? [])]
   const ids = new Set<string>()
@@ -140,7 +147,7 @@ export function activityFeed(options: ActivityFeedOptions) {
       const policy = Object.hasOwn(configured, event.kind) ? configured[event.kind] : undefined
       if (!policy || policy.record === 'off') return { status: 'off', burstId: null }
       const resumePolicy = Object.hasOwn(configured, 'resume') ? configured.resume : undefined
-      return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), gapS)
+      return store.append({ ...event, policy, ...(resumePolicy ? { resumePolicy } : {}) }, now(), grouping)
     },
     async deliver(burstId: string): Promise<ActivityDelivery[]> {
       const results: ActivityDelivery[] = []
