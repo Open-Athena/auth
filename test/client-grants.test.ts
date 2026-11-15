@@ -60,6 +60,7 @@ const grant = (id: string, o: Partial<Grant> = {}): Grant => ({
   lastUsedAt: null,
   service: false,
   anon: false,
+  kept: false,
   ...o,
 })
 
