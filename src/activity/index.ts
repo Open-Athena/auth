@@ -19,7 +19,7 @@ export * from './types.js'
 export { activityActorFromAuth, sessionLogActivity, accessLogActivity } from './bridges.js'
 export type { SessionActivityOptions, AccessActivityOptions } from './bridges.js'
 export { activityRoutes, type ActivityRoutesOptions } from './routes.js'
-export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, SLACK_FMT, type ActivityFmt, type ActivityLinks } from './render.js'
+export { DISCORD_FMT, fmtGap, renderDetails, renderHeadline, renderKindLines, sessionTag, SLACK_FMT, type ActivityFmt, type ActivityLinks } from './render.js'
 
 export interface ActivityFeedOptions {
   store: ActivityStore

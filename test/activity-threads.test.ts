@@ -1,7 +1,7 @@
 // disky's thread model in the package: one Slack thread per burst (parent, details, one reply per notify=line kind),
 // posted as the actor, edited as the burst grows, resumed by a tab's session, and never posted twice.
 import { afterEach, describe, expect, it } from 'vitest'
-import { activityFeed, type ActivityEvent } from '../src/activity/index.js'
+import { activityFeed, sessionTag, type ActivityEvent, type ActivityKinds } from '../src/activity/index.js'
 import { slackActivitySink } from '../src/activity/slack.js'
 import { d1ActivityStore } from '../src/adapters/d1-activity.js'
 import { testDbRaw } from './d1-shim.js'
@@ -11,7 +11,7 @@ const actor = { id: 'grant:g1', name: 'Ada <Admin>', via: 'grant' }
 const close: (() => void)[] = []
 afterEach(() => { close.splice(0).forEach(done => done()) })
 
-function setup() {
+function setup(more: { timeZone?: string; kinds?: ActivityKinds } = {}) {
   const { db, raw } = testDbRaw(['activity'])
   close.push(() => raw.close())
   const store = d1ActivityStore(db)
@@ -33,8 +33,9 @@ function setup() {
     eventHref: line => (line.path ? `${ORIGIN}${line.path}` : null),
     sessionHref: sid => `${ORIGIN}/admin/sessions?sid=${sid}`,
     burstHref: b => `${ORIGIN}/admin/activity?burst=${b.id}`,
+    ...(more.timeZone ? { timeZone: more.timeZone } : {}),
   })
-  const feed = activityFeed({ store, sinks: [sink], now: () => clock })
+  const feed = activityFeed({ store, sinks: [sink], now: () => clock, ...(more.kinds ? { kinds: more.kinds } : {}) })
   const record = (id: string, ts: number, kind: string, more: Partial<ActivityEvent> = {}) =>
     feed.record({ id, actor, origin: ORIGIN, ts, kind, sessionId: 'tab-1', ...more })
   const parts = () => raw.prepare('SELECT message_id, parts FROM activity_posts').all()
@@ -55,8 +56,8 @@ describe('Slack activity threads', () => {
     const as = { username: 'Ada <Admin>', icon_url: 'https://img.example/ada.png' }
     const common = { channel: 'C1', parse: 'none', unfurl_links: false, unfurl_media: false }
     const parent = `share link · 1 page load · 1 URL change · 1 error · 1970-01-01 00:16–00:17Z · <${ORIGIN}/admin/activity?burst=${burstId}|activity>`
-    const details = `Pages: <${ORIGIN}/pm|/pm> → <${ORIGIN}/pm/2|/pm/2>\n<${ORIGIN}/admin/sessions?sid=tab-1|session tab-1>`
-    const errors = `*1 error*\n• <${ORIGIN}/admin/sessions?sid=tab-1|00:17> TypeError: &lt;b&gt;boom&lt;/b&gt; &amp; co on <${ORIGIN}/pm/2|/pm/2>`
+    const details = `Pages: <${ORIGIN}/pm|/pm> → <${ORIGIN}/pm/2|/pm/2>\nSession: <${ORIGIN}/admin/sessions?sid=tab-1|🐳sj>`
+    const errors = `*1 error*\n• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|00:17> TypeError: &lt;b&gt;boom&lt;/b&gt; &amp; co on <${ORIGIN}/pm/2|/pm/2>`
     expect(t.calls).toEqual([
       ['chat.postMessage', { ...common, text: parent, ...as }],
       ['chat.postMessage', { ...common, thread_ts: '1.000', text: details, ...as }],
@@ -84,8 +85,8 @@ describe('Slack activity threads', () => {
     await t.feed.deliver(first.burstId!)
     expect(t.calls.map(([, b]) => b.text)).toEqual([
       `share link · 2 page loads · 1 resumption · 1970-01-01 00:16–02:16Z · <${ORIGIN}/admin/activity?burst=${first.burstId}|activity>`,
-      `Pages: <${ORIGIN}/pm|/pm> ×2\n<${ORIGIN}/admin/sessions?sid=tab-1|session tab-1>`,
-      `*1 resumption*\n• <${ORIGIN}/admin/sessions?sid=tab-1|02:16> after 2h 00m on <${ORIGIN}/pm|/pm>`,
+      `Pages: <${ORIGIN}/pm|/pm> ×2\nSession: <${ORIGIN}/admin/sessions?sid=tab-1|🐳sj>`,
+      `*1 resumption*\n• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|02:16> after 2h 00m on <${ORIGIN}/pm|/pm>`,
     ])
   })
 
@@ -105,5 +106,57 @@ describe('Slack activity threads', () => {
     ])
     // The refused call took no Slack timestamp, so the retried reply is the third message.
     expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify({ details: '2.000', 'kind:error': '3.000' }) }])
+  })
+
+  it("several tabs share one thread, each line led by its session's tag; a server line takes the latest tab's", async () => {
+    const t = setup()
+    const { burstId } = await t.record('e1', 1000, 'error', { line: 'boom', path: '/a' })
+    await t.record('e2', 1010, 'error', { line: 'boom', path: '/a', sessionId: 'tab-2' })
+    await t.record('e3', 1020, 'error', { line: 'boom', path: '/a' })
+    await t.record('e4', 1030, 'error', { line: 'quota exceeded', sessionId: undefined })
+    await t.feed.deliver(burstId!)
+    const s = (sid: string, hm: string) => `<${ORIGIN}/admin/sessions?sid=${sid}|${hm}>`
+    expect([sessionTag('tab-1'), sessionTag('tab-2')]).toEqual(['🐳sj', '🐯uy'])
+    expect(t.calls.slice(1).map(([, b]) => b.text)).toEqual([
+      `Sessions: ${s('tab-1', '🐳sj')} · ${s('tab-2', '🐯uy')}`,
+      [
+        '*4 errors*',
+        // Repeats fold within a tab, not across tabs.
+        `• 🐳sj ${s('tab-1', '00:16')} boom on <${ORIGIN}/a|/a> ×2`,
+        `• 🐯uy ${s('tab-2', '00:16')} boom on <${ORIGIN}/a|/a>`,
+        `• 🐳sj ${s('tab-1', '00:17')} quota exceeded`,
+      ].join('\n'),
+    ])
+  })
+
+  it('shows times in the zone the app gives, with its abbreviation', async () => {
+    const t = setup({ timeZone: 'America/New_York' })
+    // 2026-11-15 01:18Z is 20:18 the evening before in New York.
+    const at = Date.UTC(2026, 10, 15, 1, 18) / 1000
+    t.at(at)
+    const { burstId } = await t.record('e1', at, 'error', { line: 'boom' })
+    await t.record('e2', at + 600, 'error', { line: 'boom' })
+    await t.feed.deliver(burstId!)
+    expect(t.calls.map(([, b]) => String(b.text).split('\n').at(-1))).toEqual([
+      `share link · 2 errors · 2026-11-14 20:18–20:28 EST · <${ORIGIN}/admin/activity?burst=${burstId}|activity>`,
+      `Session: <${ORIGIN}/admin/sessions?sid=tab-1|🐳sj>`,
+      `• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|20:18> boom ×2`,
+    ])
+    expect(() => setup({ timeZone: 'Mars/Olympus' })).toThrow(RangeError)
+  })
+
+  it("doesn't repeat itself: pages with their own reply leave the trail, and a line naming its page doesn't add it again", async () => {
+    const t = setup({ kinds: { view: { record: 'line', notify: 'line' } } })
+    const { burstId } = await t.record('v1', 1000, 'view', { line: 'view /rs', path: '/rs' })
+    await t.record('v2', 1010, 'view', { path: '/jd' })
+    await t.feed.deliver(burstId!)
+    expect(t.calls.slice(1).map(([, b]) => b.text)).toEqual([
+      `Session: <${ORIGIN}/admin/sessions?sid=tab-1|🐳sj>`,
+      [
+        '*2 page loads*',
+        `• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|00:16> <${ORIGIN}/rs|view /rs>`,
+        `• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|00:16> <${ORIGIN}/jd|/jd>`,
+      ].join('\n'),
+    ])
   })
 })

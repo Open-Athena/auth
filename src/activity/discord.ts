@@ -1,5 +1,5 @@
 import { activityText } from './shape.js'
-import { type ActivityLinks, renderDiscordMessage } from './render.js'
+import { type ActivityLinks, checkTimeZone, renderDiscordMessage } from './render.js'
 import type { ActivitySink } from './types.js'
 
 /** One message per burst (Discord webhooks have no threads to edit into), with the same links as Slack's. */
@@ -19,6 +19,7 @@ export function discordActivitySink(options: DiscordActivityOptions): ActivitySi
     throw new TypeError('activity: invalid Discord webhook')
   }
   if (options.staffOnly !== true) throw new TypeError('activity: Discord destination must be staff-only')
+  checkTimeZone(options.timeZone)
   return {
     id: options.id,
     staffOnly: true,

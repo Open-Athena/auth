@@ -36,7 +36,9 @@ Proposed, with the current behavior as defaults:
 
 Pass per-JD `buildLink` entries; set the `anon` labels; pick grouping knobs (likely `by: 'actor'`, 30-min gap); bump the dist.
 
-## Status
+## Status: done
 
-- §1–3 done: `buildLink` may return `{ label, url }[]` (`GrantLinks`), shown as a row per page with its own Copy plus "Copy all", at mint and after Rotate. `NO_AUTOFILL` (exported) is on the memo, recipient name, email and face inputs and the holder editor. `anonChip` (`'label' | 'pseudonym' | 'hidden'`, on `GrantsPanel`, `GrantMintForm`, `GrantCard`) picks the anon checkbox's default wording to match the app's `<WhoamiChip anon=…>`.
-- §4: in progress.
+- §1–3 (`b3d0841`): `buildLink` may return `{ label, url }[]` (`GrantLinks`), shown as a row per page with its own Copy plus "Copy all" (`label: url` lines), at mint and after Rotate. `NO_AUTOFILL` (exported) is on the memo, recipient name, email and face inputs and the holder editor. `anonChip` (`'label' | 'pseudonym' | 'hidden'`, on `GrantsPanel`, `GrantMintForm`, `GrantCard`) picks the anon checkbox's default wording to match the app's `<WhoamiChip anon=…>`; `hidden` reads "Anonymous: the recipient sees no name, photo or account menu".
+- §4 knobs (`15ed019`): `activityFeed({ gapS, resumeS, maxSpanS, by })`. Defaults are today's behavior (15-min gap, 7-day resume, no span cap, `by: 'actor'`); the docs cite the 30-minute convention rather than changing the default. `maxSpanS` also bounds resuming. `by: 'session'` keys a burst by the session that started it (`activity_bursts.session_key`), and session-less events join the actor's latest.
+- §4 rendering: `sessionTag(sid)` (`🐳sj`: one of 32 emoji plus two of 31 unambiguous characters, ~30k tags) leads each line in a kind reply; a line with no session takes the latest tab's before it; repeats fold only within a tab. The details reply lists `Session(s): <tags>`, each linked by `sessionHref`, replacing `session <id>`. `timeZone` on the Slack and Discord sinks (an IANA zone; validated at construction) renders `2026-11-14 20:18–20:28 EST`; UTC stays `…Z`. A kind with its own reply (e.g. `view` at notify `line`) is left out of the page trail, and a line naming its page (`view /rs`) links to it without "on /rs".
+- **Migration**: `migrations/activity/0004_session_groups.sql` must be applied before deploying this dist, whatever `by` is (new bursts write `session_key`).

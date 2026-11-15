@@ -1,5 +1,5 @@
 import { activityText } from './shape.js'
-import { type ActivityLinks, bound, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js'
+import { type ActivityLinks, bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js'
 import type { ActivityActor, ActivityBurst, ActivitySink } from './types.js'
 
 /** Who a burst's posts are sent as. Needs the bot's `chat:write.customize` scope; without it Slack posts as the bot. */
@@ -45,7 +45,9 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
     ...(options.eventHref ? { eventHref: options.eventHref } : {}),
     ...(options.sessionHref ? { sessionHref: options.sessionHref } : {}),
     ...(options.burstHref ? { burstHref: options.burstHref } : {}),
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   }
+  checkTimeZone(options.timeZone)
 
   async function call(method: 'chat.postMessage' | 'chat.update', body: Record<string, unknown>): Promise<string> {
     const response = await (options.fetch ?? fetch)(`https://slack.com/api/${method}`, {
