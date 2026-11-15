@@ -35,3 +35,8 @@ Proposed, with the current behavior as defaults:
 ## What `jobs` will do after this lands
 
 Pass per-JD `buildLink` entries; set the `anon` labels; pick grouping knobs (likely `by: 'actor'`, 30-min gap); bump the dist.
+
+## Status
+
+- §1–3 done: `buildLink` may return `{ label, url }[]` (`GrantLinks`), shown as a row per page with its own Copy plus "Copy all", at mint and after Rotate. `NO_AUTOFILL` (exported) is on the memo, recipient name, email and face inputs and the holder editor. `anonChip` (`'label' | 'pseudonym' | 'hidden'`, on `GrantsPanel`, `GrantMintForm`, `GrantCard`) picks the anon checkbox's default wording to match the app's `<WhoamiChip anon=…>`.
+- §4: in progress.

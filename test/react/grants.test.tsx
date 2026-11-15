@@ -253,3 +253,69 @@ describe('anonymous and service links', () => {
     expect(patches).toEqual([{ service: true }, { anon: true }])
   })
 })
+
+describe('a link per page', () => {
+  const pages = (g: Grant, t: string) => [
+    { label: 'All roles', url: `https://x.test/?key=${t}` },
+    ...g.scopes.map(s => ({ label: SCOPES.find(x => x.id === s)!.label, url: `https://x.test/${s}?key=${t}` })),
+  ]
+
+  it('shows a row per page with its own copy, and copies them all as labeled lines', async () => {
+    renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
+    await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    const rows = await screen.findAllByRole('textbox', { name: /^(All roles|Alpha|Beta)$/ })
+    expect(rows.map(r => [r.getAttribute('aria-label'), (r as HTMLInputElement).value])).toEqual([
+      ['All roles', 'https://x.test/?key=token-g1'],
+      ['Alpha', 'https://x.test/alpha?key=token-g1'],
+      ['Beta', 'https://x.test/beta?key=token-g1'],
+    ])
+    await user.click(screen.getAllByRole('button', { name: 'Copy' })[2]!)
+    expect([await navigator.clipboard.readText(), screen.getAllByRole('button', { name: /^Cop/ }).map(b => b.textContent)])
+      .toEqual(['https://x.test/beta?key=token-g1', ['Copy', 'Copy', 'Copied', 'Copy all']])
+    await user.click(screen.getByRole('button', { name: 'Copy all' }))
+    expect(await navigator.clipboard.readText()).toBe([
+      'All roles: https://x.test/?key=token-g1',
+      'Alpha: https://x.test/alpha?key=token-g1',
+      'Beta: https://x.test/beta?key=token-g1',
+    ].join('\n'))
+    // A rotated link shows the same rows, with the new token.
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    await user.click(screen.getByRole('button', { name: 'Rotate' }))
+    await user.click(screen.getByRole('button', { name: 'Kill the old link?' }))
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Beta' }) as HTMLInputElement).value).toBe('https://x.test/beta?key=rotated-g1'))
+  })
+})
+
+describe('password managers', () => {
+  const IGNORE = { autocomplete: 'off', 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' }
+  const attrs = (el: HTMLElement) => Object.fromEntries(Object.keys(IGNORE).map(k => [k, el.getAttribute(k)]))
+
+  it("are told to stay out of the recipient's fields, at mint and in the holder editor", async () => {
+    const client = backend()
+    await client.grants.mint({ name: 'For Bob', scopes: ['alpha'] })
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} avatarEndpoint="/api/auth/avatar" />)
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article')
+    const mint = ['Memo', 'Holder', 'Email', 'Face'].map(name => attrs(screen.getAllByRole('textbox', { name })[0]!))
+    await user.click(within(card).getByRole('button', { name: 'edit' }))
+    const editor = within(card).getAllByRole('textbox').map(attrs)
+    expect({ mint, editor }).toEqual({ mint: [IGNORE, IGNORE, IGNORE, IGNORE], editor: [IGNORE, IGNORE, IGNORE] })
+  })
+})
+
+describe('anon wording follows the chip', () => {
+  it.each([
+    ['label', "Anonymous: the recipient doesn't see this name or photo"],
+    ['pseudonym', 'Anonymous: the recipient sees a made-up name, not this name or photo'],
+    ['hidden', 'Anonymous: the recipient sees no name, photo or account menu'],
+  ] as const)('%s', async (anonChip, text) => {
+    const client = backend()
+    await client.grants.mint({ name: 'For Bob', scopes: ['alpha'] })
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} anonChip={anonChip} />)
+    await screen.findByRole('article')
+    expect(screen.getAllByRole('checkbox', { name: /^Anonymous/ }).map(c => c.parentElement!.textContent)).toEqual([text, text])
+  })
+})

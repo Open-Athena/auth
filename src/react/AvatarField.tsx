@@ -208,7 +208,11 @@ export function AvatarField({
           id={id}
           type="text"
           inputMode="url"
+          // A face URL, often someone else's: never a password manager's to fill.
           autoComplete="off"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
           spellCheck={false}
           placeholder={labels.placeholder ?? 'GitHub, Bluesky, or Mastodon profile, image URL, or website'}
           value={text}

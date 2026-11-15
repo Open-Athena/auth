@@ -51,46 +51,81 @@ const ago = (ts: number | null): string => {
   return `${Math.floor(s / 86400)}d ago`
 }
 
+/** One page a link opens: the same key works on any path the app serves. */
+export interface GrantLinkEntry {
+  label: string
+  url: string
+}
+
+/** A link's URL, or one URL per page it opens (labeled), for a link with several scopes. */
+export type GrantLinks = string | readonly GrantLinkEntry[]
+
+/** Link shape is the app's: e.g. `(g, t) => shareUrl(t, `${origin}/${g.scopes[0]}/`)`, or one entry per scope. */
+export type BuildGrantLink = (grant: Grant, token: string) => GrantLinks
+
+/**
+ * Keeps password managers (1Password, LastPass, Bitwarden) from offering to fill a field: these are a recipient's
+ * details, never the admin's own, and `autoComplete="off"` doesn't stop them.
+ */
+export const NO_AUTOFILL = { autoComplete: 'off', 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' } as const
+
 export interface GrantLinkProps {
   grant: Grant
   /** The one-time token. Never kept anywhere but the controller's memory. */
   token: string
-  /** Link shape is the app's: e.g. `(g, t) => shareUrl(t, `${origin}/${g.scopes[0]}/`)`. */
-  buildLink: (grant: Grant, token: string) => string
+  buildLink: BuildGrantLink
   onDismiss?: () => void
-  labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyFailed' | 'dismiss', ReactNode>>
+  labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyAll' | 'copyFailed' | 'dismiss', ReactNode>>
   classNames?: GrantsClassNames
 }
 
-/** The moment a link exists outside its recipient's browser: show it, offer a copy, and say it won't come back. */
+/**
+ * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy,
+ * and say it won't come back.
+ */
 export function GrantLink({ grant, token, buildLink, onDismiss, labels = {}, classNames }: GrantLinkProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
-  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const link = buildLink(grant, token)
+  /** Which copy last succeeded (a row's index, or `all`), or that one failed. */
+  const [copy, setCopy] = useState<{ copied: number | 'all' } | 'failed' | 'idle'>('idle')
+  const built = buildLink(grant, token)
+  const entries: { label: string | null; url: string }[] = typeof built === 'string' ? [{ label: null, url: built }] : built.map(e => ({ ...e }))
+  const copyText = async (text: string, which: number | 'all') => {
+    const ok = await navigator.clipboard.writeText(text).then(() => true, () => false)
+    setCopy(ok ? { copied: which } : 'failed')
+    if (ok) setTimeout(() => setCopy(c => (typeof c === 'object' && c.copied === which ? 'idle' : c)), 1500)
+  }
+  const copied = (which: number | 'all') => typeof copy === 'object' && copy.copied === which
   return (
     <div className={cx.token}>
       <p className={cx.muted}>
         {labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again."}
       </p>
-      <div className={cx.copyRow}>
-        <input className={cx.input} readOnly value={link} aria-label="Share link" onFocus={e => e.currentTarget.select()} />
-        <button
-          className={cx.button}
-          type="button"
-          onClick={async () => {
-            const ok = await navigator.clipboard.writeText(link).then(() => true, () => false)
-            setCopy(ok ? 'copied' : 'failed')
-            if (ok) setTimeout(() => setCopy('idle'), 1500)
-          }}
-        >
-          {copy === 'copied' ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy')}
-        </button>
-        {onDismiss && (
-          <button className={cx.button} type="button" onClick={onDismiss}>
-            {labels.dismiss ?? 'Done'}
+      {entries.map(({ label, url }, i) => (
+        <div key={i} className={cx.copyRow}>
+          {label !== null && <span>{label}</span>}
+          <input className={cx.input} readOnly value={url} aria-label={label ?? 'Share link'} onFocus={e => e.currentTarget.select()} />
+          <button className={cx.button} type="button" onClick={() => void copyText(url, i)}>
+            {copied(i) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy')}
           </button>
-        )}
-      </div>
+          {onDismiss && entries.length === 1 && (
+            <button className={cx.button} type="button" onClick={onDismiss}>
+              {labels.dismiss ?? 'Done'}
+            </button>
+          )}
+        </div>
+      ))}
+      {entries.length > 1 && (
+        <div className={cx.row}>
+          <button className={cx.button} type="button" onClick={() => void copyText(entries.map(e => `${e.label}: ${e.url}`).join('\n'), 'all')}>
+            {copied('all') ? (labels.copied ?? 'Copied') : (labels.copyAll ?? 'Copy all')}
+          </button>
+          {onDismiss && (
+            <button className={cx.button} type="button" onClick={onDismiss}>
+              {labels.dismiss ?? 'Done'}
+            </button>
+          )}
+        </div>
+      )}
       {copy === 'failed' && (
         <p className={cx.error} role="alert">
           {labels.copyFailed ?? "Couldn't reach the clipboard. Select the link and copy it by hand."}
@@ -101,6 +136,15 @@ export function GrantLink({ grant, token, buildLink, onDismiss, labels = {}, cla
 }
 
 const DAY_S = 86400
+
+/** How the app's `WhoamiChip` shows an `anon` link to its recipient; picks the anon checkbox's default wording. */
+export type AnonChipMode = 'label' | 'pseudonym' | 'hidden'
+
+const ANON_COPY: Record<AnonChipMode, string> = {
+  label: "Anonymous: the recipient doesn't see this name or photo",
+  pseudonym: 'Anonymous: the recipient sees a made-up name, not this name or photo',
+  hidden: 'Anonymous: the recipient sees no name, photo or account menu',
+}
 
 export interface GrantMintFormProps {
   /** Rendered as checkboxes; at least one must be chosen. A lone scope starts checked. */
@@ -120,6 +164,8 @@ export interface GrantMintFormProps {
   allowlist?: boolean
   /** The `<basePath>/avatar` route, to offer choosing the holder's face. */
   avatarEndpoint?: string
+  /** Match the app's `<WhoamiChip anon=…>`, so the anon checkbox says what the recipient will see. Default `label`. */
+  anonChip?: AnonChipMode
   labels?: Partial<
     Record<
       | 'memo' | 'holder' | 'email' | 'allowlist' | 'avatar' | 'scopes' | 'expires' | 'never' | 'maxRedeems' | 'unlimited' | 'submit' | 'submitting' | 'scopeRequired'
@@ -143,6 +189,7 @@ export function GrantMintForm({
   maxRedeems = [0, 1, 3],
   allowlist = false,
   avatarEndpoint,
+  anonChip = 'label',
   labels = {},
   classNames,
 }: GrantMintFormProps) {
@@ -198,15 +245,15 @@ export function GrantMintForm({
     <form className={cx.form} onSubmit={submit}>
       <label>
         <span>{labels.memo ?? 'Memo'}</span>
-        <input className={cx.input} name="memo" value={memo} onChange={e => setMemo(e.target.value)} autoComplete="off" placeholder="private: never shown to the recipient" />
+        <input className={cx.input} name="memo" value={memo} onChange={e => setMemo(e.target.value)} {...NO_AUTOFILL} placeholder="private: never shown to the recipient" />
       </label>
       <label>
         <span>{labels.holder ?? 'Holder'}</span>
-        <input className={cx.input} name="holder" value={holder} onChange={e => setHolder(e.target.value)} autoComplete="off" />
+        <input className={cx.input} name="holder" value={holder} onChange={e => setHolder(e.target.value)} {...NO_AUTOFILL} />
       </label>
       <label>
         <span>{labels.email ?? 'Email'}</span>
-        <input className={cx.input} name="email" type="email" value={service ? '' : email} disabled={service} onChange={e => setEmail(e.target.value)} autoComplete="off" />
+        <input className={cx.input} name="email" type="email" value={service ? '' : email} disabled={service} onChange={e => setEmail(e.target.value)} {...NO_AUTOFILL} />
       </label>
       {allowlist && !service && (
         <label className={cx.check}>
@@ -231,7 +278,7 @@ export function GrantMintForm({
       )}
       <label className={cx.check}>
         <input type="checkbox" name="anon" checked={anon} onChange={e => setAnon(e.target.checked)} />
-        <span>{labels.anon ?? "Anonymous: the recipient doesn't see this name or photo"}</span>
+        <span>{labels.anon ?? ANON_COPY[anonChip]}</span>
       </label>
       <label className={cx.check}>
         <input type="checkbox" name="service" checked={service} onChange={e => setService(e.target.checked)} />
@@ -361,11 +408,13 @@ export interface GrantCardProps {
    * A scope no longer offered stays listed, so a save can't drop it unnoticed.
    */
   editScopes?: boolean
-  buildLink: (grant: Grant, token: string) => string
+  buildLink: BuildGrantLink
   allowlist?: boolean
   avatarEndpoint?: string
   /** After the holder is edited: binding an email may have added an allowlist row. */
   onHolderSaved?: () => void
+  /** See `GrantMintFormProps.anonChip`. */
+  anonChip?: AnonChipMode
   labels?: GrantLinkProps['labels'] &
     Partial<
       Record<
@@ -379,7 +428,7 @@ export interface GrantCardProps {
 }
 
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, labels = {}, classNames }: GrantCardProps) {
+export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', labels = {}, classNames }: GrantCardProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const [editing, setEditing] = useState(false)
   const { activity: loadActivity } = grants
@@ -523,7 +572,7 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
         <div className={cx.row}>
           <label className={cx.check}>
             <input type="checkbox" name="anon" checked={grant.anon} disabled={busy} onChange={() => void grants.update(grant.id, { anon: !grant.anon })} />
-            <span>{labels.anonToggle ?? "Anonymous: the recipient doesn't see this name or photo"}</span>
+            <span>{labels.anonToggle ?? ANON_COPY[anonChip]}</span>
           </label>
           <label className={cx.check}>
             <input
@@ -606,12 +655,12 @@ function HolderEditor({
     >
       <label>
         <span>{l.holderName ?? "Holder's name"}</span>
-        <input className={cx.input} type="text" value={name} onChange={e => setName(e.target.value)} autoFocus />
+        <input className={cx.input} type="text" value={name} onChange={e => setName(e.target.value)} autoFocus {...NO_AUTOFILL} />
       </label>
       {grant.email === null && !grant.service && (
         <label>
           <span>{l.holderEmail ?? 'Their email'}</span>
-          <input className={cx.input} type="email" value={email} placeholder="optional" onChange={e => setEmail(e.target.value)} />
+          <input className={cx.input} type="email" value={email} placeholder="optional" onChange={e => setEmail(e.target.value)} {...NO_AUTOFILL} />
         </label>
       )}
       {bind && allowlist && (
@@ -649,8 +698,8 @@ function HolderEditor({
 }
 
 export type GrantsPanelProps = ({ client: AuthClient; controller?: undefined } | { controller: GrantsController; client?: undefined }) &
-  Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint'> & {
-    buildLink: (grant: Grant, token: string) => string
+  Pick<GrantMintFormProps, 'scopes' | 'defaultMemo' | 'expiryDays' | 'defaultExpiryDays' | 'maxRedeems' | 'allowlist' | 'avatarEndpoint' | 'anonChip'> & {
+    buildLink: BuildGrantLink
     /** Re-read the list this often. Off by default. */
     pollMs?: number
     /** A new link. Its token stays in the panel, not here. */
@@ -694,6 +743,7 @@ export function GrantsPanel({
   maxRedeems,
   allowlist,
   avatarEndpoint,
+  anonChip,
 }: GrantsPanelProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const grants = useGrants(controller ? { controller, pollMs } : { client: client!, pollMs })
@@ -723,6 +773,7 @@ export function GrantsPanel({
           {...(maxRedeems === undefined ? {} : { maxRedeems })}
           {...(allowlist === undefined ? {} : { allowlist })}
           {...(avatarEndpoint === undefined ? {} : { avatarEndpoint })}
+          {...(anonChip === undefined ? {} : { anonChip })}
         />
       </section>
       <section className={classNames?.section}>
@@ -749,6 +800,7 @@ export function GrantsPanel({
               classNames={classNames}
               {...(onChanged ? { onHolderSaved: onChanged } : {})}
               {...(avatarEndpoint === undefined ? {} : { avatarEndpoint })}
+              {...(anonChip === undefined ? {} : { anonChip })}
             />
           ))}
         </div>
