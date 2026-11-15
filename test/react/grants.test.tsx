@@ -4,7 +4,7 @@ import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAuthClient } from '../../src/client/api.js'
-import type { Grant, MintInput } from '../../src/core/http.js'
+import type { Grant, GrantActivity, GrantUpdateInput, MintInput } from '../../src/core/http.js'
 import { GrantMintForm, GrantsPanel } from '../../src/react/Grants.js'
 import { renderWithQuery } from './helpers.js'
 
@@ -70,7 +70,7 @@ describe('GrantMintForm', () => {
 })
 
 /** The grant routes, in memory: enough to run the panel end to end. */
-function backend(patches: unknown[] = []) {
+function backend(patches: unknown[] = [], more: Partial<GrantActivity> = {}) {
   const grants: Grant[] = []
   /** Current key per link, and whether it's kept: the server's side of `GET/PUT/DELETE /grants/:id/token`. */
   const keys = new Map<string, string>()
@@ -111,7 +111,7 @@ function backend(patches: unknown[] = []) {
     if (!m) return reply({ error: 'no route' }, 500)
     const grant = grants.find(g => g.id === m[1])!
     if (m[2] === 'activity') {
-      return reply({ grantId: grant.id, distinctIps: 0, countries: [], views: 2, firstSeen: null, lastSeen: null, topPaths: [] })
+      return reply({ grantId: grant.id, distinctIps: 0, countries: [], views: 2, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, ...more })
     }
     if (m[2] === 'revoke') grant.revokedAt = 100
     if (m[2] === 'disable') grant.disabledAt = 100
@@ -429,5 +429,20 @@ describe('kept keys', () => {
     await user.type(within(card).getByRole('textbox', { name: "This link's key" }), `token-${grant.id}`)
     await user.click(within(card).getByRole('button', { name: 'Keep' }))
     await waitFor(() => expect(within(card).getByRole('button', { name: 'Show links' })).toBeTruthy())
+  })
+})
+
+describe('preview bots on the card', () => {
+  it('shows previews apart, and reads older bot redemptions as previews', async () => {
+    const client = backend([], { previews: 4, previewBots: ['Slack'], botRedeems: 4 })
+    const { grant } = await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'] })
+    // Five redemptions on the row, four of them Slack's from before previews stopped redeeming. (The fake PATCH
+    // applies any field, which the real route wouldn't.)
+    await client.grants.update(grant.id, { redeems: 5 } as GrantUpdateInput)
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} />)
+    const card = await screen.findByRole('article')
+    await waitFor(() => expect(within(card).queryByText('previews')).toBeTruthy())
+    const facts = [...card.querySelectorAll('dl > div')].map(d => [d.querySelector('dt')!.textContent, d.querySelector('dd')!.textContent])
+    expect(facts.slice(0, 3)).toEqual([['scopes', 'Alpha'], ['redemptions', '1'], ['previews', '4 (Slack)']])
   })
 })

@@ -702,7 +702,7 @@ describe('access log routes', () => {
       distinctIps: 0, // no CF-Connecting-IP on these requests
       countries: [],
       views: 0,
-      topPaths: [],
+      topPaths: [], previews: 0, previewBots: [], botRedeems: 0,
     })
   })
 })

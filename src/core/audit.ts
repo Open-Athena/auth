@@ -20,6 +20,8 @@ export type AccessEventKind =
   | 'rotate'
   /** Staff fetched a kept link key (`gate.revealToken`). */
   | 'reveal'
+  /** A link-preview bot fetched a share link (`reason`: which one); nothing was redeemed. */
+  | 'preview'
   /** Staff kept an existing link's key (`gate.keepToken`), or forgot it (`reason: 'forget'`). */
   | 'keep'
   | 'request'

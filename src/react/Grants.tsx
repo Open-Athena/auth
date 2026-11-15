@@ -688,10 +688,19 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
         <div>
           <dt>redemptions</dt>
           <dd>
-            {grant.redeems}
+            {/* Older redemptions by preview bots, read as previews (the row's count is left as it was). */}
+            {Math.max(0, grant.redeems - (activity?.botRedeems ?? 0))}
             {grant.maxRedeems !== null && ` / ${grant.maxRedeems}`}
           </dd>
         </div>
+        {(activity?.previews ?? 0) > 0 && (
+          <div>
+            <dt>previews</dt>
+            <dd>
+              {activity!.previews} ({activity!.previewBots.join(', ')})
+            </dd>
+          </div>
+        )}
         <div>
           <dt>views</dt>
           <dd>{activity?.views ?? 0}</dd>

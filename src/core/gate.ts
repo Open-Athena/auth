@@ -19,7 +19,7 @@ import {
   isSafeAvatarUrl,
   parseAvatarRef,
 } from './avatar.js'
-import { looksAutomated } from './bots.js'
+import { looksAutomated, PREVIEW_BOTS, type PreviewBot, previewBot } from './bots.js'
 import type { Whoami } from './http.js'
 import type { SessionLossReason } from './denial.js'
 import { AVATAR_SEED_PENDING, type Profile, cleanName } from './profile.js'
@@ -74,6 +74,14 @@ export interface GateOptions {
    * key is shown once. Kept keys are sealed under a key derived from `tokenSecret`.
    */
   keepTokens?: boolean
+  /**
+   * What a link-preview bot (Slack, Gmail, iMessage…; see `previewBot`) is shown for a share link, instead of
+   * redeeming it: a title, description and image for its card. Null, or no hook: the site's host only, since a preview
+   * can land somewhere the recipient didn't choose.
+   */
+  linkPreview?: (req: Request, grant: Grant) => LinkPreview | null | Promise<LinkPreview | null>
+  /** Which user-agents are preview bots. Default `PREVIEW_BOTS`; spread it to add your own. */
+  previewBots?: readonly PreviewBot[]
   /**
    * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
    * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
@@ -208,6 +216,39 @@ export type RedeemResult =
       selection?: string
     }
   | { ok: false; reason: RedeemFailure }
+  /**
+   * A link-preview bot, not a person: nothing was redeemed (no session, no count, the key still works for the
+   * human's click), and a `preview` row was logged. Send `response`: a small page with the link's card.
+   */
+  | { ok: false; reason: 'preview'; bot: string; response: Response }
+
+/** A share link's card for link-preview bots (`GateOptions.linkPreview`). */
+export interface LinkPreview {
+  title: string
+  description?: string
+  /** An absolute https image URL. */
+  image?: string
+}
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
+export function linkPreviewPage(preview: LinkPreview): Response {
+  const meta = (attr: string, key: string, value: string | undefined) =>
+    value === undefined ? '' : `<meta ${attr}="${key}" content="${escapeHtml(value)}">\n`
+  const html = '<!doctype html>\n<html><head><meta charset="utf-8">\n<meta name="robots" content="noindex, nofollow">\n'
+    + `<title>${escapeHtml(preview.title)}</title>\n`
+    + meta('property', 'og:title', preview.title)
+    + meta('property', 'og:description', preview.description)
+    + meta('name', 'description', preview.description)
+    + meta('property', 'og:image', preview.image)
+    + meta('name', 'twitter:card', preview.image ? 'summary_large_image' : 'summary')
+    + '</head><body></body></html>\n'
+  return new Response(html, {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex, nofollow' },
+  })
+}
 
 export interface MintResult {
   grant: Grant
@@ -312,6 +353,8 @@ export function createGate(opts: GateOptions) {
     store,
     secret,
     keepTokens = false,
+    linkPreview,
+    previewBots = PREVIEW_BOTS,
     adminEmails = [],
     cookieName = DEFAULT_COOKIE_NAME,
     sessionTtlS = DEFAULT_SESSION_TTL_S,
@@ -405,6 +448,12 @@ export function createGate(opts: GateOptions) {
       if (!grant) {
         await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS)
         return failed('invalid')
+      }
+      // A preview bot given `?key=` gets nothing the key opens (`redeem` shows it the link's card instead).
+      const bot = bearer ? null : previewBot(req.headers.get('User-Agent'), previewBots)
+      if (bot !== null) {
+        await logWithRequest(req, { event: 'preview', grantId: grant.id, reason: bot }, nowS)
+        return failed(null)
       }
       // A presented token is the *link* being used, not a session being
       // resumed, so disabling blocks it: "stop letting new people in" has to
@@ -522,6 +571,12 @@ export function createGate(opts: GateOptions) {
     })
   }
 
+  /** A link-preview bot's page for this link: the app's card, or the host alone. */
+  async function previewResponse(req: Request, grant: Grant): Promise<Response> {
+    const preview = (await linkPreview?.(req, grant)) ?? { title: new URL(req.url).host }
+    return linkPreviewPage(preview)
+  }
+
   /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
   async function redeem(token: string, req: Request, nowMs = Date.now()): Promise<RedeemResult> {
     const nowS = sec(nowMs)
@@ -530,6 +585,13 @@ export function createGate(opts: GateOptions) {
     if (!existing) {
       await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS)
       return { ok: false, reason: 'bad-token' }
+    }
+    // An unfurler or mail scanner fetching the link isn't the recipient opening it: no session, no redemption (so a
+    // `maxRedeems` link isn't used up by previews), and the key stays good for the human's click.
+    const bot = previewBot(req.headers.get('User-Agent'), previewBots)
+    if (bot !== null && canRedeem(existing, nowS)) {
+      await logWithRequest(req, { event: 'preview', grantId: existing.id, reason: bot }, nowS)
+      return { ok: false, reason: 'preview', bot, response: await previewResponse(req, existing) }
     }
     if (retained) {
       // A link this browser can't redeem leaves its logins as they are: a bad
@@ -1273,6 +1335,8 @@ export function createGate(opts: GateOptions) {
     rotate,
     revealToken,
     keepToken,
+    /** What a preview bot is shown for this link (`linkPreview`, or the host). */
+    previewResponse,
     disable,
     enable,
     update,

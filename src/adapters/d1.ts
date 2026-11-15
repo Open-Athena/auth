@@ -6,6 +6,7 @@
  *
  * Apply `migrations/` first.
  */
+import { previewBot } from '../core/bots.js'
 import type { AccessEvent, AuditSink } from '../core/audit.js'
 import type { PendingAuth } from '../core/email-codes.js'
 import type { AvatarSourceKind, Profile } from '../core/profile.js'
@@ -412,20 +413,36 @@ export async function rollupAccessLog(
 export function d1AuditQuery(db: D1Database): AuditQuery {
   return {
     async activity(grantId) {
-      const summary = await db
+      // Grouped, so the row count is bounded by distinct clients, not by events. A preview bot's rows (or an older
+      // `redeem` by one) count as previews, and stay out of the clients, countries and dates that say who opened it.
+      const groups = await db
         .prepare(
-          `SELECT COUNT(DISTINCT ip_hash) AS ips,
-                  SUM(CASE WHEN event = 'view' THEN 1 ELSE 0 END) AS views,
-                  MIN(ts) AS first_seen,
-                  MAX(ts) AS last_seen
-             FROM access_log WHERE grant_id = ?`,
+          `SELECT event, ip_hash, ua, country, CASE WHEN event = 'preview' THEN reason END AS bot,
+                  COUNT(*) AS n, MIN(ts) AS first_seen, MAX(ts) AS last_seen
+             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5`,
         )
         .bind(grantId)
-        .first<{ ips: number; views: number | null; first_seen: number | null; last_seen: number | null }>()
-      const countries = await db
-        .prepare(`SELECT DISTINCT country FROM access_log WHERE grant_id = ? AND country IS NOT NULL ORDER BY country`)
-        .bind(grantId)
-        .all<{ country: string }>()
+        .all<{ event: string; ip_hash: string | null; ua: string | null; country: string | null; bot: string | null; n: number; first_seen: number; last_seen: number }>()
+      const ips = new Set<string>()
+      const countrySet = new Set<string>()
+      const bots = new Map<string, number>()
+      let views = 0
+      let botRedeems = 0
+      let firstSeen: number | null = null
+      let lastSeen: number | null = null
+      for (const g of groups.results) {
+        const bot = g.event === 'preview' ? (g.bot ?? 'bot') : g.event === 'redeem' ? previewBot(g.ua) : null
+        if (bot !== null) {
+          bots.set(bot, (bots.get(bot) ?? 0) + g.n)
+          if (g.event === 'redeem') botRedeems += g.n
+          continue
+        }
+        if (g.ip_hash !== null) ips.add(g.ip_hash)
+        if (g.country !== null) countrySet.add(g.country)
+        if (g.event === 'view') views += g.n
+        firstSeen = firstSeen === null ? g.first_seen : Math.min(firstSeen, g.first_seen)
+        lastSeen = lastSeen === null ? g.last_seen : Math.max(lastSeen, g.last_seen)
+      }
       const paths = await db
         .prepare(
           `SELECT path, COUNT(*) AS views FROM access_log
@@ -436,12 +453,15 @@ export function d1AuditQuery(db: D1Database): AuditQuery {
         .all<{ path: string; views: number }>()
       return {
         grantId,
-        distinctIps: summary?.ips ?? 0,
-        countries: countries.results.map(r => r.country),
-        views: summary?.views ?? 0,
-        firstSeen: summary?.first_seen ?? null,
-        lastSeen: summary?.last_seen ?? null,
+        distinctIps: ips.size,
+        countries: [...countrySet].sort(),
+        views,
+        firstSeen,
+        lastSeen,
         topPaths: paths.results,
+        previews: [...bots.values()].reduce((a, b) => a + b, 0),
+        previewBots: [...bots].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([name]) => name),
+        botRedeems,
       }
     },
 

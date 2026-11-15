@@ -19,6 +19,8 @@ export const DEFAULT_ACTIVITY_KINDS: ActivityKinds = {
   resume: { record: 'line', notify: 'line' },
   /** A refused request: an expired, revoked or disabled link, a bad token (`accessLogActivity` maps `deny` rows here). */
   denied: { record: 'line', notify: 'line' },
+  /** A link-preview bot fetched a share link (`accessLogActivity` maps `preview` rows here): kept, not posted, by default. */
+  preview: { record: 'line', notify: 'off' },
 }
 
 /** Inactivity that ends a burst. Web analytics' usual session timeout is 30 minutes (Catledge & Pitkow, 1995). */

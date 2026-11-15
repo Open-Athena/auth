@@ -22,7 +22,7 @@ export { safeNext } from './core/next.js'
 export { MAX_PROFILE_NAME, cleanName } from './core/profile.js'
 export type { AvatarSourceKind, Profile } from './core/profile.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
-export { isBot, isVerifiedBot, looksAutomated } from './core/bots.js'
+export { isBot, isVerifiedBot, looksAutomated, PREVIEW_BOTS, previewBot, type PreviewBot } from './core/bots.js'
 export { renderDecisionPage } from './core/decision-page.js'
 export type { DecisionPageOptions } from './core/decision-page.js'
 export {
@@ -40,13 +40,14 @@ export { emailCodeAuth } from './core/email-codes.js'
 export type { EmailCodeOptions, PendingAuth } from './core/email-codes.js'
 export { verifyRs256Jwt } from './core/jwt.js'
 export type { VerifyJwtOptions } from './core/jwt.js'
-export { ALL_SCOPES, canRedeem, createGate, isActive, ServiceGrantEmailError, sessionValid } from './core/gate.js'
+export { ALL_SCOPES, canRedeem, createGate, isActive, linkPreviewPage, ServiceGrantEmailError, sessionValid } from './core/gate.js'
 export type {
   AuthenticationResult,
   AvatarInput,
   Gate,
   GateOptions,
   GrantEdit,
+  LinkPreview,
   MintResult,
   ProfileInput,
   PutProfileResult,

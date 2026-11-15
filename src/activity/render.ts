@@ -109,6 +109,7 @@ const NOUNS: Record<string, [string, string]> = {
   error: ['error', 'errors'],
   access: ['access event', 'access events'],
   resume: ['resumption', 'resumptions'],
+  preview: ['link preview', 'link previews'],
 }
 const fmtN = (n: number): string => n.toLocaleString('en-US')
 /** `3 page loads`; an app's own kind reads `kind: 3`. */

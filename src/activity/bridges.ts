@@ -106,13 +106,16 @@ export function accessLogActivity(feed: ActivityFeed, options: AccessActivityOpt
     const path = event.path ? activityPath(event.path) : undefined
     const client = await accessClient(event)
     const denied = event.event === 'deny'
+    const preview = event.event === 'preview'
     return feed.record({
       id: `access:${JSON.stringify([options.origin, id])}`,
       actor,
       origin: options.origin,
       ts: event.ts,
-      kind: event.event === 'view' ? 'view' : denied ? 'denied' : 'access',
-      line: denied ? `${event.reason ?? 'refused'}${path ? ` ${path}` : ''}` : `${event.event}${path ? ` ${path}` : ''}`,
+      kind: event.event === 'view' ? 'view' : denied ? 'denied' : preview ? 'preview' : 'access',
+      line: denied || preview
+        ? `${event.reason ?? (denied ? 'refused' : 'bot')}${path ? ` ${path}` : ''}`
+        : `${event.event}${path ? ` ${path}` : ''}`,
       path,
       ...(client ? { client } : {}),
     })
