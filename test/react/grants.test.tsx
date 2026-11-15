@@ -111,7 +111,7 @@ function backend(patches: unknown[] = [], more: Partial<GrantActivity> = {}) {
     if (!m) return reply({ error: 'no route' }, 500)
     const grant = grants.find(g => g.id === m[1])!
     if (m[2] === 'activity') {
-      return reply({ grantId: grant.id, distinctIps: 0, countries: [], views: 2, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, ...more })
+      return reply({ grantId: grant.id, distinctIps: 0, countries: [], views: 2, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, staffClicks: [], ...more })
     }
     if (m[2] === 'revoke') grant.revokedAt = 100
     if (m[2] === 'disable') grant.disabledAt = 100

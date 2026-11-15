@@ -123,7 +123,7 @@ describe('a preview bot fetching a share link', () => {
     await sink.log({ ts: ts + 60, event: 'redeem', grantId: grant.id, ipHash: 'home', ua: CHROME, country: 'GB' })
     expect(await d1AuditQuery(db).activity(grant.id)).toEqual({
       grantId: grant.id, distinctIps: 1, countries: ['GB'], views: 0, firstSeen: ts, lastSeen: ts + 60, topPaths: [],
-      previews: 5, previewBots: ['Slack', 'Discord'], botRedeems: 4,
+      previews: 5, previewBots: ['Slack', 'Discord'], botRedeems: 4, staffClicks: [],
     })
   })
 

@@ -693,6 +693,12 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
             {grant.maxRedeems !== null && ` / ${grant.maxRedeems}`}
           </dd>
         </div>
+        {(activity?.staffClicks.length ?? 0) > 0 && (
+          <div>
+            <dt>opened by staff</dt>
+            <dd>{activity!.staffClicks.join(', ')}</dd>
+          </div>
+        )}
         {(activity?.previews ?? 0) > 0 && (
           <div>
             <dt>previews</dt>

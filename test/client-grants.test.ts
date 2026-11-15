@@ -15,7 +15,7 @@ async function fixture() {
   const gate = createGate({ store, secret: 'client-test-secret-0123456789', adminEmails: ['admin@example.com'] })
   const signed = (await gate.signIn('admin@example.com', new Request('https://app.test/')))!
   const audit: AuditQuery = {
-    activity: async grantId => ({ grantId, distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0 }),
+    activity: async grantId => ({ grantId, distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, staffClicks: [] }),
     recent: async () => [],
   }
   const handle = authRoutes(gate, { audit })
@@ -193,7 +193,7 @@ describe('createGrantsController', () => {
     await settled(controller)
     await controller.activity(id)
     expect(controller.getSnapshot().activities).toEqual({
-      [id]: { grantId: id, distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0 },
+      [id]: { grantId: id, distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, staffClicks: [] },
     })
   })
 

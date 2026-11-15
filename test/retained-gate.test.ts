@@ -100,6 +100,26 @@ function setup(o: { limits?: Partial<RetainedLimits>; incoming?: IncomingPolicy;
 }
 
 describe('retained logins', () => {
+  it('`?key=-` takes only the link logins off this browser and selects the email sign-in', async () => {
+    const t = setup()
+    const b = new Browser()
+    await t.signIn(b, 'ann@x.test')
+    for (const name of ['Guest pass', 'Board pack']) {
+      const { token } = await t.mint(name)
+      const ex = await t.call(b, 'POST', '/exchange', { token })
+      await t.mutate(b, '/accounts/incoming', { id: ex.body.incoming })
+    }
+    const before = await t.accounts(b)
+    const res = (await t.gate.handleKeyParam(new Request(`${HOST}/jobs/sre?key=-&tab=2`, { headers: { cookie: b.header() } })))!
+    b.take(res)
+    expect([before, res.status, res.headers.get('location'), await t.accounts(b), await t.whoami(b)]).toEqual([
+      ['ann@x.test', 'link:Guest pass', '*link:Board pack'],
+      302, '/jobs/sre?tab=2',
+      ['*ann@x.test'],
+      'ann@x.test',
+    ])
+  })
+
   it('signs in as A, adds B, and switches A → B → A without signing in again', async () => {
     const t = setup()
     const b = new Browser()

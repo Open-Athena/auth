@@ -61,7 +61,7 @@ describe('typed auth client', () => {
   })
 
   it('passes activity and log filters to the configured audit query', async () => {
-    const activity = { grantId: 'a/b', distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0 }
+    const activity = { grantId: 'a/b', distinctIps: 0, countries: [], views: 0, firstSeen: null, lastSeen: null, topPaths: [], previews: 0, previewBots: [], botRedeems: 0, staffClicks: [] }
     const audit = { activity: vi.fn<AuditQuery['activity']>(async () => activity), recent: vi.fn<AuditQuery['recent']>(async () => []) }
     const { client } = await fixture({ audit })
     expect(await client.grants.activity('a/b')).toEqual(activity)

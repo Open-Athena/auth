@@ -418,19 +418,26 @@ export function d1AuditQuery(db: D1Database): AuditQuery {
       const groups = await db
         .prepare(
           `SELECT event, ip_hash, ua, country, CASE WHEN event = 'preview' THEN reason END AS bot,
+                  CASE WHEN event = 'staff-click' THEN session_sub END AS staff,
                   COUNT(*) AS n, MIN(ts) AS first_seen, MAX(ts) AS last_seen
-             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5`,
+             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5, 6`,
         )
         .bind(grantId)
-        .all<{ event: string; ip_hash: string | null; ua: string | null; country: string | null; bot: string | null; n: number; first_seen: number; last_seen: number }>()
+        .all<{ event: string; ip_hash: string | null; ua: string | null; country: string | null; bot: string | null; staff: string | null; n: number; first_seen: number; last_seen: number }>()
       const ips = new Set<string>()
       const countrySet = new Set<string>()
       const bots = new Map<string, number>()
+      const staff = new Map<string, number>()
       let views = 0
       let botRedeems = 0
       let firstSeen: number | null = null
       let lastSeen: number | null = null
       for (const g of groups.results) {
+        if (g.event === 'staff-click') {
+          const who = g.staff?.startsWith('e:') ? g.staff.slice(2) : 'staff'
+          staff.set(who, (staff.get(who) ?? 0) + g.n)
+          continue
+        }
         const bot = g.event === 'preview' ? (g.bot ?? 'bot') : g.event === 'redeem' ? previewBot(g.ua) : null
         if (bot !== null) {
           bots.set(bot, (bots.get(bot) ?? 0) + g.n)
@@ -462,6 +469,7 @@ export function d1AuditQuery(db: D1Database): AuditQuery {
         previews: [...bots.values()].reduce((a, b) => a + b, 0),
         previewBots: [...bots].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([name]) => name),
         botRedeems,
+        staffClicks: [...staff].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([who]) => who),
       }
     },
 

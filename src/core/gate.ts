@@ -7,6 +7,7 @@
  * session it ever minted, instantly — that property is what makes the social
  * story (assume forwarding; make it visible and revocable) actually work.
  */
+import { CLEAR_KEY } from './http.js'
 import { type AccessEvent, type AuditSink, nullAudit, requestMeta } from './audit.js'
 import { type AssetStore, assetId, assetUri } from './assets.js'
 import {
@@ -82,6 +83,15 @@ export interface GateOptions {
   linkPreview?: (req: Request, grant: Grant) => LinkPreview | null | Promise<LinkPreview | null>
   /** Which user-agents are preview bots. Default `PREVIEW_BOTS`; spread it to add your own. */
   previewBots?: readonly PreviewBot[]
+  /**
+   * A browser already signed in by email (staff, say, clicking a link drafted for someone else) keeps that session
+   * when it opens a share link: nothing is redeemed, and a `staff-click` row is logged. Default true. False, or
+   * `?as=recipient` on the link, redeems as before (for staff testing links as their recipients). With `retained`,
+   * the link is held as an account to switch to instead (see `RetainedOptions`).
+   */
+  staffKeepSession?: boolean
+  /** The share-link query parameter, stripped from the URL `redeem`'s responses redirect to. Default `key`. */
+  keyParam?: string
   /**
    * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
    * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
@@ -221,6 +231,12 @@ export type RedeemResult =
    * human's click), and a `preview` row was logged. Send `response`: a small page with the link's card.
    */
   | { ok: false; reason: 'preview'; bot: string; response: Response }
+  /** A browser signed in by email opened the link (`staffKeepSession`): it stays who it was. `response` drops the key. */
+  | { ok: false; reason: 'staff'; email: string; response: Response }
+  /** `?key=-` (`CLEAR_KEY`): the browser's link session ended (an email sign-in stays). `response` drops the key. */
+  | { ok: false; reason: 'cleared'; response: Response; cookies: string[] }
+
+export { CLEAR_KEY } from './http.js'
 
 /** A share link's card for link-preview bots (`GateOptions.linkPreview`). */
 export interface LinkPreview {
@@ -355,6 +371,8 @@ export function createGate(opts: GateOptions) {
     keepTokens = false,
     linkPreview,
     previewBots = PREVIEW_BOTS,
+    staffKeepSession = true,
+    keyParam = 'key',
     adminEmails = [],
     cookieName = DEFAULT_COOKIE_NAME,
     sessionTtlS = DEFAULT_SESSION_TTL_S,
@@ -439,7 +457,8 @@ export function createGate(opts: GateOptions) {
     }
     const url = new URL(req.url)
     const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i)
-    const tokenPresented = !!bearer || url.searchParams.has('key')
+    // `?key=-` (`CLEAR_KEY`) is an instruction to `redeem`, not a credential: no token, no deny row.
+    const tokenPresented = !!bearer || (url.searchParams.has('key') && url.searchParams.get('key') !== CLEAR_KEY)
     const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '')
 
     if (tokenPresented) {
@@ -577,9 +596,45 @@ export function createGate(opts: GateOptions) {
     return linkPreviewPage(preview)
   }
 
+  /** The request's URL without the key (or `as`), as a same-origin redirect target. */
+  function withoutKey(req: Request): URL {
+    const url = new URL(req.url)
+    url.searchParams.delete(keyParam)
+    url.searchParams.delete('as')
+    return url
+  }
+
+  /** A redirect to this URL without its key, setting `cookies`. */
+  function dropKey(req: Request, cookies: readonly string[] = []): Response {
+    const url = withoutKey(req)
+    const headers = new Headers({ location: `${url.pathname}${url.search}${url.hash}`, 'cache-control': 'private, no-store' })
+    for (const c of cookies) headers.append('set-cookie', c)
+    return new Response(null, { status: 302, headers })
+  }
+
+  /** `?key=-`: end a share-link session here, leaving an email sign-in alone. */
+  async function clearLinkSession(req: Request, nowMs: number): Promise<RedeemResult> {
+    const nowS = sec(nowMs)
+    const bare = new Request(withoutKey(req), { headers: req.headers })
+    let cookies: string[] = []
+    let subs: string[] = []
+    if (retained) {
+      subs = await retained.clearLinks(bare, nowMs)
+    } else {
+      const { auth } = await authenticateResult(bare, nowMs, { logView: false })
+      if (auth?.kind === 'grant') {
+        cookies = [clearCookie({ name: cookieName, secure: isSecureRequest(req) })]
+        subs = [grantSub(auth.grant.id)]
+      }
+    }
+    for (const sub of subs) await logWithRequest(req, { event: 'signout', sessionSub: sub, reason: 'clear-key' }, nowS)
+    return { ok: false, reason: 'cleared', response: dropKey(req, cookies), cookies }
+  }
+
   /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
   async function redeem(token: string, req: Request, nowMs = Date.now()): Promise<RedeemResult> {
     const nowS = sec(nowMs)
+    if (token === CLEAR_KEY) return clearLinkSession(req, nowMs)
     const tokenHash = await hashToken(token)
     const existing = await store.byTokenHash(tokenHash)
     if (!existing) {
@@ -592,6 +647,15 @@ export function createGate(opts: GateOptions) {
     if (bot !== null && canRedeem(existing, nowS)) {
       await logWithRequest(req, { event: 'preview', grantId: existing.id, reason: bot }, nowS)
       return { ok: false, reason: 'preview', bot, response: await previewResponse(req, existing) }
+    }
+    // Staff opening a link drafted for someone else stay themselves, rather than becoming that someone.
+    // (Retained mode has its own answer: the link is held as an account to switch to, and spends nothing.)
+    if (staffKeepSession && !retained && new URL(req.url).searchParams.get('as') !== 'recipient') {
+      const { auth } = await authenticateResult(new Request(withoutKey(req), { headers: req.headers }), nowMs, { logView: false })
+      if (auth?.kind === 'sso') {
+        await logWithRequest(req, { event: 'staff-click', grantId: existing.id, sessionSub: emailSub(auth.email) }, nowS)
+        return { ok: false, reason: 'staff', email: auth.email, response: dropKey(req) }
+      }
     }
     if (retained) {
       // A link this browser can't redeem leaves its logins as they are: a bad
@@ -1337,6 +1401,18 @@ export function createGate(opts: GateOptions) {
     keepToken,
     /** What a preview bot is shown for this link (`linkPreview`, or the host). */
     previewResponse,
+    /**
+     * The whole `?key=` step for a page request: null without a key (or when it's refused: show your own "this link
+     * isn't active"); otherwise the response to send (the redirect that drops the key and sets the session, the
+     * preview card, staff kept as themselves, or a cleared link session).
+     */
+    async handleKeyParam(req: Request, nowMs = Date.now()): Promise<Response | null> {
+      const key = new URL(req.url).searchParams.get(keyParam)
+      if (key === null) return null
+      const res = await redeem(key, req, nowMs)
+      if (res.ok) return dropKey(req, res.cookies)
+      return 'response' in res ? res.response : null
+    },
     disable,
     enable,
     update,

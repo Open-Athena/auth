@@ -20,3 +20,11 @@ Ryan drafts outreach emails in a Slack DM with colleagues (Jeff, Yael) before se
 ## What `jobs` will do after this lands
 
 Bump the dist; mention `?key=-` in the README; nothing else (staff-wins is server-side).
+
+## Status: done
+
+1. `gate.redeem` keeps a browser signed in by email as itself: no redemption, `access_log.event = 'staff-click'` (`session_sub` = the staff email), and `{ ok: false, reason: 'staff', email, response }` where `response` is a 302 to the same URL without the key. `staffKeepSession` (default true) turns it off; `?as=recipient` on the link bypasses it (and is stripped too). `GrantActivity.staffClicks` lists who, most first, and leaves them out of clients and countries; `GrantCard` shows "opened by staff". The activity bridge maps it to a `staff` kind, off unless declared. In retained mode this check is skipped: retained mode already holds the link as an account to switch to, spending nothing.
+2. `?key=-` (`CLEAR_KEY`, exported from the server and client entry points): `redeem` returns `{ ok: false, reason: 'cleared', response, cookies }`. Single-session mode clears the cookie only if it's a link session, and logs `signout` with `reason: 'clear-key'`; an email session is untouched and nothing is logged. `authenticate` treats `?key=-` as no credential, so there's no deny row.
+3. Retained mode: `retained.clearLinks` removes every link login from the browser, and if nothing is active then, selects its latest email sign-in.
+- Added `gate.handleKeyParam(req)` for the whole `?key=` step (`keyParam` option, default `key`): `jobs` can replace its redeem block with `const keyed = await gate.handleKeyParam(req); if (keyed) return keyed`. Its current block falls through to `authenticate` on any non-ok result, so without that change the staff and `?key=-` redirects (and the preview card) aren't sent; a staff click still doesn't redeem.
+- `/exchange` (client-side key exchange) answers `staff` and `cleared` with 200 `{ ok: true, staff | cleared: true }` and the clearing cookies.
