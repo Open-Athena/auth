@@ -20,3 +20,9 @@ Ryan wants to paste the key onto URLs he writes himself (e.g. in an email, or de
 ## What `jobs` will do after this lands
 
 Set `scope` on its per-JD entries; drop its "Just the key" entry in favor of the built-in; bump the dist.
+
+## Status: done
+
+- `GrantLinkEntry.scope`: while the token is on screen, `GrantCard` puts that entry on its scope's row (a read-only URL, `aria-label` "<scope> link", and its own Copy), in both the `editScopes` checkboxes and the read-only list (which becomes rows while links show). `buildLink` re-runs on every render, so checking a scope adds its link and unchecking removes it. Entries without `scope` stay in `GrantLink`'s box.
+- "Copy key" is built into `GrantLink` and copies `?key=<token>` (`shareKey(token)`, exported beside `shareUrl`). "Copy all" copies every entry, scoped ones included, and ends with `Key: ?key=…`.
+- `Done` now sits on the button row (Copy key, Copy all, Done) rather than on a single link's row.

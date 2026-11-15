@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { shareKey } from '../client/api.js'
 import { pseudonym } from '../client/identity.js'
 import type { AuthClient } from '../client/api.js'
 import type { GrantsController } from '../client/grants.js'
@@ -55,6 +56,8 @@ const ago = (ts: number | null): string => {
 export interface GrantLinkEntry {
   label: string
   url: string
+  /** The scope this page belongs to: `GrantCard` shows it on that scope's row rather than in the list below. */
+  scope?: string
 }
 
 /** A link's URL, or one URL per page it opens (labeled), for a link with several scopes. */
@@ -71,67 +74,102 @@ export const NO_AUTOFILL = { autoComplete: 'off', 'data-1p-ignore': 'true', 'dat
 
 export interface GrantLinkProps {
   grant: Grant
-  /** The one-time token. Never kept anywhere but the controller's memory. */
+  /** The token: just minted or rotated, or a kept one fetched again. Held only in the controller's memory. */
   token: string
   buildLink: BuildGrantLink
+  /** Scopes whose entries are shown elsewhere (`GrantCard` puts them on the scope rows); "Copy all" still includes them. */
+  omitScopes?: readonly string[]
   onDismiss?: () => void
-  labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyAll' | 'copyFailed' | 'dismiss', ReactNode>>
+  labels?: Partial<Record<'warning' | 'copy' | 'copied' | 'copyAll' | 'copyKey' | 'copyFailed' | 'dismiss', ReactNode>>
   classNames?: GrantsClassNames
 }
 
-/**
- * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy,
- * and say it won't come back.
- */
-export function GrantLink({ grant, token, buildLink, onDismiss, labels = {}, classNames }: GrantLinkProps) {
-  const cx = { ...DEFAULT_CLASSES, ...classNames }
-  /** Which copy last succeeded (a row's index, or `all`), or that one failed. */
-  const [copy, setCopy] = useState<{ copied: number | 'all' } | 'failed' | 'idle'>('idle')
-  const built = buildLink(grant, token)
-  const entries: { label: string | null; url: string }[] = typeof built === 'string' ? [{ label: null, url: built }] : built.map(e => ({ ...e }))
-  const copyText = async (text: string, which: number | 'all') => {
-    const ok = await navigator.clipboard.writeText(text).then(() => true, () => false)
-    setCopy(ok ? { copied: which } : 'failed')
-    if (ok) setTimeout(() => setCopy(c => (typeof c === 'object' && c.copied === which ? 'idle' : c)), 1500)
+/** A link's entries, normalized: a bare string is one unlabeled entry. */
+const linkEntries = (built: GrantLinks): { label: string | null; url: string; scope?: string }[] =>
+  typeof built === 'string' ? [{ label: null, url: built }] : built.map(e => ({ ...e }))
+
+/** Clipboard writes with a brief "Copied" on whichever button did it, and a failure flag. */
+function useCopy() {
+  const [state, setState] = useState<{ copied: string } | 'failed' | 'idle'>('idle')
+  return {
+    failed: state === 'failed',
+    copied: (id: string) => typeof state === 'object' && state.copied === id,
+    async copy(text: string, id: string) {
+      const ok = await navigator.clipboard.writeText(text).then(() => true, () => false)
+      setState(ok ? { copied: id } : 'failed')
+      if (ok) setTimeout(() => setState(c => (typeof c === 'object' && c.copied === id ? 'idle' : c)), 1500)
+    },
   }
-  const copied = (which: number | 'all') => typeof copy === 'object' && copy.copied === which
+}
+
+/**
+ * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy
+ * of each, of all of them, and of just the key, and say it won't come back.
+ */
+export function GrantLink({ grant, token, buildLink, omitScopes = [], onDismiss, labels = {}, classNames }: GrantLinkProps) {
+  const cx = { ...DEFAULT_CLASSES, ...classNames }
+  const clip = useCopy()
+  const all = linkEntries(buildLink(grant, token))
+  const shown = all.filter(e => !(e.scope !== undefined && omitScopes.includes(e.scope)))
+  const key = shareKey(token)
+  const copyLabel = (id: string, idle: ReactNode) => (clip.copied(id) ? (labels.copied ?? 'Copied') : idle)
   return (
     <div className={cx.token}>
       <p className={cx.muted}>
         {labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again."}
       </p>
-      {entries.map(({ label, url }, i) => (
-        <div key={i} className={cx.copyRow}>
+      {shown.map(({ label, url }) => (
+        <div key={url} className={cx.copyRow}>
           {label !== null && <span>{label}</span>}
           <input className={cx.input} readOnly value={url} aria-label={label ?? 'Share link'} onFocus={e => e.currentTarget.select()} />
-          <button className={cx.button} type="button" onClick={() => void copyText(url, i)}>
-            {copied(i) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy')}
+          <button className={cx.button} type="button" onClick={() => void clip.copy(url, url)}>
+            {copyLabel(url, labels.copy ?? 'Copy')}
           </button>
-          {onDismiss && entries.length === 1 && (
-            <button className={cx.button} type="button" onClick={onDismiss}>
-              {labels.dismiss ?? 'Done'}
-            </button>
-          )}
         </div>
       ))}
-      {entries.length > 1 && (
-        <div className={cx.row}>
-          <button className={cx.button} type="button" onClick={() => void copyText(entries.map(e => `${e.label}: ${e.url}`).join('\n'), 'all')}>
-            {copied('all') ? (labels.copied ?? 'Copied') : (labels.copyAll ?? 'Copy all')}
+      <div className={cx.row}>
+        <button className={cx.button} type="button" onClick={() => void clip.copy(key, 'key')}>
+          {copyLabel('key', labels.copyKey ?? 'Copy key')}
+        </button>
+        {all.length > 1 && (
+          <button
+            className={cx.button}
+            type="button"
+            onClick={() => void clip.copy([...all.map(e => `${e.label}: ${e.url}`), `Key: ${key}`].join('\n'), 'all')}
+          >
+            {copyLabel('all', labels.copyAll ?? 'Copy all')}
           </button>
-          {onDismiss && (
-            <button className={cx.button} type="button" onClick={onDismiss}>
-              {labels.dismiss ?? 'Done'}
-            </button>
-          )}
-        </div>
-      )}
-      {copy === 'failed' && (
+        )}
+        {onDismiss && (
+          <button className={cx.button} type="button" onClick={onDismiss}>
+            {labels.dismiss ?? 'Done'}
+          </button>
+        )}
+      </div>
+      {clip.failed && (
         <p className={cx.error} role="alert">
           {labels.copyFailed ?? "Couldn't reach the clipboard. Select the link and copy it by hand."}
         </p>
       )}
     </div>
+  )
+}
+
+/** A scope row's own link, while the token is on screen. */
+function ScopeLink({ label, url, clip, cx, labels }: {
+  label: ReactNode
+  url: string
+  clip: ReturnType<typeof useCopy>
+  cx: typeof DEFAULT_CLASSES
+  labels: GrantLinkProps['labels'] & {}
+}) {
+  return (
+    <span className={cx.copyRow}>
+      <input className={cx.input} readOnly value={url} aria-label={`${typeof label === 'string' ? label : 'Scope'} link`} onFocus={e => e.currentTarget.select()} />
+      <button className={cx.button} type="button" onClick={() => void clip.copy(url, url)}>
+        {clip.copied(url) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy')}
+      </button>
+    </span>
   )
 }
 
@@ -375,7 +413,15 @@ function ConfirmButton({
 }
 
 /** The offered scopes, then any on the link no longer offered. The last one checked can't be unchecked. */
-function ScopeChecks({ grant, grants, scopes, busy, className }: { grant: Grant; grants: UseGrantsResult; scopes: readonly GrantScope[]; busy: boolean; className: string }) {
+function ScopeChecks({ grant, grants, scopes, busy, className, link }: {
+  grant: Grant
+  grants: UseGrantsResult
+  scopes: readonly GrantScope[]
+  busy: boolean
+  className: string
+  /** The scope's own link while the token is on screen, if it has one. */
+  link: (id: string, label: ReactNode) => ReactNode
+}) {
   const listed = [...scopes.map(s => s.id), ...grant.scopes.filter(id => !scopes.some(s => s.id === id))]
   return (
     <>
@@ -390,6 +436,7 @@ function ScopeChecks({ grant, grants, scopes, busy, className }: { grant: Grant;
               onChange={() => void grants.update(grant.id, { scopes: listed.filter(s => (s === id ? !on : grant.scopes.includes(s))) })}
             />
             <span>{scopes.find(s => s.id === id)?.label ?? id}</span>
+            {on && link(id, scopes.find(s => s.id === id)?.label ?? id)}
           </label>
         )
       })}
@@ -443,6 +490,17 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
   const disabled = grant.disabledAt !== null
   const expired = grant.expiresAt !== null && grant.expiresAt * 1000 < Date.now()
   const token = grants.token?.grantId === grant.id ? grants.token.token : null
+  const clip = useCopy()
+  // Re-run on every render, so a scope checked while the token is on screen gets its link, and an unchecked one loses it.
+  const scoped = new Map(
+    (token ? linkEntries(buildLink(grant, token)) : [])
+      .filter((e): e is GrantLinkEntry => e.scope !== undefined && grant.scopes.includes(e.scope))
+      .map(e => [e.scope!, e.url]),
+  )
+  const scopeLink = (id: string, label: ReactNode) => {
+    const url = scoped.get(id)
+    return url ? <ScopeLink label={label} url={url} clip={clip} cx={cx} labels={labels} /> : null
+  }
   const holder = grant.subject?.name || grant.subject?.email || grant.email
   // 1–3 redemptions is one person on their phone, laptop and work machine. Many
   // more, especially across countries, is the forwarding signal: a soft badge,
@@ -530,7 +588,17 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
           <dt>scopes</dt>
           <dd>
             {editScopes && !revoked ? (
-              <ScopeChecks grant={grant} grants={grants} scopes={scopes} busy={busy} className={cx.check} />
+              <ScopeChecks grant={grant} grants={grants} scopes={scopes} busy={busy} className={cx.check} link={scopeLink} />
+            ) : scoped.size ? (
+              grant.scopes.map(id => {
+                const label = scopes.find(s => s.id === id)?.label ?? id
+                return (
+                  <div key={id} className={cx.check}>
+                    <span>{label}</span>
+                    {scopeLink(id, label)}
+                  </div>
+                )
+              })
             ) : (
               grant.scopes.map((id, i) => (
                 <span key={id}>
@@ -606,7 +674,7 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
       )}
 
       {token ? (
-        <GrantLink grant={grant} token={token} buildLink={buildLink} onDismiss={grants.dismissToken} labels={labels} classNames={classNames} />
+        <GrantLink grant={grant} token={token} buildLink={buildLink} omitScopes={[...scoped.keys()]} onDismiss={grants.dismissToken} labels={labels} classNames={classNames} />
       ) : (
         !revoked && <p className={cx.muted}>{labels.lostToken ?? 'Link shown once at mint. Rotate it for a fresh one if you lost it.'}</p>
       )}

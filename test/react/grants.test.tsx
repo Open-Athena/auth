@@ -274,13 +274,16 @@ describe('a link per page', () => {
     ])
     await user.click(screen.getAllByRole('button', { name: 'Copy' })[2]!)
     expect([await navigator.clipboard.readText(), screen.getAllByRole('button', { name: /^Cop/ }).map(b => b.textContent)])
-      .toEqual(['https://x.test/beta?key=token-g1', ['Copy', 'Copy', 'Copied', 'Copy all']])
+      .toEqual(['https://x.test/beta?key=token-g1', ['Copy', 'Copy', 'Copied', 'Copy key', 'Copy all']])
     await user.click(screen.getByRole('button', { name: 'Copy all' }))
     expect(await navigator.clipboard.readText()).toBe([
       'All roles: https://x.test/?key=token-g1',
       'Alpha: https://x.test/alpha?key=token-g1',
       'Beta: https://x.test/beta?key=token-g1',
+      'Key: ?key=token-g1',
     ].join('\n'))
+    await user.click(screen.getByRole('button', { name: 'Copy key' }))
+    expect(await navigator.clipboard.readText()).toBe('?key=token-g1')
     // A rotated link shows the same rows, with the new token.
     await user.click(screen.getByRole('button', { name: 'Done' }))
     await user.click(screen.getByRole('button', { name: 'Rotate' }))
@@ -317,5 +320,59 @@ describe('anon wording follows the chip', () => {
     renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={() => 'x'} anonChip={anonChip} />)
     await screen.findByRole('article')
     expect(screen.getAllByRole('checkbox', { name: /^Anonymous/ }).map(c => c.parentElement!.textContent)).toEqual([text, text])
+  })
+})
+
+describe('links beside their scopes', () => {
+  const pages = (g: Grant, t: string) => [
+    { label: 'All roles', url: `https://x.test/?key=${t}` },
+    ...g.scopes.map(s => ({ label: String(SCOPES.find(x => x.id === s)!.label), url: `https://x.test/${s}?key=${t}`, scope: s })),
+  ]
+  const urls = () => screen.queryAllByRole('textbox').filter(t => (t as HTMLInputElement).readOnly)
+    .map(t => [t.getAttribute('aria-label'), (t as HTMLInputElement).value])
+
+  it("puts a scope's link on its row, and follows the scope as it's checked and unchecked", async () => {
+    renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} editScopes />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    const card = await screen.findByRole('article')
+    await waitFor(() => expect(urls()).toEqual([
+      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
+      ['All roles', 'https://x.test/?key=token-g1'],
+    ]))
+    await user.click(within(card).getByRole('checkbox', { name: 'Beta' }))
+    await waitFor(() => expect(urls()).toEqual([
+      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
+      ['Beta link', 'https://x.test/beta?key=token-g1'],
+      ['All roles', 'https://x.test/?key=token-g1'],
+    ]))
+    await user.click(within(card).getByRole('checkbox', { name: /^Alpha/ }))
+    await waitFor(() => expect(urls()).toEqual([
+      ['Beta link', 'https://x.test/beta?key=token-g1'],
+      ['All roles', 'https://x.test/?key=token-g1'],
+    ]))
+    // "Copy all" still lists every page, the scoped ones included.
+    await user.click(screen.getByRole('button', { name: 'Copy all' }))
+    expect(await navigator.clipboard.readText()).toBe([
+      'All roles: https://x.test/?key=token-g1',
+      'Beta: https://x.test/beta?key=token-g1',
+      'Key: ?key=token-g1',
+    ].join('\n'))
+  })
+
+  it('without editScopes, the scopes become rows while the links show', async () => {
+    renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
+    await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
+    await user.click(screen.getByRole('button', { name: 'Mint link' }))
+    await waitFor(() => expect(urls()).toEqual([
+      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
+      ['Beta link', 'https://x.test/beta?key=token-g1'],
+      ['All roles', 'https://x.test/?key=token-g1'],
+    ]))
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    expect([urls(), screen.getByRole('article').querySelector('dd')!.textContent]).toEqual([[], 'Alpha, Beta'])
   })
 })
