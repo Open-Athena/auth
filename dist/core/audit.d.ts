@@ -3,6 +3,8 @@ export type AccessEventKind = 'mint' | 'redeem' | 'deny' | 'disable' | 'enable' 
  | 'reveal'
 /** A link-preview bot fetched a share link (`reason`: which one); nothing was redeemed. */
  | 'preview'
+/** A signed-in staff member opened a share link: their session was kept, nothing redeemed (`sessionSub`: who). */
+ | 'staff-click'
 /** Staff kept an existing link's key (`gate.keepToken`), or forgot it (`reason: 'forget'`). */
  | 'keep' | 'request' | 'view' | 'signin' | 'signout';
 export interface AccessEvent {

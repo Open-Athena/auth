@@ -1,4 +1,5 @@
 export { AuthClientError, createAuthClient, shareKey, shareUrl } from './api.js';
+export { CLEAR_KEY } from '../core/http.js';
 export type { AuthClient, AuthClientOptions } from './api.js';
 export type * from '../core/http.js';
 export { createGrantsController } from './grants.js';

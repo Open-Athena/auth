@@ -3,6 +3,11 @@ import type { Grant, NewGrant, GrantPatch, Subject } from './types.js';
 import type { GrantActivity, StoredEvent } from './store.js';
 import type { Whoami } from '../client/identity.js';
 export type { Grant, Subject } from './types.js';
+/**
+ * `?key=-` on any URL: sign this browser out of its share-link session (never an email sign-in), then land on the
+ * same URL without it. A real key is 32 base64url characters, so this can't be one.
+ */
+export declare const CLEAR_KEY = "-";
 export type { GrantActivity, StoredEvent, AllowEntry } from './store.js';
 export type { Whoami } from '../client/identity.js';
 export interface MintInput extends Omit<NewGrant, 'subject' | 'createdBy' | 'expiresAt'> {

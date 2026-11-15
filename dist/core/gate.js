@@ -7,6 +7,7 @@
  * session it ever minted, instantly — that property is what makes the social
  * story (assume forwarding; make it visible and revocable) actually work.
  */
+import { CLEAR_KEY } from './http.js';
 import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
 import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
@@ -22,6 +23,7 @@ import { generateId, generateToken, hashToken } from './tokens.js';
 import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
 const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
+export { CLEAR_KEY } from './http.js';
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 /** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
 export function linkPreviewPage(preview) {
@@ -83,7 +85,7 @@ function grantAuth(grant) {
     return { kind: 'grant', grant, admin: false, scopes: grant.scopes };
 }
 export function createGate(opts) {
-    const { store, secret, keepTokens = false, linkPreview, previewBots = PREVIEW_BOTS, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const { store, secret, keepTokens = false, linkPreview, previewBots = PREVIEW_BOTS, staffKeepSession = true, keyParam = 'key', adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
     const tokenSecret = opts.tokenSecret ?? secret;
     const policy = opts.policy
         ? firstMatch(adminPolicy(adminEmails), opts.policy)
@@ -150,7 +152,8 @@ export function createGate(opts) {
         };
         const url = new URL(req.url);
         const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i);
-        const tokenPresented = !!bearer || url.searchParams.has('key');
+        // `?key=-` (`CLEAR_KEY`) is an instruction to `redeem`, not a credential: no token, no deny row.
+        const tokenPresented = !!bearer || (url.searchParams.has('key') && url.searchParams.get('key') !== CLEAR_KEY);
         const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '');
         if (tokenPresented) {
             credential = 'token';
@@ -278,9 +281,46 @@ export function createGate(opts) {
         const preview = (await linkPreview?.(req, grant)) ?? { title: new URL(req.url).host };
         return linkPreviewPage(preview);
     }
+    /** The request's URL without the key (or `as`), as a same-origin redirect target. */
+    function withoutKey(req) {
+        const url = new URL(req.url);
+        url.searchParams.delete(keyParam);
+        url.searchParams.delete('as');
+        return url;
+    }
+    /** A redirect to this URL without its key, setting `cookies`. */
+    function dropKey(req, cookies = []) {
+        const url = withoutKey(req);
+        const headers = new Headers({ location: `${url.pathname}${url.search}${url.hash}`, 'cache-control': 'private, no-store' });
+        for (const c of cookies)
+            headers.append('set-cookie', c);
+        return new Response(null, { status: 302, headers });
+    }
+    /** `?key=-`: end a share-link session here, leaving an email sign-in alone. */
+    async function clearLinkSession(req, nowMs) {
+        const nowS = sec(nowMs);
+        const bare = new Request(withoutKey(req), { headers: req.headers });
+        let cookies = [];
+        let subs = [];
+        if (retained) {
+            subs = await retained.clearLinks(bare, nowMs);
+        }
+        else {
+            const { auth } = await authenticateResult(bare, nowMs, { logView: false });
+            if (auth?.kind === 'grant') {
+                cookies = [clearCookie({ name: cookieName, secure: isSecureRequest(req) })];
+                subs = [grantSub(auth.grant.id)];
+            }
+        }
+        for (const sub of subs)
+            await logWithRequest(req, { event: 'signout', sessionSub: sub, reason: 'clear-key' }, nowS);
+        return { ok: false, reason: 'cleared', response: dropKey(req, cookies), cookies };
+    }
     /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
     async function redeem(token, req, nowMs = Date.now()) {
         const nowS = sec(nowMs);
+        if (token === CLEAR_KEY)
+            return clearLinkSession(req, nowMs);
         const tokenHash = await hashToken(token);
         const existing = await store.byTokenHash(tokenHash);
         if (!existing) {
@@ -293,6 +333,15 @@ export function createGate(opts) {
         if (bot !== null && canRedeem(existing, nowS)) {
             await logWithRequest(req, { event: 'preview', grantId: existing.id, reason: bot }, nowS);
             return { ok: false, reason: 'preview', bot, response: await previewResponse(req, existing) };
+        }
+        // Staff opening a link drafted for someone else stay themselves, rather than becoming that someone.
+        // (Retained mode has its own answer: the link is held as an account to switch to, and spends nothing.)
+        if (staffKeepSession && !retained && new URL(req.url).searchParams.get('as') !== 'recipient') {
+            const { auth } = await authenticateResult(new Request(withoutKey(req), { headers: req.headers }), nowMs, { logView: false });
+            if (auth?.kind === 'sso') {
+                await logWithRequest(req, { event: 'staff-click', grantId: existing.id, sessionSub: emailSub(auth.email) }, nowS);
+                return { ok: false, reason: 'staff', email: auth.email, response: dropKey(req) };
+            }
         }
         if (retained) {
             // A link this browser can't redeem leaves its logins as they are: a bad
@@ -997,6 +1046,20 @@ export function createGate(opts) {
         keepToken,
         /** What a preview bot is shown for this link (`linkPreview`, or the host). */
         previewResponse,
+        /**
+         * The whole `?key=` step for a page request: null without a key (or when it's refused: show your own "this link
+         * isn't active"); otherwise the response to send (the redirect that drops the key and sets the session, the
+         * preview card, staff kept as themselves, or a cleared link session).
+         */
+        async handleKeyParam(req, nowMs = Date.now()) {
+            const key = new URL(req.url).searchParams.get(keyParam);
+            if (key === null)
+                return null;
+            const res = await redeem(key, req, nowMs);
+            if (res.ok)
+                return dropKey(req, res.cookies);
+            return 'response' in res ? res.response : null;
+        },
         disable,
         enable,
         update,

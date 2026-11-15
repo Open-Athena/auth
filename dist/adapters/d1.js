@@ -310,18 +310,25 @@ export function d1AuditQuery(db) {
             // `redeem` by one) count as previews, and stay out of the clients, countries and dates that say who opened it.
             const groups = await db
                 .prepare(`SELECT event, ip_hash, ua, country, CASE WHEN event = 'preview' THEN reason END AS bot,
+                  CASE WHEN event = 'staff-click' THEN session_sub END AS staff,
                   COUNT(*) AS n, MIN(ts) AS first_seen, MAX(ts) AS last_seen
-             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5`)
+             FROM access_log WHERE grant_id = ? GROUP BY 1, 2, 3, 4, 5, 6`)
                 .bind(grantId)
                 .all();
             const ips = new Set();
             const countrySet = new Set();
             const bots = new Map();
+            const staff = new Map();
             let views = 0;
             let botRedeems = 0;
             let firstSeen = null;
             let lastSeen = null;
             for (const g of groups.results) {
+                if (g.event === 'staff-click') {
+                    const who = g.staff?.startsWith('e:') ? g.staff.slice(2) : 'staff';
+                    staff.set(who, (staff.get(who) ?? 0) + g.n);
+                    continue;
+                }
                 const bot = g.event === 'preview' ? (g.bot ?? 'bot') : g.event === 'redeem' ? previewBot(g.ua) : null;
                 if (bot !== null) {
                     bots.set(bot, (bots.get(bot) ?? 0) + g.n);
@@ -355,6 +362,7 @@ export function d1AuditQuery(db) {
                 previews: [...bots.values()].reduce((a, b) => a + b, 0),
                 previewBots: [...bots].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([name]) => name),
                 botRedeems,
+                staffClicks: [...staff].sort(([x, a], [y, b]) => b - a || (x < y ? -1 : 1)).map(([who]) => who),
             };
         },
         async recent(opts) {

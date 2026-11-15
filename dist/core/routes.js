@@ -176,6 +176,13 @@ export function authRoutes(gate, opts = {}) {
                     return json({ error: e.code }, e.status);
                 throw e;
             }
+            // Handled without a redemption: staff kept as themselves, or `?key=-` ending a link session. Pass on its cookies.
+            if (!res.ok && (res.reason === 'staff' || res.reason === 'cleared')) {
+                const out = json({ ok: true, [res.reason]: true }, 200);
+                for (const c of res.reason === 'cleared' ? res.cookies : [])
+                    out.headers.append('set-cookie', c);
+                return out;
+            }
             if (!res.ok)
                 return json({ error: 'invalid link', reason: res.reason }, 401);
             // Retained mode, with another login active: the link is held as an

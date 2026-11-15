@@ -88,7 +88,8 @@ export function accessLogActivity(feed, options) {
             actor,
             origin: options.origin,
             ts: event.ts,
-            kind: event.event === 'view' ? 'view' : denied ? 'denied' : preview ? 'preview' : 'access',
+            // `staff`: a signed-in staff member opened the link. Off unless the app declares the kind.
+            kind: event.event === 'view' ? 'view' : denied ? 'denied' : preview ? 'preview' : event.event === 'staff-click' ? 'staff' : 'access',
             line: denied || preview
                 ? `${event.reason ?? (denied ? 'refused' : 'bot')}${path ? ` ${path}` : ''}`
                 : `${event.event}${path ? ` ${path}` : ''}`,

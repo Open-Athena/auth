@@ -205,6 +205,8 @@ export interface GrantActivity {
     previewBots: string[];
     /** Of the link's `redeems`, how many were preview bots before previews stopped redeeming: subtract for people. */
     botRedeems: number;
+    /** Staff who opened the link while signed in (`staff-click` rows), most first; left out of clients and countries. */
+    staffClicks: string[];
 }
 export interface AuditQuery {
     activity(grantId: string): Promise<GrantActivity>;
