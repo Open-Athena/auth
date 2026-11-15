@@ -10,7 +10,7 @@
 import { nullAudit, requestMeta } from './audit.js';
 import { assetId, assetUri } from './assets.js';
 import { InvalidImageError, MAX_INLINE_AVATAR_BYTES, bytesToDataUri, fetchAvatar, isSafeAvatarUrl, parseAvatarRef, } from './avatar.js';
-import { looksAutomated } from './bots.js';
+import { looksAutomated, PREVIEW_BOTS, previewBot } from './bots.js';
 import { AVATAR_SEED_PENDING, cleanName } from './profile.js';
 import { adminPolicy, firstMatch } from './policy.js';
 import { DEFAULT_RATE_LIMIT, cleanSubject, isEmailish, noopNotify, subjectName, } from './requests.js';
@@ -22,6 +22,22 @@ import { generateId, generateToken, hashToken } from './tokens.js';
 import { retainedMode } from './retained.js';
 /** Why a grant was refused — checked in the order an admin would explain it. */
 const denyReason = (grant) => grant.revokedAt !== null ? 'revoked' : grant.disabledAt !== null ? 'disabled' : 'expired';
+const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
+export function linkPreviewPage(preview) {
+    const meta = (attr, key, value) => value === undefined ? '' : `<meta ${attr}="${key}" content="${escapeHtml(value)}">\n`;
+    const html = '<!doctype html>\n<html><head><meta charset="utf-8">\n<meta name="robots" content="noindex, nofollow">\n'
+        + `<title>${escapeHtml(preview.title)}</title>\n`
+        + meta('property', 'og:title', preview.title)
+        + meta('property', 'og:description', preview.description)
+        + meta('name', 'description', preview.description)
+        + meta('property', 'og:image', preview.image)
+        + meta('name', 'twitter:card', preview.image ? 'summary_large_image' : 'summary')
+        + '</head><body></body></html>\n';
+    return new Response(html, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex, nofollow' },
+    });
+}
 /** A service link is a job's, never a person's, so it can't also be bound to an email. */
 export class ServiceGrantEmailError extends Error {
     constructor() {
@@ -67,7 +83,7 @@ function grantAuth(grant) {
     return { kind: 'grant', grant, admin: false, scopes: grant.scopes };
 }
 export function createGate(opts) {
-    const { store, secret, keepTokens = false, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
+    const { store, secret, keepTokens = false, linkPreview, previewBots = PREVIEW_BOTS, adminEmails = [], cookieName = DEFAULT_COOKIE_NAME, sessionTtlS = DEFAULT_SESSION_TTL_S, audit = nullAudit, touchIntervalS = 60, logViews = false, filterBots = true, profiles, assets, allowGrantSelfEdit = false, profileMinEditIntervalS = 0, avatarMaxBytes = 256 * 1024, avatarFetchTimeoutMs = 5000, fetch: fetchImpl = globalThis.fetch, } = opts;
     const tokenSecret = opts.tokenSecret ?? secret;
     const policy = opts.policy
         ? firstMatch(adminPolicy(adminEmails), opts.policy)
@@ -142,6 +158,12 @@ export function createGate(opts) {
             if (!grant) {
                 await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
                 return failed('invalid');
+            }
+            // A preview bot given `?key=` gets nothing the key opens (`redeem` shows it the link's card instead).
+            const bot = bearer ? null : previewBot(req.headers.get('User-Agent'), previewBots);
+            if (bot !== null) {
+                await logWithRequest(req, { event: 'preview', grantId: grant.id, reason: bot }, nowS);
+                return failed(null);
             }
             // A presented token is the *link* being used, not a session being
             // resumed, so disabling blocks it: "stop letting new people in" has to
@@ -251,6 +273,11 @@ export function createGate(opts) {
                 : { event: 'view', sessionSub: emailSub(auth.email) }),
         });
     }
+    /** A link-preview bot's page for this link: the app's card, or the host alone. */
+    async function previewResponse(req, grant) {
+        const preview = (await linkPreview?.(req, grant)) ?? { title: new URL(req.url).host };
+        return linkPreviewPage(preview);
+    }
     /** `?key=<token>` -> session cookie. This is the one path that spends a redemption. */
     async function redeem(token, req, nowMs = Date.now()) {
         const nowS = sec(nowMs);
@@ -259,6 +286,13 @@ export function createGate(opts) {
         if (!existing) {
             await logWithRequest(req, { event: 'deny', reason: 'bad-token' }, nowS);
             return { ok: false, reason: 'bad-token' };
+        }
+        // An unfurler or mail scanner fetching the link isn't the recipient opening it: no session, no redemption (so a
+        // `maxRedeems` link isn't used up by previews), and the key stays good for the human's click.
+        const bot = previewBot(req.headers.get('User-Agent'), previewBots);
+        if (bot !== null && canRedeem(existing, nowS)) {
+            await logWithRequest(req, { event: 'preview', grantId: existing.id, reason: bot }, nowS);
+            return { ok: false, reason: 'preview', bot, response: await previewResponse(req, existing) };
         }
         if (retained) {
             // A link this browser can't redeem leaves its logins as they are: a bad
@@ -961,6 +995,8 @@ export function createGate(opts) {
         rotate,
         revealToken,
         keepToken,
+        /** What a preview bot is shown for this link (`linkPreview`, or the host). */
+        previewResponse,
         disable,
         enable,
         update,

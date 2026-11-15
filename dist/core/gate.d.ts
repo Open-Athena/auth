@@ -10,6 +10,7 @@
 import { type AuditSink } from './audit.js';
 import { type AssetStore } from './assets.js';
 import { type AvatarRef, type AvatarRefKind } from './avatar.js';
+import { type PreviewBot } from './bots.js';
 import type { Whoami } from './http.js';
 import type { SessionLossReason } from './denial.js';
 import { type Profile } from './profile.js';
@@ -29,6 +30,14 @@ export interface GateOptions {
      * key is shown once. Kept keys are sealed under a key derived from `tokenSecret`.
      */
     keepTokens?: boolean;
+    /**
+     * What a link-preview bot (Slack, Gmail, iMessage…; see `previewBot`) is shown for a share link, instead of
+     * redeeming it: a title, description and image for its card. Null, or no hook: the site's host only, since a preview
+     * can land somewhere the recipient didn't choose.
+     */
+    linkPreview?: (req: Request, grant: Grant) => LinkPreview | null | Promise<LinkPreview | null>;
+    /** Which user-agents are preview bots. Default `PREVIEW_BOTS`; spread it to add your own. */
+    previewBots?: readonly PreviewBot[];
     /**
      * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
      * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
@@ -165,7 +174,26 @@ export type RedeemResult = {
 } | {
     ok: false;
     reason: RedeemFailure;
+}
+/**
+ * A link-preview bot, not a person: nothing was redeemed (no session, no count, the key still works for the
+ * human's click), and a `preview` row was logged. Send `response`: a small page with the link's card.
+ */
+ | {
+    ok: false;
+    reason: 'preview';
+    bot: string;
+    response: Response;
 };
+/** A share link's card for link-preview bots (`GateOptions.linkPreview`). */
+export interface LinkPreview {
+    title: string;
+    description?: string;
+    /** An absolute https image URL. */
+    image?: string;
+}
+/** A minimal page carrying a link's Open Graph / Twitter card, marked `noindex`. */
+export declare function linkPreviewPage(preview: LinkPreview): Response;
 export interface MintResult {
     grant: Grant;
     /** The raw token. Returned exactly once — only its hash is stored. */
@@ -309,6 +337,8 @@ export declare function createGate(opts: GateOptions): {
     }, nowMs?: number) => Promise<MintResult | null>;
     revealToken: (id: string, actor?: string | null, nowMs?: number) => Promise<string | null>;
     keepToken: (id: string, token: string | null, actor?: string | null, nowMs?: number) => Promise<boolean>;
+    /** What a preview bot is shown for this link (`linkPreview`, or the host). */
+    previewResponse: (req: Request, grant: Grant) => Promise<Response>;
     disable: (id: string, nowMs?: number) => Promise<boolean>;
     enable: (id: string, nowMs?: number) => Promise<boolean>;
     update: (id: string, edit: GrantEdit, nowMs?: number, alsoLogged?: string[]) => Promise<Grant | null>;

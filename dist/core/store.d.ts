@@ -196,6 +196,15 @@ export interface GrantActivity {
         path: string;
         views: number;
     }[];
+    /**
+     * Fetches by link-preview bots (`preview` rows, plus older `redeem` rows whose user-agent `previewBot` names, read
+     * that way rather than rewritten). They're left out of `distinctIps`, `countries` and the dates.
+     */
+    previews: number;
+    /** The bots behind `previews`, most first: `Slack`, `Google`. */
+    previewBots: string[];
+    /** Of the link's `redeems`, how many were preview bots before previews stopped redeeming: subtract for people. */
+    botRedeems: number;
 }
 export interface AuditQuery {
     activity(grantId: string): Promise<GrantActivity>;
