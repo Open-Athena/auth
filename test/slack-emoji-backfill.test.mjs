@@ -18,8 +18,17 @@ const MEMBERS = [
 const EMOJI = { ryanw: 'https://x/1.png', ada: 'https://x/2.png', sam: 'https://x/3.png', josen: 'https://x/4.png', grace: 'alias:ada', party: 'https://x/5.png' }
 
 describe('slack-emoji backfill', () => {
-  it('spells a name as an emoji would', () => {
-    expect(['ryan.w', 'José N.', 'Ada Lovelace', "O'Neil", undefined].map(asEmojiName)).toEqual(['ryanw', 'josen', 'adalovelace', "o'neil", ''])
+  it('spells a name as an emoji would, with spaces and dots dropped or as a separator', () => {
+    expect(['ryan.w', 'José N.', 'Ada Lovelace', "O'Neil", undefined].map(n => asEmojiName(n))).toEqual(['ryanw', 'josen', 'adalovelace', "o'neil", ''])
+    expect([asEmojiName('ben.gottlieb', '-'), asEmojiName('Ben Gottlieb', '_')]).toEqual(['ben-gottlieb', 'ben_gottlieb'])
+  })
+
+  it('matches a dashed or underscored emoji to a dotted handle or a full name', () => {
+    const members = [member('U1', 'ben.gottlieb', 'Ben Gottlieb', 'ben.gottlieb@x.test'), member('U2', 'dh', 'David Hall', 'david.hall@x.test')]
+    expect(propose({ emoji: { 'ben-gottlieb': 'u', david_hall: 'u' }, members }).rows.map(r => [r.email, r.emoji, r.match])).toEqual([
+      ['ben.gottlieb@x.test', ':ben-gottlieb:', 'handle'],
+      ['david.hall@x.test', ':david_hall:', 'full name'],
+    ])
   })
 
   it('proposes the strongest unshared match per person, skips what is already mapped, and lists the rest', () => {

@@ -27,8 +27,12 @@ const BROKER_DB = 'oa-login'
 const WRANGLER = join(dirname(fileURLToPath(import.meta.url)), '..', 'broker', 'scripts', 'oa-wrangler.sh')
 export const COLUMNS = ['action', 'email', 'emoji', 'match', 'slack_handle', 'slack_name', 'current']
 
-/** A name as an emoji would spell it: lower-case, spaces and dots to nothing, only emoji characters left. */
-export const asEmojiName = name => (name ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[\s.]+/g, '').replace(/[^a-z0-9_+'-]/g, '')
+/** A name as an emoji would spell it: lower-case, spaces and dots joined by `sep` (default nothing), only emoji characters left. */
+export const asEmojiName = (name, sep = '') =>
+  (name ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().replace(/[\s.]+/g, sep).replace(/[^a-z0-9_+'-]/g, '')
+
+/** The spellings tried for one name: `ben.gottlieb` as `bengottlieb`, `ben-gottlieb` and `ben_gottlieb`. */
+const spellings = name => [...new Set(['', '-', '_'].map(sep => asEmojiName(name, sep)))].filter(Boolean)
 
 /** How a member's names are tried, strongest first. */
 const MATCHES = [
@@ -54,8 +58,7 @@ export function propose({ emoji, members, current = {} }) {
   const candidates = humans.map(m => {
     const found = []
     for (const [kind, pick] of MATCHES) {
-      const name = asEmojiName(pick(m))
-      if (name && names.has(name) && !found.some(f => f.name === name)) found.push({ kind, name })
+      for (const name of spellings(pick(m))) if (names.has(name) && !found.some(f => f.name === name)) found.push({ kind, name })
     }
     for (const f of found) claimants.set(f.name, new Set([...(claimants.get(f.name) ?? []), m.profile.email.toLowerCase()]))
     return { m, found }
