@@ -419,21 +419,82 @@ const oneTapDeny = (why, debug) => new Response(JSON.stringify({ ok: false }) + 
         ...(debug ? { 'x-onetap-reason': why } : {}),
     },
 });
+/** Most emails one lookup request carries; `lookupSlackEmojis` splits a longer list. */
+const LOOKUP_BATCH = 100;
 /**
- * An email's Slack emoji (`:name:`) from the broker, or null, for a person who signed in some other way (Google
- * directly, an emailed code) and so brought no `oa_slack_emoji` claim. Server-side only: it sends the client secret.
- * Null too for anyone this client's policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate
- * limit), so a caller can tell "none" from "couldn't ask".
+ * People's Slack emoji (`:name:`, or null) from the broker, by lower-cased email: the current mapping, whoever they
+ * are and however they signed in. Server-side only: it sends the client secret. Null too for anyone this client's
+ * policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate limit), so a caller can tell "none"
+ * from "couldn't ask".
  */
-export async function lookupSlackEmoji(email, opts) {
+export async function lookupSlackEmojis(emails, opts) {
     const { issuer, clientId, clientSecret, basePath = '/oidc', fetch = globalThis.fetch } = opts;
-    const res = await fetch(`${issuer.replace(/\/+$/, '')}${basePath}/slack-emoji`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, email }),
-    });
-    if (!res.ok)
-        throw new Error(`slack-emoji lookup failed (${res.status})`);
-    const { slack_emoji: emoji } = (await res.json());
-    return normalizeSlackEmoji(emoji);
+    const wanted = [...new Set(emails.map(e => e.trim().toLowerCase()))];
+    const out = {};
+    for (let i = 0; i < wanted.length; i += LOOKUP_BATCH) {
+        const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret });
+        for (const e of wanted.slice(i, i + LOOKUP_BATCH))
+            body.append('email', e);
+        const res = await fetch(`${issuer.replace(/\/+$/, '')}${basePath}/slack-emoji`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body,
+        });
+        if (!res.ok)
+            throw new Error(`slack-emoji lookup failed (${res.status})`);
+        const { slack_emojis: found = {} } = (await res.json());
+        for (const e of wanted.slice(i, i + LOOKUP_BATCH))
+            out[e] = normalizeSlackEmoji(found[e]);
+    }
+    return out;
+}
+/** One person's Slack emoji from the broker, or null. See `lookupSlackEmojis`. */
+export async function lookupSlackEmoji(email, opts) {
+    return (await lookupSlackEmojis([email], opts))[email.trim().toLowerCase()] ?? null;
+}
+/**
+ * `lookupSlackEmojis` with a memory cache: an answer is reused for `ttlS`, and concurrent asks for the same people
+ * share one request. A failed lookup isn't cached, and rejects (a caller showing a fallback can catch it). Make one
+ * per isolate (module scope), not per request, or nothing is reused.
+ */
+export function slackEmojiClient({ ttlS = 600, ...opts }) {
+    const cache = new Map();
+    const inFlight = new Map();
+    async function getMany(emails) {
+        const now = Date.now();
+        const keys = [...new Set(emails.map(e => e.trim().toLowerCase()))];
+        const missing = keys.filter(k => !((cache.get(k)?.until ?? 0) > now) && !inFlight.has(k));
+        if (missing.length) {
+            const batch = lookupSlackEmojis(missing, opts);
+            for (const k of missing) {
+                const one = batch.then(found => {
+                    cache.set(k, { emoji: found[k] ?? null, until: Date.now() + ttlS * 1000 });
+                    return found[k] ?? null;
+                });
+                inFlight.set(k, one);
+                void one.catch(() => { }).finally(() => inFlight.delete(k));
+            }
+        }
+        // Taken together, before any await: a request settling meanwhile mustn't leave a key with neither.
+        const answers = keys.map(k => {
+            const hit = cache.get(k);
+            return hit && hit.until > now ? Promise.resolve(hit.emoji) : inFlight.get(k);
+        });
+        const settled = await Promise.all(answers);
+        return Object.fromEntries(keys.map((k, i) => [k, settled[i]]));
+    }
+    return {
+        getMany,
+        async get(email) {
+            return (await getMany([email]))[email.trim().toLowerCase()] ?? null;
+        },
+        /** Forget cached answers (all, or these people's), e.g. after changing a mapping. */
+        forget(emails) {
+            if (!emails)
+                cache.clear();
+            else
+                for (const e of emails)
+                    cache.delete(e.trim().toLowerCase());
+        },
+    };
 }

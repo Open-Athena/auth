@@ -88,6 +88,8 @@ export interface ProviderOptions {
 export declare const hashClientSecret: (secret: string) => Promise<string>;
 /** A person's Slack emoji, under `profile`: `:name:`, or null when they have none (so an app's copy is cleared). */
 export declare const SLACK_EMOJI_CLAIM = "oa_slack_emoji";
+/** Most emails one `POST <basePath>/slack-emoji` may ask about. */
+export declare const MAX_LOOKUP_EMAILS = 100;
 export declare function oidcProviderRoutes(opts: ProviderOptions): (req: Request) => Promise<Response | null>;
 /** For an app: the broker as an `OidcProvider` (`@open-athena/auth/oidc`), from its issuer. */
 export declare function brokerProvider(issuer: string, { basePath, scope }?: {
