@@ -99,7 +99,7 @@ describe('authentication freshness without verified upstream evidence', () => {
     const res = await provider(new Request(`${ISSUER}/.well-known/openid-configuration`))
     const body = await res!.json() as Record<string, unknown>
     expect([body.prompt_values_supported, body.claims_supported]).toEqual([
-      ['none', 'select_account'], ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture'],
+      ['none', 'select_account'], ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture', 'oa_slack_emoji'],
     ])
   })
 })

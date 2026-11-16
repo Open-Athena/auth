@@ -23,7 +23,7 @@ import {
 import { looksAutomated, PREVIEW_BOTS, type PreviewBot, previewBot } from './bots.js'
 import type { Whoami } from './http.js'
 import type { SessionLossReason } from './denial.js'
-import { AVATAR_SEED_PENDING, type Profile, cleanName } from './profile.js'
+import { AVATAR_SEED_PENDING, type Profile, cleanName, normalizeSlackEmoji } from './profile.js'
 import { type EmailPolicy, adminPolicy, firstMatch } from './policy.js'
 import {
   type AccessRequest,
@@ -421,7 +421,20 @@ export function createGate(opts: GateOptions) {
     const subject: Subject = {}
     if (p.name) subject.name = p.name
     if (p.avatar) subject.avatar = p.avatar
+    if (p.slackEmoji) subject.slackEmoji = p.slackEmoji
     return Object.keys(subject).length ? subject : null
+  }
+
+  /**
+   * Set or clear a person's Slack emoji (`name` or `:name:`; null clears). For broker admins and the backfill, never
+   * the person: `putProfile` has no way to write it. Throws on a value that isn't an emoji name, or without a store
+   * that keeps one.
+   */
+  async function setSlackEmoji(email: string, emoji: string | null): Promise<void> {
+    if (!profiles?.setSlackEmoji) throw new Error('setSlackEmoji: the profile store keeps no Slack emoji')
+    const value = emoji === null ? null : normalizeSlackEmoji(emoji)
+    if (emoji !== null && value === null) throw new TypeError(`not a Slack emoji name: ${JSON.stringify(emoji)}`)
+    await profiles.setSlackEmoji(email.trim().toLowerCase(), value)
   }
 
   const notify: Notify = opts.notify ?? noopNotify
@@ -1346,15 +1359,36 @@ export function createGate(opts: GateOptions) {
    */
   async function seedProfileFromClaims(
     email: string,
-    claims: { name?: string; given_name?: string; family_name?: string; picture?: string },
+    claims: { name?: string; given_name?: string; family_name?: string; picture?: string; oa_slack_emoji?: unknown },
     nowMs = Date.now(),
   ): Promise<Subject | null> {
     if (!profiles) return null
+    await seedNameAndFace(email, claims, nowMs)
+    // The broker's emoji is the broker's: copied on every sign-in, so a changed or removed mapping lands here at the
+    // next one. Only when the claim is there at all (a Google sign-in carries none, and mustn't clear it); `null`
+    // clears. An invalid value is ignored rather than stored.
+    if ('oa_slack_emoji' in claims && profiles.setSlackEmoji) {
+      const emoji = claims.oa_slack_emoji === null ? null : normalizeSlackEmoji(claims.oa_slack_emoji)
+      const current = (await profiles.get(email))?.slackEmoji ?? null
+      if ((claims.oa_slack_emoji === null || emoji !== null) && emoji !== current) await profiles.setSlackEmoji(email, emoji)
+    }
+    return subjectFor(email)
+  }
+
+  async function seedNameAndFace(
+    email: string,
+    claims: { name?: string; given_name?: string; family_name?: string; picture?: string },
+    nowMs: number,
+  ): Promise<void> {
+    if (!profiles) return
     // A self-set profile (or an earlier seed that got a photo) outranks the IdP:
     // the first sign-in for an email with no row seeds; after that, only a row
     // still marked as waiting for a photo is touched.
     const existing = await profiles.get(email)
-    if (existing && existing.avatarSrc !== AVATAR_SEED_PENDING) return subjectFor(email)
+    if (existing && existing.avatarSrc !== AVATAR_SEED_PENDING) return
+    // The IdP's own display name, in the order and form the person uses; the
+    // given/family pair only when that's all the IdP sent.
+    const seededName = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '))
 
     let avatar: string | null = null
     if (claims.picture && isSafeAvatarUrl(claims.picture)) {
@@ -1366,21 +1400,21 @@ export function createGate(opts: GateOptions) {
     }
 
     if (existing) {
-      if (!avatar) return subjectFor(email)
       // Re-read: the copy took a while, and a choice made during it wins. The
-      // name stays, and `updatedAt` too, since it's the self-edit throttle's basis.
+      // name stays, and `updatedAt` too, since it's the self-edit throttle's basis;
+      // except on a row made ahead of sign-in for its emoji (`updatedAt` 0, never
+      // edited), which has no name yet.
       const current = await profiles.get(email)
-      if (current?.avatarSrc === AVATAR_SEED_PENDING) await profiles.put({ ...current, avatar, avatarSrc: 'url' })
-      else if (assets && assetId(avatar)) await assets.del(assetId(avatar)!).catch(() => {})
-      return subjectFor(email)
+      if (current?.avatarSrc === AVATAR_SEED_PENDING) {
+        const name = current.updatedAt === 0 && current.name === null ? seededName : current.name
+        if (avatar) await profiles.put({ ...current, name, avatar, avatarSrc: 'url' })
+        else if (name !== current.name) await profiles.put({ ...current, name })
+      } else if (avatar && assets && assetId(avatar)) await assets.del(assetId(avatar)!).catch(() => {})
+      return
     }
 
-    // The IdP's own display name, in the order and form the person uses; the
-    // given/family pair only when that's all the IdP sent.
-    const name = cleanName(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' '))
-    const profile: Profile = { email, name, avatar, avatarSrc: avatar ? 'url' : AVATAR_SEED_PENDING, updatedAt: sec(nowMs) }
+    const profile: Profile = { email, name: seededName, avatar, avatarSrc: avatar ? 'url' : AVATAR_SEED_PENDING, updatedAt: sec(nowMs) }
     await profiles.put(profile)
-    return subjectFor(email)
   }
 
   /** The JSON an app hands its frontend. Never includes tokens or hashes. */
@@ -1449,6 +1483,7 @@ export function createGate(opts: GateOptions) {
     subjectFor,
     putProfile,
     seedProfileFromClaims,
+    setSlackEmoji,
     copyAvatar,
     fetchAvatar: fetchAvatarBytes,
     /** The bytes behind an `asset://` avatar, for serving; null without an asset store. */

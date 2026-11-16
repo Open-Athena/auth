@@ -32,6 +32,23 @@ export interface Profile {
   avatarSrc: AvatarSourceKind | null
   /** Epoch seconds. Also the throttle basis for `profileMinEditIntervalS`. */
   updatedAt: number
+  /**
+   * The person's custom Slack emoji (`:name:`), or null. Not self-set: broker admins and the backfill set it
+   * (`ProfileStore.setSlackEmoji`), and an app copies it from the broker's `oa_slack_emoji` claim. `put` never writes
+   * it, so a person saving their profile can't change it. Absent on a store that predates it.
+   */
+  slackEmoji?: string | null
+}
+
+/** A Slack emoji name as stored: lower-case, colon-wrapped. */
+export const SLACK_EMOJI = /^:[a-z0-9_+'-]{1,100}:$/
+
+/** `name` or `:name:` as stored (`:name:`), or null if it isn't a Slack emoji name. */
+export function normalizeSlackEmoji(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const bare = value.trim().toLowerCase().replace(/^:|:$/g, '')
+  const wrapped = `:${bare}:`
+  return SLACK_EMOJI.test(wrapped) ? wrapped : null
 }
 
 /** Longest a self-asserted display name may be. */

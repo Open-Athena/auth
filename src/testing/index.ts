@@ -12,7 +12,7 @@
 import type { AccessEvent, AuditSink } from '../core/audit.js'
 import type { AssetStore, StoredAsset } from '../core/assets.js'
 import type { PendingAuth } from '../core/email-codes.js'
-import type { Profile } from '../core/profile.js'
+import { AVATAR_SEED_PENDING, type Profile } from '../core/profile.js'
 import type { AccessRequest, RequestStatus } from '../core/requests.js'
 import type { GrantListOpts, GrantStore, PendingAuthStore, ProfileStore, RequestListOpts, RequestStore } from '../core/store.js'
 import { generateId } from '../core/tokens.js'
@@ -198,11 +198,17 @@ export function memoryProfileStore(): MemoryProfileStore {
     async get(email) {
       return rows.get(email) ?? null
     },
-    async put(profile) {
-      rows.set(profile.email, { ...profile })
+    async put({ slackEmoji: _ignored, ...profile }) {
+      // `put` never writes the emoji: one set through `setSlackEmoji` stays.
+      const kept = rows.get(profile.email)?.slackEmoji
+      rows.set(profile.email, kept === undefined ? profile : { ...profile, slackEmoji: kept })
     },
     async del(email) {
       rows.delete(email)
+    },
+    async setSlackEmoji(email, emoji) {
+      const row = rows.get(email)
+      rows.set(email, row ? { ...row, slackEmoji: emoji } : { email, name: null, avatar: null, avatarSrc: AVATAR_SEED_PENDING, updatedAt: 0, slackEmoji: emoji })
     },
   }
 }

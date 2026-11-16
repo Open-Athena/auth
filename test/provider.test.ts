@@ -6,7 +6,7 @@
  * between" is asserted as the exact hops a browser makes.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { oidcCallback, oidcStart, redirectFromOrigin } from '../src/adapters/oidc.js'
+import { lookupSlackEmoji, oidcCallback, oidcStart, redirectFromOrigin } from '../src/adapters/oidc.js'
 import { b64uDecodeBytes, b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
 import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
@@ -96,6 +96,8 @@ interface WorldOptions {
   profiles?: boolean
   /** An `AssetStore` on the broker. */
   assets?: boolean
+  /** `slackEmojiLookupsPerMinute` on the provider. */
+  lookupsPerMinute?: number | false
 }
 
 async function world(o: WorldOptions = {}) {
@@ -150,6 +152,7 @@ async function world(o: WorldOptions = {}) {
     claims: ({ scopes }) => (scopes.includes('groups') ? { groups: ['research'], email: 'forged@evil.test' } : {}),
     scopes: ['groups'],
     ...(o.policy ? { policy: o.policy } : {}),
+    ...(o.lookupsPerMinute === undefined ? {} : { slackEmojiLookupsPerMinute: o.lookupsPerMinute }),
   })
   const apps = new Map<string, { gate: Gate; start: ReturnType<typeof oidcStart>; callback: ReturnType<typeof oidcCallback> }>()
   const appProfiles = new Map([['a.test', memoryProfileStore()], ['b.test', memoryProfileStore()], ...PREVIEW_HOSTS.map(h => [h, memoryProfileStore()] as const)])
@@ -381,6 +384,7 @@ describe('tokens', () => {
       groups: ['research'],
       email: 'ada@openathena.ai',
       email_verified: true,
+      oa_slack_emoji: null,
       iss: ISSUER,
       sub,
       aud: 'app-a',
@@ -389,7 +393,7 @@ describe('tokens', () => {
       nonce: 'n-1',
     })
     const ui = await w.provider(new Request(`${ISSUER}/oidc/userinfo`, { headers: { authorization: `Bearer ${body.access_token}` } }))
-    expect(await ui!.json()).toEqual({ groups: ['research'], email: 'ada@openathena.ai', email_verified: true, sub })
+    expect(await ui!.json()).toEqual({ groups: ['research'], email: 'ada@openathena.ai', email_verified: true, oa_slack_emoji: null, sub })
     // The ID token isn't an access token, and the access token isn't an ID token.
     const wrong = await w.provider(new Request(`${ISSUER}/oidc/userinfo`, { headers: { authorization: `Bearer ${body.id_token}` } }))
     expect([wrong!.status, wrong!.headers.get('www-authenticate')]).toEqual([401, 'Bearer error="invalid_token"'])
@@ -798,7 +802,7 @@ describe('the picture claim', () => {
     await w.brokerProfiles.put(brokerRow(DATA_URI))
     const { idToken, accessToken } = await tokens(w)
 
-    expect(Object.keys(idToken).sort()).toEqual(['aud', 'email', 'email_verified', 'exp', 'iat', 'iss', 'name', 'picture', 'sub'].sort())
+    expect(Object.keys(idToken).sort()).toEqual(['aud', 'email', 'email_verified', 'exp', 'iat', 'iss', 'name', 'oa_slack_emoji', 'picture', 'sub'].sort())
     expect(idToken.name).toBe('Ada Lovelace')
     expect(idToken.picture).toMatch(URL_SHAPE)
     expect(await fetched(w, idToken.picture as string)).toEqual({ status: 200, headers: IMAGE_HEADERS, bytes: PNG })
@@ -945,6 +949,112 @@ describe('the picture claim', () => {
         await signIn(w)
         expect(await w.appProfiles.get('a.test')!.get(EMAIL)).toEqual(row)
       }
+    })
+  })
+})
+
+describe('the Slack emoji', () => {
+  const ADA = 'ada@openathena.ai'
+
+  it("reaches an app's profile row at sign-in, and a change or removal at the next one", async () => {
+    const w = await world({ profiles: true })
+    await w.broker.setSlackEmoji(ADA, 'ada')
+    const signIn = async () => {
+      const b = w.browser()
+      await w.signInAtBroker(b, ADA)
+      await b.follow('https://a.test/auth/start?next=/home')
+      return (await w.appProfiles.get('a.test')!.get(ADA))?.slackEmoji ?? null
+    }
+    const seen = [await signIn()]
+    await w.broker.setSlackEmoji(ADA, 'ada_2')
+    seen.push(await signIn())
+    await w.broker.setSlackEmoji(ADA, null)
+    seen.push(await signIn())
+    expect(seen).toEqual([':ada:', ':ada_2:', null])
+  })
+
+  it('is in the ID token under profile only, and no claims hook can set it', async () => {
+    const w = await world({ profiles: true })
+    await w.broker.setSlackEmoji(ADA, 'ada')
+    const claimsFor = async (scope: string) => {
+      const b = w.browser()
+      await w.signInAtBroker(b, ADA)
+      const { verifier, challenge } = await pkce()
+      const { code } = queryOf(await b.request(authorizeUrl({ scope, code_challenge: challenge, code_challenge_method: 'S256' }))).params
+      const form = { grant_type: 'authorization_code', code: code!, redirect_uri: 'https://a.test/auth/cb', client_id: 'app-a', client_secret: 'app-a-secret', code_verifier: verifier }
+      return claimsOf(((await (await w.provider(tokenRequest(form)))!.json()) as { id_token: string }).id_token).oa_slack_emoji
+    }
+    expect([await claimsFor('openid email profile'), await claimsFor('openid email')]).toEqual([':ada:', undefined])
+  })
+
+  describe('lookup by email', () => {
+    const lookup = (w: Awaited<ReturnType<typeof world>>, form: Record<string, string>, headers: Record<string, string> = {}) =>
+      w.provider(new Request(`${ISSUER}/oidc/slack-emoji`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+        body: new URLSearchParams(form).toString(),
+      })).then(async r => [r!.status, await r!.json()])
+    const as = (id: string, email: string) => ({ client_id: id, client_secret: `${id}-secret`, email })
+
+    it("answers a client for anyone it would admit; anyone else and anyone without one look the same", async () => {
+      const w = await world({ profiles: true, allowB: e => e !== 'bob@openathena.ai' })
+      await w.broker.setSlackEmoji(ADA, 'ada')
+      await w.broker.setSlackEmoji('bob@openathena.ai', 'bob')
+      expect([
+        await lookup(w, as('app-a', 'Ada@OpenAthena.ai')),
+        await lookup(w, as('app-a', 'bob@openathena.ai')),
+        await lookup(w, as('app-b', 'bob@openathena.ai')),
+        await lookup(w, as('app-a', 'carol@openathena.ai')),
+      ]).toEqual([
+        [200, { slack_emoji: ':ada:' }],
+        [200, { slack_emoji: ':bob:' }],
+        [200, { slack_emoji: null }],
+        [200, { slack_emoji: null }],
+      ])
+    })
+
+    it('a client must authenticate, and send exactly one email, as a form', async () => {
+      const w = await world({ profiles: true })
+      const json = await w.provider(new Request(`${ISSUER}/oidc/slack-emoji`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }))
+      expect([
+        await lookup(w, { client_id: 'app-a', client_secret: 'wrong', email: ADA }),
+        await lookup(w, { email: ADA }),
+        await lookup(w, { client_id: 'app-a', client_secret: 'app-a-secret' }),
+        await lookup(w, {}, { authorization: `Basic ${btoa('app-a:app-a-secret')}` }),
+        json!.status,
+        (await w.provider(new Request(`${ISSUER}/oidc/slack-emoji`)))!.status,
+      ]).toEqual([
+        [401, { error: 'invalid_client' }],
+        [401, { error: 'invalid_client' }],
+        [400, { error: 'invalid_request', error_description: 'email required' }],
+        [400, { error: 'invalid_request', error_description: 'email required' }],
+        400,
+        405,
+      ])
+    })
+
+    it('is rate-limited per client per minute, and can be turned off', async () => {
+      const w = await world({ profiles: true, lookupsPerMinute: 2 })
+      const statuses = async (id: string, n: number) => {
+        const out: number[] = []
+        for (let i = 0; i < n; i++) out.push((await lookup(w, as(id, ADA)))[0] as number)
+        return out
+      }
+      const a = await statuses('app-a', 3)
+      const b = await statuses('app-b', 1)
+      at(60)
+      const later = await statuses('app-a', 1)
+      const off = await world({ profiles: true, lookupsPerMinute: false })
+      expect([a, b, later, (await lookup(off, as('app-a', ADA)))[0]]).toEqual([[200, 200, 429], [200], [200], 404])
+    })
+
+    it("`lookupSlackEmoji` is an app's side of it", async () => {
+      const w = await world({ profiles: true })
+      await w.broker.setSlackEmoji(ADA, 'ada')
+      const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => w.net(new Request(input, init))) as typeof globalThis.fetch
+      const opts = { issuer: ISSUER, clientId: 'app-a', clientSecret: 'app-a-secret', fetch }
+      expect([await lookupSlackEmoji(ADA, opts), await lookupSlackEmoji('carol@openathena.ai', opts)]).toEqual([':ada:', null])
+      await expect(lookupSlackEmoji(ADA, { ...opts, clientSecret: 'wrong' })).rejects.toThrow('slack-emoji lookup failed (401)')
     })
   })
 })

@@ -19,7 +19,7 @@ export type { AvatarRef, AvatarRefKind, FetchAvatarOptions, ValidatedImage } fro
 export { ASSET_URI_PREFIX, assetId, assetUri } from './core/assets.js'
 export type { AssetStore, StoredAsset } from './core/assets.js'
 export { safeNext } from './core/next.js'
-export { MAX_PROFILE_NAME, cleanName } from './core/profile.js'
+export { MAX_PROFILE_NAME, SLACK_EMOJI, cleanName, normalizeSlackEmoji } from './core/profile.js'
 export type { AvatarSourceKind, Profile } from './core/profile.js'
 export type { AccessEvent, AccessEventKind, AuditSink, RequestMeta } from './core/audit.js'
 export { isBot, isVerifiedBot, looksAutomated, PREVIEW_BOTS, previewBot, type PreviewBot } from './core/bots.js'

@@ -92,6 +92,11 @@ export interface ProviderOptions {
   tokenTtlS?: number
   /** Authorization code lifetime (default 60 s). */
   codeTtlS?: number
+  /**
+   * `POST <basePath>/slack-emoji` lookups allowed per client per minute (default 30), or `false` to turn the route
+   * off. Counted in this isolate's memory: a bound on a runaway client, not an exact quota.
+   */
+  slackEmojiLookupsPerMinute?: number | false
 }
 
 /** What a client registry stores in place of a secret. */
@@ -99,11 +104,13 @@ export const hashClientSecret = (secret: string): Promise<string> => hashToken(s
 
 const STANDARD_SCOPES = ['openid', 'email', 'profile']
 /** Claims a `claims` hook may not set: they're the provider's to vouch for. */
-const RESERVED = new Set(['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'azp', 'email', 'email_verified', 'name', 'picture', 'scope', 'client_id'])
+const RESERVED = new Set(['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'azp', 'email', 'email_verified', 'name', 'picture', 'oa_slack_emoji', 'scope', 'client_id'])
 /** RFC 7636: 43–128 unreserved characters. */
 const VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/
 const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/
 const PICTURE_PATH = '/picture/'
+/** A person's Slack emoji, under `profile`: `:name:`, or null when they have none (so an app's copy is cleared). */
+export const SLACK_EMOJI_CLAIM = 'oa_slack_emoji'
 
 const enc = new TextEncoder()
 const sec = (ms: number) => Math.floor(ms / 1000)
@@ -257,7 +264,7 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
     token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
     code_challenge_methods_supported: ['S256'],
     scopes_supported: scopesSupported,
-    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture'],
+    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'email', 'email_verified', 'name', 'picture', SLACK_EMOJI_CLAIM],
     prompt_values_supported: ['none', 'select_account'],
     authorization_response_iss_parameter_supported: true,
     request_parameter_supported: false,
@@ -283,6 +290,7 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
         const ticket = await tickets.seal({ email, clientId: client.id, expiresAt: sec(Date.now()) + tokenTtlS })
         out.picture = endpoint(`${PICTURE_PATH}${ticket}`)
       }
+      out[SLACK_EMOJI_CLAIM] = subject?.slackEmoji ?? null
     }
     return out
   }
@@ -541,6 +549,39 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
     return (avatar && (await pictureResponse(avatar, id => gate.getAsset(id)))) || missing()
   }
 
+  // ---- /slack-emoji --------------------------------------------------------
+
+  const lookupsPerMinute = opts.slackEmojiLookupsPerMinute ?? 30
+  /** Per client: the minute counted, and lookups in it. */
+  const lookups = new Map<string, { minute: number; n: number }>()
+
+  /**
+   * An email's Slack emoji, for an app whose user signed in some other way (Google directly, an emailed code), so it
+   * has no claim to read. The app authenticates as its client, as at `/token`. The answer is `null` for anyone that
+   * client wouldn't admit, the same check as `/picture`, and for anyone with no emoji: the two look alike, so the
+   * route can't enumerate who's in the directory.
+   */
+  async function slackEmoji(req: Request): Promise<Response> {
+    if (lookupsPerMinute === false) return json({ error: 'not_found' }, 404)
+    if (req.method !== 'POST') return json({ error: 'invalid_request' }, 405, { allow: 'POST' })
+    if (!(req.headers.get('content-type') ?? '').startsWith('application/x-www-form-urlencoded')) {
+      return json({ error: 'invalid_request', error_description: 'form-encoded body required' }, 400)
+    }
+    const form = new URLSearchParams(await req.text())
+    for (const k of new Set(form.keys())) if (form.getAll(k).length > 1) return json({ error: 'invalid_request' }, 400)
+    const client = await clientAuth(req, form)
+    if (client instanceof Response) return client
+    const email = form.get('email')?.trim().toLowerCase()
+    if (!email || !email.includes('@')) return json({ error: 'invalid_request', error_description: 'email required' }, 400)
+    const minute = Math.floor(Date.now() / 60_000)
+    const used = lookups.get(client.id)
+    const n = used?.minute === minute ? used.n + 1 : 1
+    lookups.set(client.id, { minute, n })
+    if (n > lookupsPerMinute) return json({ error: 'rate_limited' }, 429, { 'retry-after': String(60 - (sec(Date.now()) % 60)) })
+    const emoji = (await admitted(email, client)) ? ((await gate.subjectFor(email))?.slackEmoji ?? null) : null
+    return json({ slack_emoji: emoji }, 200, { 'cache-control': 'no-store' })
+  }
+
   // ---- /logout -------------------------------------------------------------
 
   async function logout(req: Request): Promise<Response> {
@@ -585,6 +626,8 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
         return req.method === 'GET' || req.method === 'POST' ? userinfo(req) : json({ error: 'invalid_request' }, 405)
       case '/logout':
         return logout(req)
+      case '/slack-emoji':
+        return slackEmoji(req)
       default:
         return null
     }

@@ -107,9 +107,15 @@ export interface RequestStore {
  */
 export interface ProfileStore {
   get(email: string): Promise<Profile | null>
-  /** Upsert the row for `profile.email`. */
+  /** Upsert the row for `profile.email`. Never writes `slackEmoji` (an existing one is kept). */
   put(profile: Profile): Promise<void>
   del(email: string): Promise<void>
+  /**
+   * Set (or clear, with null) a person's Slack emoji, already normalized. Creates a row ahead of their first sign-in
+   * when there's none: no name, no photo yet (`AVATAR_SEED_PENDING`), `updatedAt` 0 so the self-edit throttle doesn't
+   * apply to it. Optional: a store without it has no emoji.
+   */
+  setSlackEmoji?(email: string, emoji: string | null): Promise<void>
 }
 
 /**

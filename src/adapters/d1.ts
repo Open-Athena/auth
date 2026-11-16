@@ -9,7 +9,7 @@
 import { previewBot } from '../core/bots.js'
 import type { AccessEvent, AuditSink } from '../core/audit.js'
 import type { PendingAuth } from '../core/email-codes.js'
-import type { AvatarSourceKind, Profile } from '../core/profile.js'
+import { AVATAR_SEED_PENDING, type AvatarSourceKind, type Profile } from '../core/profile.js'
 import type { AccessRequest, RequestStatus } from '../core/requests.js'
 import type { AllowEntry, AllowlistStore, AuditQuery, GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js'
 import { type Grant, type Subject, formatScopes, parseScopes } from '../core/types.js'
@@ -583,6 +583,7 @@ interface ProfileRow {
   avatar: string | null
   avatar_src: string | null
   updated_at: number
+  slack_emoji?: string | null
 }
 
 const toProfile = (r: ProfileRow): Profile => ({
@@ -591,6 +592,7 @@ const toProfile = (r: ProfileRow): Profile => ({
   avatar: r.avatar,
   avatarSrc: (r.avatar_src as AvatarSourceKind | null) ?? null,
   updatedAt: r.updated_at,
+  slackEmoji: r.slack_emoji ?? null,
 })
 
 /** The `profiles` table (`migrations/`). */
@@ -598,7 +600,8 @@ export function d1ProfileStore(db: D1Database): ProfileStore {
   return {
     async get(email) {
       const row = await db
-        .prepare(`SELECT email, name, avatar, avatar_src, updated_at FROM profiles WHERE email = ?`)
+        // `*`, not a column list: `slack_emoji` (migration 0007) reads as absent on a database without it.
+        .prepare(`SELECT * FROM profiles WHERE email = ?`)
         .bind(email)
         .first<ProfileRow>()
       return row ? toProfile(row) : null
@@ -623,6 +626,17 @@ export function d1ProfileStore(db: D1Database): ProfileStore {
 
     async del(email) {
       await db.prepare(`DELETE FROM profiles WHERE email = ?`).bind(email).run()
+    },
+
+    async setSlackEmoji(email, emoji) {
+      await db
+        .prepare(
+          `INSERT INTO profiles (email, name, avatar, avatar_src, updated_at, slack_emoji)
+           VALUES (?, NULL, NULL, '${AVATAR_SEED_PENDING}', 0, ?)
+           ON CONFLICT(email) DO UPDATE SET slack_emoji = excluded.slack_emoji`,
+        )
+        .bind(email, emoji)
+        .run()
     },
   }
 }

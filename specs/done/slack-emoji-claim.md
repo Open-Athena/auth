@@ -20,3 +20,34 @@ disky's scan-health threads (and later, other OA bots' posts) mark who started a
 ## Downstream (disky; not for this repo)
 
 Once the claim and lookup are live, disky's site sends the dispatching person's emoji (from their profile row, else the lookup by their address) when they click "Run a scan" (beside `DT_TRIGGER_BY`, their address). The scan job records it on the run, and the scan-health thread shows it in place of 👤. Runs without one, such as CLI runs, Google sign-ins or people with no mapping, keep 👤 plus the name. Tell disky's root session (`disky`) when this is deployed, with the claim's name and the RP-side column if any.
+
+## Done (code; not yet deployed)
+
+- **Profile field:**
+  - `profiles.slack_emoji`, added by `migrations/0007_slack_emoji.sql`. It's the same table in the broker and in every app, so that's also the app-side column.
+  - `Profile.slackEmoji` and `Subject.slackEmoji`.
+  - `normalizeSlackEmoji` / `SLACK_EMOJI` (lower-case `:name:`).
+  - The D1 profile read is `SELECT *`, so an app on the new dist without the migration still reads profiles. Only writes of the emoji need it.
+- **Not self-serve:**
+  - `ProfileStore.setSlackEmoji` (optional) and `gate.setSlackEmoji(email, emoji | null)` write it.
+  - `put` never does, so `putProfile` can't.
+  - With no row yet, it creates one ahead of sign-in: no name, `seed-pending` photo, `updatedAt` 0. The first sign-in then fills both the name and the photo. Before this, the seed only filled a pending row's photo; it now also fills the name of a row made ahead of sign-in (`updatedAt` 0, never self-edited).
+- **Claim:** `oa_slack_emoji` (`SLACK_EMOJI_CLAIM`, exported from `/provider`), under the existing `profile` scope; it needs no scope of its own. It's always present under `profile` (`null` when none), so a removal propagates. It's reserved, so a `claims` hook can't set it, and it's listed in `claims_supported`.
+- **App keeps it current:** `seedProfileFromClaims` copies it on every sign-in, when the claim is present. `null` clears it. Its absence (a Google sign-in) or a value that isn't an emoji name leaves the copy alone.
+- **Lookup:** `POST /oidc/slack-emoji`, form `email`, with the client authenticated as at `/token` (Basic or `client_secret_post`). The answer is `{ slack_emoji }`.
+  - It's `null` alike for no emoji and for someone the client's `policy` / `allow` wouldn't admit, so it can't enumerate the directory.
+  - Limited per client per minute (`slackEmojiLookupsPerMinute`, default 30, `false` turns it off), counted per isolate.
+  - The app's side is `lookupSlackEmoji(email, { issuer, clientId, clientSecret })` in `/oidc`.
+- **Backfill:** `scripts/slack-emoji-backfill.mjs`.
+  - `propose` reads `emoji.list`, `users.list` and the broker's current mappings, and writes `tmp/slack-emoji.tsv`.
+  - The file holds changes only: an emoji named after a member's handle, display name, full name or first name, never one another member's names also spell. Unmatched members and ambiguous emoji follow as `#` lines.
+  - `apply FILE [--dry-run]` writes the kept `set` / `clear` rows with the same upsert as the store.
+  - The token comes from `$SLACK_TOKEN` and needs `emoji:read`, `users:read` and `users:read.email`.
+- **Tests:**
+  - `test/slack-emoji.test.ts`: normalizing; the store and gate, on memory and D1.
+  - `test/provider.test.ts` ("the Slack emoji"): the claim through a real sign-in, changes and removal, the lookup, auth, the rate limit, and `lookupSlackEmoji`.
+  - `test/slack-emoji-backfill.test.mjs`: matching, the review file, and the SQL.
+- **Left to do:**
+  - Apply `0007` to the broker (`db:remote`) and deploy it.
+  - Ryan provides a Slack token and runs `propose`, reviews the file, then `apply`.
+  - disky applies `0007` and takes the dist.

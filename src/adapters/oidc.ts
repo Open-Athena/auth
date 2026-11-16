@@ -24,6 +24,7 @@ import { verifyRs256Jwt } from '../core/jwt.js'
 import { safeNext } from '../core/next.js'
 import { clearCookie, isSecureRequest, readCookie, sessionCookie, signSession, verifySession } from '../core/session.js'
 import { generateToken } from '../core/tokens.js'
+import { normalizeSlackEmoji } from '../core/profile.js'
 
 export interface OidcProvider {
   authUrl: string
@@ -563,3 +564,31 @@ const oneTapDeny = (why: string, debug: boolean): Response =>
       ...(debug ? { 'x-onetap-reason': why } : {}),
     },
   })
+
+export interface SlackEmojiLookupOptions {
+  /** The broker's issuer, e.g. `https://login.oa.dev`. */
+  issuer: string
+  clientId: string
+  clientSecret: string
+  /** Where the broker's endpoints live (default `/oidc`, as in `brokerProvider`). */
+  basePath?: string
+  fetch?: typeof globalThis.fetch
+}
+
+/**
+ * An email's Slack emoji (`:name:`) from the broker, or null, for a person who signed in some other way (Google
+ * directly, an emailed code) and so brought no `oa_slack_emoji` claim. Server-side only: it sends the client secret.
+ * Null too for anyone this client's policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate
+ * limit), so a caller can tell "none" from "couldn't ask".
+ */
+export async function lookupSlackEmoji(email: string, opts: SlackEmojiLookupOptions): Promise<string | null> {
+  const { issuer, clientId, clientSecret, basePath = '/oidc', fetch = globalThis.fetch } = opts
+  const res = await fetch(`${issuer.replace(/\/+$/, '')}${basePath}/slack-emoji`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, email }),
+  })
+  if (!res.ok) throw new Error(`slack-emoji lookup failed (${res.status})`)
+  const { slack_emoji: emoji } = (await res.json()) as { slack_emoji?: unknown }
+  return normalizeSlackEmoji(emoji)
+}
