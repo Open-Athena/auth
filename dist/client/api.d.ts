@@ -38,7 +38,10 @@ export declare function createAuthClient({ basePath, fetch }?: AuthClientOptions
     log: ({ grant, limit }?: LogInput) => Promise<import("../core/http.js").LogResponse>;
 };
 export type AuthClient = ReturnType<typeof createAuthClient>;
-/** Construct locally: the token is never sent to a server by this helper. */
-/** Just the query a share link adds (`?key=…`), for pasting onto a URL of your own. */
-export declare function shareKey(token: string): string;
-export declare function shareUrl(token: string, target?: string): string;
+/** Just the query a share link adds (`?key=…`), for pasting onto a URL of your own. `param` is the gate's `keyParam`. */
+export declare function shareKey(token: string, param?: string): string;
+/**
+ * `target` (default this page) carrying the key, under `param` (the gate's `keyParam`, default `key`). Built locally:
+ * the token is never sent to a server by this helper.
+ */
+export declare function shareUrl(token: string, target?: string, param?: string): string;

@@ -68,6 +68,8 @@ export interface GrantLinkProps {
     omitScopes?: readonly string[];
     /** The key is kept, so these links can be shown again: say so instead of "copy this now". */
     kept?: boolean;
+    /** The gate's `keyParam` (the one new links use), for "Copy key". Default `key`. */
+    keyParam?: string;
     onDismiss?: () => void;
     labels?: Partial<Record<'warning' | 'keptWarning' | 'copy' | 'copied' | 'copyAll' | 'copyKey' | 'copyFailed' | 'dismiss', ReactNode>>;
     classNames?: GrantsClassNames;
@@ -76,7 +78,7 @@ export interface GrantLinkProps {
  * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy
  * of each, of all of them, and of just the key, and say it won't come back.
  */
-export declare function GrantLink({ grant, token, buildLink, omitScopes, kept, onDismiss, labels, classNames }: GrantLinkProps): import("react").JSX.Element;
+export declare function GrantLink({ grant, token, buildLink, omitScopes, kept, keyParam, onDismiss, labels, classNames }: GrantLinkProps): import("react").JSX.Element;
 /** How the app's `WhoamiChip` shows an `anon` link to its recipient; picks the anon checkbox's default wording. */
 export type AnonChipMode = 'label' | 'pseudonym' | 'hidden';
 export interface GrantMintFormProps {
@@ -126,11 +128,13 @@ export interface GrantCardProps {
     onHolderSaved?: () => void;
     /** See `GrantMintFormProps.anonChip`. */
     anonChip?: AnonChipMode;
+    /** See `GrantLinkProps.keyParam`. */
+    keyParam?: string;
     labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes' | 'anon' | 'service' | 'anonToggle' | 'serviceToggle' | 'showLinks' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, anonChip, labels, classNames }: GrantCardProps): import("react").JSX.Element;
+export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, anonChip, keyParam, labels, classNames }: GrantCardProps): import("react").JSX.Element;
 export type GrantsPanelProps = ({
     client: AuthClient;
     controller?: undefined;
@@ -155,10 +159,12 @@ export type GrantsPanelProps = ({
     cardLabels?: GrantCardProps['labels'];
     /** Scope checkboxes on each link: see `GrantCard`. */
     editScopes?: boolean;
+    /** See `GrantLinkProps.keyParam`. */
+    keyParam?: string;
     classNames?: GrantsClassNames & {
         section?: string;
     };
 };
 /** A mint form over the list of links, composed from the exported parts. */
-export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, keepTokens, }: GrantsPanelProps): import("react").JSX.Element;
+export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, keyParam, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, keepTokens, }: GrantsPanelProps): import("react").JSX.Element;
 export {};

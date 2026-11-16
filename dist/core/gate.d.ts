@@ -36,8 +36,12 @@ export interface GateOptions {
      * the link is held as an account to switch to instead (see `RetainedOptions`).
      */
     staffKeepSession?: boolean;
-    /** The share-link query parameter, stripped from the URL `redeem`'s responses redirect to. Default `key`. */
-    keyParam?: string;
+    /**
+     * The share-link query parameter. Default `key`. A list accepts each (the first present wins) and names the first
+     * as the one new links use, so an app can shorten its links (`['k', 'key']`) without breaking ones already sent.
+     * All of them are stripped from the URL `handleKeyParam` redirects to.
+     */
+    keyParam?: string | readonly string[];
     /**
      * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
      * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
@@ -353,6 +357,12 @@ export declare function createGate(opts: GateOptions): {
     }, nowMs?: number) => Promise<MintResult | null>;
     revealToken: (id: string, actor?: string | null, nowMs?: number) => Promise<string | null>;
     keepToken: (id: string, token: string | null, actor?: string | null, nowMs?: number) => Promise<boolean>;
+    /** The share-link parameter new links use (the first `keyParam`). */
+    keyParam: string;
+    /** Every share-link parameter accepted, new links' first. */
+    keyParams: readonly string[];
+    /** The share-link key this URL presents (under any accepted `keyParam`), or null. */
+    presentedKey: (url: URL) => string | null;
     /** What a preview bot is shown for this link (`linkPreview`, or the host). */
     previewResponse: (req: Request, grant: Grant) => Promise<Response>;
     /**

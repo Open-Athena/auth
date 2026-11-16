@@ -94,18 +94,21 @@ export function createAuthClient({ basePath = '/api/auth', fetch = globalThis.fe
         },
     };
 }
-/** Construct locally: the token is never sent to a server by this helper. */
-/** Just the query a share link adds (`?key=…`), for pasting onto a URL of your own. */
-export function shareKey(token) {
-    return `?${new URLSearchParams({ key: token })}`;
+/** Just the query a share link adds (`?key=…`), for pasting onto a URL of your own. `param` is the gate's `keyParam`. */
+export function shareKey(token, param = 'key') {
+    return `?${new URLSearchParams({ [param]: token })}`;
 }
-export function shareUrl(token, target) {
+/**
+ * `target` (default this page) carrying the key, under `param` (the gate's `keyParam`, default `key`). Built locally:
+ * the token is never sent to a server by this helper.
+ */
+export function shareUrl(token, target, param = 'key') {
     if (target === undefined) {
         if (typeof location === 'undefined')
             throw new Error('shareUrl requires a target outside the browser');
         target = location.href;
     }
     const url = new URL(target);
-    url.searchParams.set('key', token);
+    url.searchParams.set(param, token);
     return url.href;
 }
