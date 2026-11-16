@@ -18,7 +18,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -165,7 +165,8 @@ async function main() {
     const approved = parseTsv(readFileSync(file, 'utf8'))
     const sql = toSql(approved)
     if (values['dry-run']) return void process.stdout.write(sql)
-    const sqlFile = `${file}.sql`
+    // Absolute: `oa-wrangler.sh` runs from `broker/`.
+    const sqlFile = resolve(`${file}.sql`)
     writeFileSync(sqlFile, sql)
     wrangler(['d1', 'execute', BROKER_DB, '--remote', '--file', sqlFile])
     console.error(`applied ${approved.length} rows to ${BROKER_DB}`)
