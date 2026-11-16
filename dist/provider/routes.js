@@ -24,6 +24,8 @@ const CHALLENGE = /^[A-Za-z0-9\-_]{43}$/;
 const PICTURE_PATH = '/picture/';
 /** A person's Slack emoji, under `profile`: `:name:`, or null when they have none (so an app's copy is cleared). */
 export const SLACK_EMOJI_CLAIM = 'oa_slack_emoji';
+/** Most emails one `POST <basePath>/slack-emoji` may ask about. */
+export const MAX_LOOKUP_EMAILS = 100;
 const enc = new TextEncoder();
 const sec = (ms) => Math.floor(ms / 1000);
 /** How long one click on the preview consent page lasts, and how many hosts a browser remembers. */
@@ -466,10 +468,11 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
     /** Per client: the minute counted, and lookups in it. */
     const lookups = new Map();
     /**
-     * An email's Slack emoji, for an app whose user signed in some other way (Google directly, an emailed code), so it
-     * has no claim to read. The app authenticates as its client, as at `/token`. The answer is `null` for anyone that
-     * client wouldn't admit, the same check as `/picture`, and for anyone with no emoji: the two look alike, so the
-     * route can't enumerate who's in the directory.
+     * People's Slack emoji, asked for when an app needs them: the current mapping, whoever they are and however they
+     * signed in to the app. `email` may repeat, up to `MAX_LOOKUP_EMAILS`; a request counts once against the rate limit
+     * whatever its size. The app authenticates as its client, as at `/token`. The answer is `null` for anyone that client
+     * wouldn't admit (the same check as `/picture`) and for anyone with no emoji: the two look alike, so the route can't
+     * enumerate who's in the directory.
      */
     async function slackEmoji(req) {
         if (lookupsPerMinute === false)
@@ -480,23 +483,29 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
             return json({ error: 'invalid_request', error_description: 'form-encoded body required' }, 400);
         }
         const form = new URLSearchParams(await req.text());
+        // `email` may repeat (a batch); nothing else may.
         for (const k of new Set(form.keys()))
-            if (form.getAll(k).length > 1)
+            if (k !== 'email' && form.getAll(k).length > 1)
                 return json({ error: 'invalid_request' }, 400);
         const client = await clientAuth(req, form);
         if (client instanceof Response)
             return client;
-        const email = form.get('email')?.trim().toLowerCase();
-        if (!email || !email.includes('@'))
+        const emails = [...new Set(form.getAll('email').map(e => e.trim().toLowerCase()))];
+        if (!emails.length || emails.some(e => !e.includes('@')))
             return json({ error: 'invalid_request', error_description: 'email required' }, 400);
+        if (emails.length > MAX_LOOKUP_EMAILS)
+            return json({ error: 'invalid_request', error_description: `at most ${MAX_LOOKUP_EMAILS} emails` }, 400);
         const minute = Math.floor(Date.now() / 60_000);
         const used = lookups.get(client.id);
         const n = used?.minute === minute ? used.n + 1 : 1;
         lookups.set(client.id, { minute, n });
         if (n > lookupsPerMinute)
             return json({ error: 'rate_limited' }, 429, { 'retry-after': String(60 - (sec(Date.now()) % 60)) });
-        const emoji = (await admitted(email, client)) ? ((await gate.subjectFor(email))?.slackEmoji ?? null) : null;
-        return json({ slack_emoji: emoji }, 200, { 'cache-control': 'no-store' });
+        const found = {};
+        for (const email of emails)
+            found[email] = (await admitted(email, client)) ? ((await gate.subjectFor(email))?.slackEmoji ?? null) : null;
+        // `slack_emojis` by (lower-cased) email always; `slack_emoji` too when one was asked.
+        return json({ ...(emails.length === 1 ? { slack_emoji: found[emails[0]] } : {}), slack_emojis: found }, 200, { 'cache-control': 'no-store' });
     }
     // ---- /logout -------------------------------------------------------------
     async function logout(req) {

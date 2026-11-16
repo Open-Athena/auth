@@ -166,9 +166,27 @@ export interface SlackEmojiLookupOptions {
     fetch?: typeof globalThis.fetch;
 }
 /**
- * An email's Slack emoji (`:name:`) from the broker, or null, for a person who signed in some other way (Google
- * directly, an emailed code) and so brought no `oa_slack_emoji` claim. Server-side only: it sends the client secret.
- * Null too for anyone this client's policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate
- * limit), so a caller can tell "none" from "couldn't ask".
+ * People's Slack emoji (`:name:`, or null) from the broker, by lower-cased email: the current mapping, whoever they
+ * are and however they signed in. Server-side only: it sends the client secret. Null too for anyone this client's
+ * policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate limit), so a caller can tell "none"
+ * from "couldn't ask".
  */
+export declare function lookupSlackEmojis(emails: readonly string[], opts: SlackEmojiLookupOptions): Promise<Record<string, string | null>>;
+/** One person's Slack emoji from the broker, or null. See `lookupSlackEmojis`. */
 export declare function lookupSlackEmoji(email: string, opts: SlackEmojiLookupOptions): Promise<string | null>;
+export interface SlackEmojiClientOptions extends SlackEmojiLookupOptions {
+    /** How long an answer (a null one too) is reused, in seconds. Default 600. */
+    ttlS?: number;
+}
+/**
+ * `lookupSlackEmojis` with a memory cache: an answer is reused for `ttlS`, and concurrent asks for the same people
+ * share one request. A failed lookup isn't cached, and rejects (a caller showing a fallback can catch it). Make one
+ * per isolate (module scope), not per request, or nothing is reused.
+ */
+export declare function slackEmojiClient({ ttlS, ...opts }: SlackEmojiClientOptions): {
+    getMany: (emails: readonly string[]) => Promise<Record<string, string | null>>;
+    get(email: string): Promise<string | null>;
+    /** Forget cached answers (all, or these people's), e.g. after changing a mapping. */
+    forget(emails?: readonly string[]): void;
+};
+export type SlackEmojiClient = ReturnType<typeof slackEmojiClient>;
