@@ -15,6 +15,16 @@
  * is no photo yet.
  */
 export const AVATAR_SEED_PENDING = 'seed-pending';
+/** A Slack emoji name as stored: lower-case, colon-wrapped. */
+export const SLACK_EMOJI = /^:[a-z0-9_+'-]{1,100}:$/;
+/** `name` or `:name:` as stored (`:name:`), or null if it isn't a Slack emoji name. */
+export function normalizeSlackEmoji(value) {
+    if (typeof value !== 'string')
+        return null;
+    const bare = value.trim().toLowerCase().replace(/^:|:$/g, '');
+    const wrapped = `:${bare}:`;
+    return SLACK_EMOJI.test(wrapped) ? wrapped : null;
+}
 /** Longest a self-asserted display name may be. */
 export const MAX_PROFILE_NAME = 80;
 /**

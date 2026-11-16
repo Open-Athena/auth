@@ -385,7 +385,9 @@ export declare function createGate(opts: GateOptions): {
         given_name?: string;
         family_name?: string;
         picture?: string;
+        oa_slack_emoji?: unknown;
     }, nowMs?: number) => Promise<Subject | null>;
+    setSlackEmoji: (email: string, emoji: string | null) => Promise<void>;
     copyAvatar: (source: AvatarRef | string) => Promise<{
         value: string;
         src: AvatarRefKind;
