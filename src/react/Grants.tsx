@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { type ComponentType, type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { shareKey } from '../client/api.js'
 import { pseudonym } from '../client/identity.js'
 import type { AuthClient } from '../client/api.js'
@@ -121,7 +121,7 @@ export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = fal
     <div className={cx.token}>
       <p className={cx.muted}>
         {kept
-          ? (labels.keptWarning ?? 'This key is kept (sealed): Show links brings these back.')
+          ? (labels.keptWarning ?? 'This key is kept (sealed), so these can be copied again later.')
           : (labels.warning ?? "Copy this now: only its hash is stored, so you won't see it again.")}
       </p>
       {shown.map(({ label, url }) => (
@@ -161,22 +161,189 @@ export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = fal
   )
 }
 
-/** A scope row's own link, while the token is on screen. */
-function ScopeLink({ label, url, clip, cx, labels }: {
-  label: ReactNode
-  url: string
-  clip: ReturnType<typeof useCopy>
-  cx: typeof DEFAULT_CLASSES
-  labels: GrantLinkProps['labels'] & {}
-}) {
+/** One copy control's job: what it copies, and how to copy it. */
+export interface CopyProps {
+  kind: 'scope' | 'entry' | 'key' | 'all'
+  /** What this control does, for its tooltip and accessible name ("Copy link"). */
+  label: string
+  /** What it copies, for display beside it where that isn't already shown ("All of them", "key", "all"). */
+  name: string
+  /**
+   * Resolves the text to copy. It fetches the kept key on first use, which is logged. Call it from the click handler,
+   * so the clipboard write keeps the user gesture.
+   */
+  text: () => Promise<string>
+  /** Copy `text()` the library's way (`ClipboardItem` with a promise, falling back to `writeText`) and report how it went. */
+  copy: () => Promise<'copied' | 'failed'>
+}
+
+/**
+ * Copy text that may not be known yet. Safari only lets a clipboard write follow a click if it starts in the click
+ * handler, so the write gets a `ClipboardItem` whose content is still a promise; where that isn't supported, the text
+ * is awaited and written with `writeText`.
+ */
+export async function copyText(text: () => Promise<string>): Promise<'copied' | 'failed'> {
+  const pending = text()
+  pending.catch(() => {})
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard
+  if (!clipboard) return 'failed'
+  if (typeof ClipboardItem !== 'undefined' && typeof clipboard.write === 'function') {
+    try {
+      await clipboard.write([new ClipboardItem({ 'text/plain': pending.then(t => new Blob([t], { type: 'text/plain' })) })])
+      return 'copied'
+    } catch {
+      // A browser without promised clipboard items, or a failed fetch: `writeText` settles which.
+    }
+  }
+  try {
+    await clipboard.writeText(await pending)
+    return 'copied'
+  } catch {
+    return 'failed'
+  }
+}
+
+const ClipboardGlyph = () => (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="4" y="2.5" width="8" height="12" rx="1.5" />
+    <path d="M6 2.5V1.75h4v.75" strokeLinecap="round" />
+  </svg>
+)
+
+const CheckGlyph = () => (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M3 8.5l3 3 7-7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/**
+ * The default copy control: a clipboard icon that turns into a check for a moment once copied, with a tooltip saying
+ * what it copies, and a short error if the clipboard refused.
+ */
+export function CopyIcon({ label, copy }: CopyProps) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [tip, setTip] = useState(false)
+  const tipId = useId()
+  useEffect(() => {
+    if (state === 'idle') return
+    const timer = setTimeout(() => setState('idle'), state === 'copied' ? 1500 : 4000)
+    return () => clearTimeout(timer)
+  }, [state])
   return (
-    <span className={cx.copyRow}>
-      <input className={cx.input} readOnly value={url} aria-label={`${typeof label === 'string' ? label : 'Scope'} link`} onFocus={e => e.currentTarget.select()} />
-      <button className={cx.button} type="button" onClick={() => void clip.copy(url, url)}>
-        {clip.copied(url) ? (labels.copied ?? 'Copied') : (labels.copy ?? 'Copy')}
+    <span className="oa-ui-copy">
+      <button
+        className="oa-ui-copy-btn"
+        type="button"
+        aria-label={label}
+        aria-describedby={tip ? tipId : undefined}
+        data-state={state}
+        onClick={() => void copy().then(setState)}
+        onMouseEnter={() => setTip(true)}
+        onMouseLeave={() => setTip(false)}
+        onFocus={() => setTip(true)}
+        onBlur={() => setTip(false)}
+      >
+        {state === 'copied' ? <CheckGlyph /> : <ClipboardGlyph />}
       </button>
+      {tip && (
+        <span id={tipId} role="tooltip" className="oa-ui-tooltip">
+          {state === 'copied' ? 'Copied' : label}
+        </span>
+      )}
+      {state === 'failed' && (
+        <span className="oa-ui-error" role="alert">
+          Couldn't copy
+        </span>
+      )}
     </span>
   )
+}
+
+export interface ScopeLinkProps {
+  grant: Grant
+  scope: string
+  entry: GrantLinkEntry
+  Copy: ComponentType<CopyProps>
+  copyProps: CopyProps
+}
+
+/** What sits after a scope's label while the card has a link for it: by default, just its copy control. */
+export function DefaultScopeLink({ Copy, copyProps }: ScopeLinkProps) {
+  return <Copy {...copyProps} />
+}
+
+export interface ExtraLinksProps {
+  grant: Grant
+  /** The entries not on a scope row. */
+  entries: readonly GrantLinkEntry[]
+  Copy: ComponentType<CopyProps>
+  /** Ready-made props for each control, in display order: entries, then key, then all. */
+  copies: readonly CopyProps[]
+  /** Set only while a just-minted key that isn't kept is on screen: hides the icons. */
+  onDismiss?: () => void
+  /** The shown-once warning to put beside `onDismiss`'s "×". */
+  warning?: ReactNode
+}
+
+/** The line under the scopes: each other page, the key and "all", as name + icon pairs. */
+export function DefaultExtraLinks({ Copy, copies, onDismiss, warning }: ExtraLinksProps) {
+  return (
+    <>
+      <p className="oa-ui-links">
+        {copies.map((c, i) => (
+          <span key={`${c.kind}-${i}`}>
+            {i > 0 && ' · '}
+            {c.name} <Copy {...c} />
+          </span>
+        ))}
+      </p>
+      {onDismiss && (
+        <p className="oa-ui-muted">
+          {warning}{' '}
+          <button className="oa-ui-linkish" type="button" aria-label="Hide these links" onClick={onDismiss}>
+            ×
+          </button>
+        </p>
+      )}
+    </>
+  )
+}
+
+/** Swappable pieces of a card's links. Each falls back to the default; behavior (fetching, logging) stays the card's. */
+export interface GrantLinkComponents {
+  /** One copy control: a scope row's, a non-scope entry's, the key's, or "all"'s. */
+  Copy?: ComponentType<CopyProps>
+  /** What sits after a scope's label: by default `<Copy>` when the card has a link for that scope. */
+  ScopeLink?: ComponentType<ScopeLinkProps>
+  /** The line under the scopes: non-scope entries, the key and "all". */
+  ExtraLinks?: ComponentType<ExtraLinksProps>
+}
+
+/** Stands in for the key when only a link's shape is wanted (which pages, which scopes), before the key is fetched. */
+const SHAPE_KEY = 'KEY'
+
+/**
+ * The key a card copies its links with: the token in memory (just minted, rotated or revealed) when there is one,
+ * else a kept key fetched on first use and held for the card's lifetime. Rotating or forgetting drops the held one.
+ */
+function useLinkKey(grant: Grant, grants: UseGrantsResult): { inMemory: string | null; key: () => Promise<string> } {
+  const inMemory = grants.token?.grantId === grant.id ? grants.token.token : null
+  const held = useRef<Promise<string> | null>(null)
+  useEffect(() => {
+    held.current = null
+  }, [inMemory, grant.kept])
+  const { fetchKey } = grants
+  return {
+    inMemory,
+    key: () => {
+      if (inMemory !== null) return Promise.resolve(inMemory)
+      held.current ??= fetchKey(grant.id).catch(error => {
+        held.current = null
+        throw error
+      })
+      return held.current
+    },
+  }
 }
 
 const DAY_S = 86400
@@ -444,8 +611,8 @@ function ScopeChecks({ grant, grants, scopes, busy, className, link }: {
   scopes: readonly GrantScope[]
   busy: boolean
   className: string
-  /** The scope's own link while the token is on screen, if it has one. */
-  link: (id: string, label: ReactNode) => ReactNode
+  /** The scope's own copy control while the card has links, if it has one. */
+  link: (id: string) => ReactNode
 }) {
   const listed = [...scopes.map(s => s.id), ...grant.scopes.filter(id => !scopes.some(s => s.id === id))]
   return (
@@ -461,7 +628,7 @@ function ScopeChecks({ grant, grants, scopes, busy, className, link }: {
               onChange={() => void grants.update(grant.id, { scopes: listed.filter(s => (s === id ? !on : grant.scopes.includes(s))) })}
             />
             <span>{scopes.find(s => s.id === id)?.label ?? id}</span>
-            {on && link(id, scopes.find(s => s.id === id)?.label ?? id)}
+            {on && link(id)}
           </label>
         )
       })}
@@ -541,13 +708,15 @@ export interface GrantCardProps {
   anonChip?: AnonChipMode
   /** See `GrantLinkProps.keyParam`. */
   keyParam?: string
+  /** Replacements for the copy controls and where they sit (`GrantLinkComponents`); each defaults to the built-in. */
+  components?: GrantLinkComponents
   labels?: GrantLinkProps['labels'] &
     Partial<
       Record<
         | 'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm'
         | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes'
         | 'anon' | 'service' | 'anonToggle' | 'serviceToggle'
-        | 'showLinks' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave',
+        | 'copyLink' | 'keyName' | 'allName' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave',
         ReactNode
       >
     >
@@ -555,7 +724,7 @@ export interface GrantCardProps {
 }
 
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', keyParam, labels = {}, classNames }: GrantCardProps) {
+export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', keyParam = 'key', components = {}, labels = {}, classNames }: GrantCardProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const [editing, setEditing] = useState(false)
   const { activity: loadActivity } = grants
@@ -569,17 +738,42 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
   const revoked = grant.revokedAt !== null
   const disabled = grant.disabledAt !== null
   const expired = grant.expiresAt !== null && grant.expiresAt * 1000 < Date.now()
-  const token = grants.token?.grantId === grant.id ? grants.token.token : null
-  const clip = useCopy()
-  // Re-run on every render, so a scope checked while the token is on screen gets its link, and an unchecked one loses it.
-  const scoped = new Map(
-    (token ? linkEntries(buildLink(grant, token)) : [])
-      .filter((e): e is GrantLinkEntry => e.scope !== undefined && grant.scopes.includes(e.scope))
-      .map(e => [e.scope!, e.url]),
-  )
-  const scopeLink = (id: string, label: ReactNode) => {
-    const url = scoped.get(id)
-    return url ? <ScopeLink label={label} url={url} clip={clip} cx={cx} labels={labels} /> : null
+  const { inMemory, key } = useLinkKey(grant, grants)
+  // Links can be copied while a key is in memory or kept (fetched on the first copy).
+  const linked = !revoked && (inMemory !== null || grant.kept)
+  const Copy = components.Copy ?? CopyIcon
+  const ScopeLinkSlot = components.ScopeLink ?? DefaultScopeLink
+  const ExtraLinksSlot = components.ExtraLinks ?? DefaultExtraLinks
+  const str = (label: ReactNode, fallback: string) => (typeof label === 'string' ? label : fallback)
+  const copyProps = (kind: CopyProps['kind'], name: string, text: () => Promise<string>): CopyProps => ({
+    kind,
+    name,
+    label: kind === 'key' ? str(labels.copyKey, 'Copy key') : kind === 'all' ? str(labels.copyAll, 'Copy all') : str(labels.copyLink, 'Copy link'),
+    text,
+    copy: () => copyText(text),
+  })
+  // The link's shape (which pages, which scopes), re-read on every render so a scope checked while links show gets its
+  // icon and an unchecked one loses it. The key itself is only resolved by a copy.
+  const shape: GrantLinkEntry[] = (linked ? linkEntries(buildLink(grant, inMemory ?? SHAPE_KEY)) : []).map(e => ({ ...e, label: e.label ?? 'link' }))
+  const urlAt = (i: number) => async () => linkEntries(buildLink(grant, await key()))[i]!.url
+  const scoped = new Map<string, { entry: GrantLinkEntry; copy: CopyProps }>()
+  shape.forEach((entry, i) => {
+    if (entry.scope !== undefined && grant.scopes.includes(entry.scope)) scoped.set(entry.scope, { entry, copy: copyProps('scope', entry.label, urlAt(i)) })
+  })
+  const extras = shape.flatMap((entry, i) => (entry.scope !== undefined && scoped.has(entry.scope) ? [] : [{ entry, i }]))
+  const copies = [
+    ...extras.map(({ entry, i }) => copyProps('entry', entry.label, urlAt(i))),
+    copyProps('key', str(labels.keyName, 'key'), async () => shareKey(await key(), keyParam)),
+    ...(shape.length > 1
+      ? [copyProps('all', str(labels.allName, 'all'), async () => {
+          const token = await key()
+          return [...linkEntries(buildLink(grant, token)).map(e => `${e.label}: ${e.url}`), `Key: ${shareKey(token, keyParam)}`].join('\n')
+        })]
+      : []),
+  ]
+  const scopeLink = (id: string) => {
+    const link = scoped.get(id)
+    return link ? <ScopeLinkSlot grant={grant} scope={id} entry={link.entry} Copy={Copy} copyProps={link.copy} /> : null
   }
   const holder = grant.subject?.name || grant.subject?.email || grant.email
   // 1–3 redemptions is one person on their phone, laptop and work machine. Many
@@ -674,8 +868,7 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
                 const label = scopes.find(s => s.id === id)?.label ?? id
                 return (
                   <div key={id} className={cx.check}>
-                    <span>{label}</span>
-                    {scopeLink(id, label)}
+                    <span>{label}</span> {scopeLink(id)}
                   </div>
                 )
               })
@@ -731,6 +924,18 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
         </div>
       </dl>
 
+      {linked && (
+        <ExtraLinksSlot
+          grant={grant}
+          entries={extras.map(e => e.entry)}
+          Copy={Copy}
+          copies={copies}
+          {...(inMemory !== null && !grant.kept
+            ? { onDismiss: grants.dismissToken, warning: labels.warning ?? "Copy these now: only the key's hash is stored, so they won't show again." }
+            : {})}
+        />
+      )}
+
       {!revoked && (
         <div className={cx.row}>
           <label className={cx.check}>
@@ -768,24 +973,9 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
         </p>
       )}
 
-      {token ? (
-        <GrantLink
-          grant={grant}
-          token={token}
-          buildLink={buildLink}
-          omitScopes={[...scoped.keys()]}
-          kept={grant.kept}
-          {...(keyParam === undefined ? {} : { keyParam })}
-          onDismiss={grants.dismissToken}
-          labels={labels}
-          classNames={classNames}
-        />
-      ) : revoked ? null : grant.kept ? (
+      {revoked ? null : grant.kept ? (
         <div className={cx.row}>
-          <button className={cx.button} type="button" disabled={busy} onClick={() => void grants.reveal(grant.id)}>
-            {labels.showLinks ?? 'Show links'}
-          </button>
-          <span className={cx.muted}>{labels.keptNote ?? 'Its key is kept, sealed; each look is logged.'}</span>
+          <span className={cx.muted}>{labels.keptNote ?? 'Its key is kept, sealed; each fetch is logged.'}</span>
           <ConfirmButton
             className={cx.linkish}
             disabled={busy}
@@ -794,9 +984,9 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
             onConfirm={() => void grants.forgetToken(grant.id)}
           />
         </div>
-      ) : (
+      ) : inMemory === null ? (
         <KeepExisting grant={grant} grants={grants} busy={busy} labels={labels} cx={cx} />
-      )}
+      ) : null}
     </article>
   )
 }
@@ -905,6 +1095,8 @@ export type GrantsPanelProps = ({ client: AuthClient; controller?: undefined } |
     editScopes?: boolean
     /** See `GrantLinkProps.keyParam`. */
     keyParam?: string
+    /** Passed to each card: see `GrantCardProps.components`. */
+    components?: GrantLinkComponents
     classNames?: GrantsClassNames & { section?: string }
   }
 
@@ -926,6 +1118,7 @@ export function GrantsPanel({
   cardLabels,
   editScopes = false,
   keyParam,
+  components,
   classNames,
   defaultMemo,
   expiryDays,
@@ -994,6 +1187,7 @@ export function GrantsPanel({
               {...(avatarEndpoint === undefined ? {} : { avatarEndpoint })}
               {...(anonChip === undefined ? {} : { anonChip })}
               {...(keyParam === undefined ? {} : { keyParam })}
+              {...(components === undefined ? {} : { components })}
             />
           ))}
         </div>

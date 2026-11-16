@@ -51,6 +51,7 @@ test('mint in <GrantsPanel>, open the link in a fresh browser, revoke it', async
   const [pair] = signed.cookie.split(';')
   const [name, value] = [pair!.slice(0, pair!.indexOf('=')), pair!.slice(pair!.indexOf('=') + 1)]
   await adminContext.addCookies([{ name: name!, value: value!, url: baseURL! }])
+  await adminContext.grantPermissions(['clipboard-read', 'clipboard-write'])
 
   const page = await adminContext.newPage()
   await page.goto('/admin')
@@ -60,9 +61,14 @@ test('mint in <GrantsPanel>, open the link in a fresh browser, revoke it', async
 
   await page.getByRole('textbox', { name: /^Recipient/ }).fill('Ada Lovelace')
   await page.getByRole('button', { name: 'Mint link' }).click()
-  const link = page.getByRole('textbox', { name: 'Share link' })
-  await expect(link).toHaveValue(/\/dashboard\?key=[\w-]+$/)
-  const url = await link.inputValue()
+  // A clipboard icon per page, the key and the shown-once warning; no text boxes.
+  const link = page.getByRole('article').getByRole('button', { name: 'Copy link' })
+  await link.hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Copy link')
+  await link.click()
+  await expect(link).toHaveAttribute('data-state', 'copied')
+  const url = await page.evaluate(() => navigator.clipboard.readText())
+  expect(url).toMatch(/\/dashboard\?key=[\w-]+$/)
   await expect(page.getByRole('article').getByRole('heading', { level: 3 })).toHaveCount(1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({ path: `tmp/grants-panel-${testInfo.project.name}.png`, fullPage: true })

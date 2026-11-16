@@ -83,3 +83,29 @@ interface ExtraLinksProps {
 ## What `jobs` will do after this lands
 
 Bump the dist. No code change expected: `buildLink` already returns one entry per JD with `scope`, plus "All of them".
+
+## Done
+
+- **Icons:** `GrantCard` shows a `CopyIcon` per scope row whenever it can make links: a key in memory (minted, rotated or revealed) or `grant.kept`. There is no text box and no "Copy" text.
+  - Below them, `DefaultExtraLinks` is a line of name + icon pairs: the other entries, then `key`, then `all` (only when there's more than one entry).
+  - `keyParam` still sets what the key icon copies.
+  - "Show links", the panel and "Done" are gone. The kept card keeps its muted note ("each fetch is logged": a copy after the first doesn't refetch, so "each copy" would overstate it) and "forget key".
+- **Placement:** the line sits directly under the facts (`<dl>`) at full width, not inside the scopes cell. Inside that narrow cell the shown-once warning wrapped to a column a few words wide.
+- **Copy behavior (`CopyIcon`):**
+  - The icon swaps to a check for 1.5s. A failure shows "Couldn't copy" (`role="alert"`) for 4s.
+  - The tooltip is a small built-in one (`role="tooltip"`, on hover and focus). `@floating-ui/react` is an optional peer that `/react` doesn't otherwise need, so an app wanting it supplies its own `Copy`.
+  - The tooltip text is `labels.copyLink` / `copyKey` / `copyAll`. The line's names are `labels.keyName` / `allName`.
+- **Fetching a kept key:**
+  - The controller has a new `fetchKey(id)`. It returns the key without putting it in the shared one-time-token slot, and reports a failure as a `reveal` error.
+  - The card's `useLinkKey` calls it on the first copy and holds the promise for the card's lifetime. It drops it on rotate or forget, or when the fetch failed, so the next click retries.
+  - The link's shape (which pages, which scopes) comes from `buildLink(grant, 'KEY')` before the key is known; each icon resolves the real URL from the same entry index.
+- **Clipboard:** `copyText(text)` starts the read inside the click and writes `new ClipboardItem({ 'text/plain': promise })`. It falls back to `writeText(await text())` where that's unsupported or rejected.
+- **Shown-once keys:** a just-minted or rotated key that isn't kept shows the same icons. The `warning` line has a "×" (`aria-label` "Hide these links"), which calls `dismissToken`.
+- **No key:** a card with no key in memory and no kept key is unchanged ("keep this link's key").
+- **Slots:** `components: { Copy, ScopeLink, ExtraLinks }` on `GrantCard`, passed through by `GrantsPanel`. The defaults (`CopyIcon`, `DefaultScopeLink`, `DefaultExtraLinks`) and `copyText` are exported.
+  - `CopyProps` gained `name` (what the control copies, for display beside it).
+  - `ExtraLinksProps` gained `warning` (the text beside the "×").
+- `GrantLink` is still exported. Its kept wording no longer mentions "Show links". The `showLinks` label is gone.
+- **Tests:**
+  - `test/react/grants.test.tsx`: icons per row and on the line; the kept key fetched once, on the first copy; the `ClipboardItem` path; a failed fetch that says so and retries; replacement components.
+  - `test-browser/grants.spec.ts`: copies through the icon with clipboard permissions, and checks the tooltip.

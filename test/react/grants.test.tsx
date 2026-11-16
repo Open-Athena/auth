@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAuthClient } from '../../src/client/api.js'
 import type { Grant, GrantActivity, GrantUpdateInput, MintInput } from '../../src/core/http.js'
-import { GrantMintForm, GrantsPanel } from '../../src/react/Grants.js'
+import { GrantMintForm, GrantsPanel, type CopyProps, type ExtraLinksProps } from '../../src/react/Grants.js'
 import { renderWithQuery } from './helpers.js'
 
 afterEach(cleanup)
@@ -136,17 +136,26 @@ describe('GrantsPanel', () => {
     )
     return { onChanged, user: userEvent.setup() }
   }
-  const link = () => (screen.queryByRole('textbox', { name: 'Share link' }) as HTMLInputElement | null)?.value ?? null
+  /** What the card's "Copy link" icon copies, or null when there's none. */
+  const link = async (user: ReturnType<typeof userEvent.setup>) => {
+    const icon = screen.queryByRole('button', { name: 'Copy link' })
+    if (!icon) return null
+    await user.click(icon)
+    return navigator.clipboard.readText()
+  }
 
-  it('mints, shows the app-shaped link once, and forgets it when dismissed', async () => {
+  it('mints, offers the app-shaped link once, and forgets it when dismissed', async () => {
     const { user, onChanged } = panel()
     await screen.findByText('Nothing yet')
     await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
-    await waitFor(() => expect(link()).toBe('https://x.test/beta/?key=token-g1'))
-    expect(onChanged.mock.calls.length).toBe(1)
-    await user.click(screen.getByRole('button', { name: 'Done' }))
-    expect(link()).toBe(null)
+    await screen.findByRole('button', { name: 'Copy link' })
+    expect(await link(user)).toBe('https://x.test/beta/?key=token-g1')
+    expect([onChanged.mock.calls.length, screen.getByRole('button', { name: 'Hide these links' }).parentElement!.textContent]).toEqual([
+      1, "Copy these now: only the key's hash is stored, so they won't show again. ×",
+    ])
+    await user.click(screen.getByRole('button', { name: 'Hide these links' }))
+    expect(await link(user)).toBe(null)
     expect(screen.getByText('Link shown once at mint. Rotate it for a fresh one if you lost it.')).toBeTruthy()
     expect(screen.getByRole('article').querySelector('dd')!.textContent).toBe('Beta')
     await waitFor(() => expect(within(screen.getByRole('article')).getByText('2')).toBeTruthy())
@@ -157,18 +166,18 @@ describe('GrantsPanel', () => {
     await screen.findByText('Nothing yet')
     await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
-    await waitFor(() => expect(link()).toBe('https://x.test/beta/?key=token-g1'))
+    await screen.findByRole('button', { name: 'Copy link' })
+    expect(await link(user)).toBe('https://x.test/beta/?key=token-g1')
 
     await user.click(screen.getByRole('button', { name: 'Rotate' }))
-    expect(link()).toBe('https://x.test/beta/?key=token-g1')
     await user.click(screen.getByRole('button', { name: 'Kill the old link?' }))
-    await waitFor(() => expect(link()).toBe('https://x.test/beta/?key=rotated-g1'))
+    await waitFor(async () => expect(await link(user)).toBe('https://x.test/beta/?key=rotated-g1'))
 
     await user.click(screen.getByRole('button', { name: 'Revoke' }))
     expect(screen.queryByText('revoked')).toBe(null)
     await user.click(screen.getByRole('button', { name: 'End every session?' }))
     await screen.findByText('revoked')
-    expect(link()).toBe(null)
+    expect(await link(user)).toBe(null)
     expect(screen.queryByRole('button', { name: 'Disable' })).toBe(null)
   })
 
@@ -274,35 +283,31 @@ describe('a link per page', () => {
     ...g.scopes.map(s => ({ label: SCOPES.find(x => x.id === s)!.label, url: `https://x.test/${s}?key=${t}` })),
   ]
 
-  it('shows a row per page with its own copy, and copies them all as labeled lines', async () => {
+  it('offers each page, the key and all of them as name + icon pairs, and copies all as labeled lines', async () => {
     renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
     await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
-    const rows = await screen.findAllByRole('textbox', { name: /^(All roles|Alpha|Beta)$/ })
-    expect(rows.map(r => [r.getAttribute('aria-label'), (r as HTMLInputElement).value])).toEqual([
-      ['All roles', 'https://x.test/?key=token-g1'],
-      ['Alpha', 'https://x.test/alpha?key=token-g1'],
-      ['Beta', 'https://x.test/beta?key=token-g1'],
+    const line = (await screen.findByRole('button', { name: 'Copy all' })).closest('p')!
+    expect([line.textContent, within(line).getAllByRole('button').map(b => b.getAttribute('aria-label'))]).toEqual([
+      'All roles  · Alpha  · Beta  · key  · all ', ['Copy link', 'Copy link', 'Copy link', 'Copy key', 'Copy all'],
     ])
-    await user.click(screen.getAllByRole('button', { name: 'Copy' })[2]!)
-    expect([await navigator.clipboard.readText(), screen.getAllByRole('button', { name: /^Cop/ }).map(b => b.textContent)])
-      .toEqual(['https://x.test/beta?key=token-g1', ['Copy', 'Copy', 'Copied', 'Copy key', 'Copy all']])
-    await user.click(screen.getByRole('button', { name: 'Copy all' }))
-    expect(await navigator.clipboard.readText()).toBe([
-      'All roles: https://x.test/?key=token-g1',
-      'Alpha: https://x.test/alpha?key=token-g1',
-      'Beta: https://x.test/beta?key=token-g1',
-      'Key: ?key=token-g1',
-    ].join('\n'))
-    await user.click(screen.getByRole('button', { name: 'Copy key' }))
-    expect(await navigator.clipboard.readText()).toBe('?key=token-g1')
-    // A rotated link shows the same rows, with the new token.
-    await user.click(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.queryAllByRole('textbox').filter(t => (t as HTMLInputElement).readOnly)).toEqual([])
+    const copy = async (i: number) => {
+      await user.click(within(line).getAllByRole('button')[i]!)
+      return navigator.clipboard.readText()
+    }
+    expect([await copy(2), await copy(3), await copy(4)]).toEqual([
+      'https://x.test/beta?key=token-g1',
+      '?key=token-g1',
+      ['All roles: https://x.test/?key=token-g1', 'Alpha: https://x.test/alpha?key=token-g1', 'Beta: https://x.test/beta?key=token-g1', 'Key: ?key=token-g1'].join('\n'),
+    ])
+    expect(within(line).getAllByRole('button')[4]!.getAttribute('data-state')).toBe('copied')
+    // A rotated link copies the new key.
     await user.click(screen.getByRole('button', { name: 'Rotate' }))
     await user.click(screen.getByRole('button', { name: 'Kill the old link?' }))
-    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Beta' }) as HTMLInputElement).value).toBe('https://x.test/beta?key=rotated-g1'))
+    await waitFor(async () => expect(await copy(3)).toBe('?key=rotated-g1'))
   })
 })
 
@@ -342,56 +347,55 @@ describe('links beside their scopes', () => {
     { label: 'All roles', url: `https://x.test/?key=${t}` },
     ...g.scopes.map(s => ({ label: String(SCOPES.find(x => x.id === s)!.label), url: `https://x.test/${s}?key=${t}`, scope: s })),
   ]
-  const urls = () => screen.queryAllByRole('textbox').filter(t => (t as HTMLInputElement).readOnly)
-    .map(t => [t.getAttribute('aria-label'), (t as HTMLInputElement).value])
+  /** Each scope row's text and its icon's label, then the line under them. */
+  const rows = (card: HTMLElement) => {
+    const dd = card.querySelector('dd')!
+    return [
+      [...dd.querySelectorAll(':scope > label, :scope > div')].map(r => [r.textContent!.trim(), r.querySelector('.oa-ui-copy-btn')?.getAttribute('aria-label') ?? null]),
+      card.querySelector('.oa-ui-links')?.textContent ?? null,
+    ]
+  }
 
-  it("puts a scope's link on its row, and follows the scope as it's checked and unchecked", async () => {
+  it("puts an icon on each scope's row, and follows the scope as it's checked and unchecked", async () => {
     renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} editScopes />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
     const card = await screen.findByRole('article')
-    await waitFor(() => expect(urls()).toEqual([
-      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
-      ['All roles', 'https://x.test/?key=token-g1'],
-    ]))
+    await waitFor(() => expect(rows(card)).toEqual([[['Alpha', 'Copy link'], ['Beta', null]], 'All roles  · key  · all ']))
     await user.click(within(card).getByRole('checkbox', { name: 'Beta' }))
-    await waitFor(() => expect(urls()).toEqual([
-      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
-      ['Beta link', 'https://x.test/beta?key=token-g1'],
-      ['All roles', 'https://x.test/?key=token-g1'],
-    ]))
+    await waitFor(() => expect(rows(card)).toEqual([[['Alpha', 'Copy link'], ['Beta', 'Copy link']], 'All roles  · key  · all ']))
     await user.click(within(card).getByRole('checkbox', { name: /^Alpha/ }))
-    await waitFor(() => expect(urls()).toEqual([
-      ['Beta link', 'https://x.test/beta?key=token-g1'],
-      ['All roles', 'https://x.test/?key=token-g1'],
-    ]))
-    // "Copy all" still lists every page, the scoped ones included.
+    await waitFor(() => expect(rows(card)).toEqual([[['Alpha', null], ['Beta', 'Copy link']], 'All roles  · key  · all ']))
+    // The Beta row's icon copies Beta's page; "Copy all" still lists every page, the scoped ones included.
+    await user.click(within(card.querySelector('dd')!).getAllByRole('button', { name: 'Copy link' })[0]!)
+    const beta = await navigator.clipboard.readText()
     await user.click(screen.getByRole('button', { name: 'Copy all' }))
-    expect(await navigator.clipboard.readText()).toBe([
-      'All roles: https://x.test/?key=token-g1',
-      'Beta: https://x.test/beta?key=token-g1',
-      'Key: ?key=token-g1',
-    ].join('\n'))
+    expect([beta, await navigator.clipboard.readText()]).toEqual([
+      'https://x.test/beta?key=token-g1',
+      ['All roles: https://x.test/?key=token-g1', 'Beta: https://x.test/beta?key=token-g1', 'Key: ?key=token-g1'].join('\n'),
+    ])
   })
 
-  it('without editScopes, the scopes become rows while the links show', async () => {
+  it('without editScopes, the scopes become rows while there are links, and a list again once dismissed', async () => {
     renderWithQuery(<GrantsPanel client={backend()} scopes={SCOPES} buildLink={pages} />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('checkbox', { name: /^Alpha/ }))
     await user.click(screen.getByRole('checkbox', { name: 'Beta' }))
     await user.click(screen.getByRole('button', { name: 'Mint link' }))
-    await waitFor(() => expect(urls()).toEqual([
-      ['Alpha link', 'https://x.test/alpha?key=token-g1'],
-      ['Beta link', 'https://x.test/beta?key=token-g1'],
-      ['All roles', 'https://x.test/?key=token-g1'],
-    ]))
-    await user.click(screen.getByRole('button', { name: 'Done' }))
-    expect([urls(), screen.getByRole('article').querySelector('dd')!.textContent]).toEqual([[], 'Alpha, Beta'])
+    const card = await screen.findByRole('article')
+    await waitFor(() => expect(rows(card)).toEqual([[['Alpha', 'Copy link'], ['Beta', 'Copy link']], 'All roles  · key  · all ']))
+    await user.click(screen.getByRole('button', { name: 'Hide these links' }))
+    expect([rows(card), card.querySelector('dd')!.textContent]).toEqual([[[], null], 'Alpha, Beta'])
   })
 })
 
 describe('kept keys', () => {
+  const pages = (g: Grant, t: string) => [
+    ...g.scopes.map(s => ({ label: String(SCOPES.find(x => x.id === s)!.label), url: `https://x.test/${s}?key=${t}`, scope: s })),
+    { label: 'All roles', url: `https://x.test/?key=${t}` },
+  ]
+
   it('the mint form offers the choice that isn\'t the default', async () => {
     const onMint = vi.fn(async (_: MintInput) => ({ id: 'g' }))
     renderWithQuery(<GrantMintForm scopes={[{ id: 'reports', label: 'Reports' }]} onMint={onMint} keepTokens />)
@@ -402,17 +406,74 @@ describe('kept keys', () => {
     expect(onMint.mock.calls.map(([i]) => i.keepToken)).toEqual([true, false])
   })
 
-  it('a kept link shows its links again on demand, and forgets them when dismissed', async () => {
+  it('a kept link offers its icons straight away, fetching the key once, on the first copy', async () => {
     const client = backend()
     const { grant } = await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'], keepToken: true })
-    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={(_, t) => `https://x.test/?key=${t}`} />)
+    const token = vi.spyOn(client.grants, 'token')
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={pages} />)
     const user = userEvent.setup()
     const card = await screen.findByRole('article')
-    await user.click(within(card).getByRole('button', { name: 'Show links' }))
-    await waitFor(() => expect((within(card).getByRole('textbox', { name: 'Share link' }) as HTMLInputElement).value).toBe(`https://x.test/?key=token-${grant.id}`))
-    expect(within(card).getByText('This key is kept (sealed): Show links brings these back.')).toBeTruthy()
-    await user.click(within(card).getByRole('button', { name: 'Done' }))
-    expect([within(card).queryByRole('textbox', { name: 'Share link' }), within(card).getByRole('button', { name: 'Show links' }).textContent]).toEqual([null, 'Show links'])
+    await waitFor(() => expect(within(card).queryAllByRole('button', { name: /^Copy/ }).length).toBe(4))
+    expect([token.mock.calls.length, within(card).queryByRole('button', { name: 'Show links' }), within(card).queryByRole('button', { name: 'Hide these links' })]).toEqual([0, null, null])
+    await user.click(within(card).getAllByRole('button', { name: 'Copy link' })[0]!)
+    const alpha = await navigator.clipboard.readText()
+    await user.click(within(card).getByRole('button', { name: 'Copy key' }))
+    expect([alpha, await navigator.clipboard.readText(), token.mock.calls]).toEqual([
+      `https://x.test/alpha?key=token-${grant.id}`, `?key=token-${grant.id}`, [[grant.id]],
+    ])
+    expect(within(card).getByText('Its key is kept, sealed; each fetch is logged.')).toBeTruthy()
+    // Forgetting it takes the icons away.
+    await user.click(within(card).getByRole('button', { name: 'forget key' }))
+    await user.click(within(card).getByRole('button', { name: 'Only rotating brings it back. Forget?' }))
+    await waitFor(() => expect(within(card).queryAllByRole('button', { name: /^Copy/ })).toEqual([]))
+  })
+
+  it('copies through a promised ClipboardItem where there is one, so Safari keeps the click', async () => {
+    const client = backend()
+    await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'], keepToken: true })
+    const written: string[] = []
+    class FakeItem {
+      constructor(readonly items: Record<string, Promise<Blob>>) {}
+    }
+    vi.stubGlobal('ClipboardItem', FakeItem)
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={pages} />)
+    const user = userEvent.setup()
+    const write = vi.spyOn(navigator.clipboard, 'write').mockImplementation(async items => {
+      written.push(await (await (items[0] as unknown as FakeItem).items['text/plain']!).text())
+    })
+    try {
+      const card = await screen.findByRole('article')
+      await user.click(await within(card).findByRole('button', { name: 'Copy key' }))
+      await waitFor(() => expect([write.mock.calls.length, written]).toEqual([1, ['?key=token-g1']]))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("says so when the key can't be fetched, and tries again on the next click", async () => {
+    const client = backend()
+    await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'], keepToken: true })
+    const token = vi.spyOn(client.grants, 'token').mockRejectedValueOnce(new Error('offline'))
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={pages} />)
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article')
+    await user.click(await within(card).findByRole('button', { name: 'Copy key' }))
+    await waitFor(() => expect(within(card).getAllByRole('alert').map(a => a.textContent)).toEqual(["Couldn't copy", 'offline']))
+    await user.click(within(card).getByRole('button', { name: 'Copy key' }))
+    await waitFor(async () => expect([await navigator.clipboard.readText(), token.mock.calls.length]).toEqual(['?key=token-g1', 2]))
+  })
+
+  it('takes replacement components, which get the copy behavior ready-made', async () => {
+    const client = backend()
+    await client.grants.mint({ name: 'For Hilary', scopes: ['alpha'], keepToken: true })
+    const Copy = ({ name, copy }: CopyProps) => <button type="button" onClick={() => void copy()}>{`take ${name}`}</button>
+    const ExtraLinks = ({ copies, Copy: C }: ExtraLinksProps) => <ul>{copies.map(c => <li key={c.kind + c.name}><C {...c} /></li>)}</ul>
+    renderWithQuery(<GrantsPanel client={client} scopes={SCOPES} buildLink={pages} components={{ Copy, ExtraLinks }} />)
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article')
+    await waitFor(() => expect(within(card).getAllByRole('button', { name: /^take/ }).map(b => b.textContent)).toEqual(['take Alpha', 'take All roles', 'take key', 'take all']))
+    await user.click(within(card).getByRole('button', { name: 'take Alpha' }))
+    expect(await navigator.clipboard.readText()).toBe('https://x.test/alpha?key=token-g1')
   })
 
   it("an existing link's key is kept by pasting it, and a wrong one says so", async () => {
@@ -428,7 +489,7 @@ describe('kept keys', () => {
     await user.clear(within(card).getByRole('textbox', { name: "This link's key" }))
     await user.type(within(card).getByRole('textbox', { name: "This link's key" }), `token-${grant.id}`)
     await user.click(within(card).getByRole('button', { name: 'Keep' }))
-    await waitFor(() => expect(within(card).getByRole('button', { name: 'Show links' })).toBeTruthy())
+    await waitFor(() => expect(within(card).getByText('Its key is kept, sealed; each fetch is logged.')).toBeTruthy())
   })
 })
 
