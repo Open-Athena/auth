@@ -604,10 +604,15 @@ export function createGate(opts: GateOptions) {
     return url
   }
 
-  /** A redirect to this URL without its key, setting `cookies`. */
+  /**
+   * A redirect to this URL without its key, setting `cookies`. Leading slashes collapse to one: a request for
+   * `//evil.example/x` (or `/\evil.example/x`, which parses the same) must not redirect to the protocol-relative
+   * `//evil.example/x`.
+   */
   function dropKey(req: Request, cookies: readonly string[] = []): Response {
     const url = withoutKey(req)
-    const headers = new Headers({ location: `${url.pathname}${url.search}${url.hash}`, 'cache-control': 'private, no-store' })
+    const path = url.pathname.replace(/^[/\\]+/, '/')
+    const headers = new Headers({ location: `${path}${url.search}${url.hash}`, 'cache-control': 'private, no-store' })
     for (const c of cookies) headers.append('set-cookie', c)
     return new Response(null, { status: 302, headers })
   }

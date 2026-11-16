@@ -94,3 +94,21 @@ describe('`?key=-`', () => {
     ])
   })
 })
+
+describe('`handleKeyParam` redirects stay on this origin', () => {
+  // `//host/…` is protocol-relative in a `Location`, and browsers read `\` as `/` (specs/done/handle-key-param-open-redirect.md).
+  const PATHS = ['//evil.example/x', '/\\evil.example/x']
+
+  it.each(PATHS)('%s: redeem, staff, `?key=-` and `?as=recipient` all land on /evil.example/x', async path => {
+    const t = setup()
+    const jeff = await t.signIn('jeff@oa.test')
+    const a = await t.mint()
+    const b = await t.mint()
+    const c = await t.mint()
+    const [, redeemed, link] = await t.step(`${path}?key=${a.token}&tab=1`)
+    const [, staff] = await t.step(`${path}?key=${b.token}`, jeff)
+    const [, cleared] = await t.step(`${path}?key=${CLEAR_KEY}`, link ?? '')
+    const [, asRecipient] = await t.step(`${path}?key=${c.token}&as=recipient`, jeff)
+    expect([redeemed, staff, cleared, asRecipient]).toEqual(['/evil.example/x?tab=1', '/evil.example/x', '/evil.example/x', '/evil.example/x'])
+  })
+})
