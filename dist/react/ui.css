@@ -77,6 +77,36 @@
 .oa-ui-token p { margin: 0 0 6px; }
 .oa-ui-copyrow { display: flex; gap: 6px; }
 .oa-ui-copyrow input { flex: 1; min-width: 0; }
+.oa-ui-links { margin: 4px 0 0; }
+.oa-ui-copy { align-items: center; display: inline-flex; gap: 4px; position: relative; vertical-align: middle; }
+.oa-ui-copy-btn {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--oa-ui-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 2px;
+}
+.oa-ui-copy-btn:hover,
+.oa-ui-copy-btn:focus-visible { background: var(--oa-ui-panel); color: var(--oa-ui-ink); }
+.oa-ui-copy-btn[data-state="copied"] { color: var(--oa-ui-accent); }
+.oa-ui-tooltip {
+  background: var(--oa-ui-ink);
+  border-radius: 4px;
+  bottom: calc(100% + 4px);
+  color: var(--oa-ui-surface);
+  font-size: 12px;
+  left: 50%;
+  padding: 2px 6px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 1;
+}
+.oa-ui-copy .oa-ui-error { font-size: 12px; }
 
 /* User menu */
 .oa-ui-um-trigger {

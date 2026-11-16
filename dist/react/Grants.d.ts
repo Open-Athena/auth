@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { type ComponentType, type ReactNode } from 'react';
 import type { AuthClient } from '../client/api.js';
 import type { GrantsController } from '../client/grants.js';
 import type { Grant, MintInput } from '../core/http.js';
@@ -79,6 +79,64 @@ export interface GrantLinkProps {
  * of each, of all of them, and of just the key, and say it won't come back.
  */
 export declare function GrantLink({ grant, token, buildLink, omitScopes, kept, keyParam, onDismiss, labels, classNames }: GrantLinkProps): import("react").JSX.Element;
+/** One copy control's job: what it copies, and how to copy it. */
+export interface CopyProps {
+    kind: 'scope' | 'entry' | 'key' | 'all';
+    /** What this control does, for its tooltip and accessible name ("Copy link"). */
+    label: string;
+    /** What it copies, for display beside it where that isn't already shown ("All of them", "key", "all"). */
+    name: string;
+    /**
+     * Resolves the text to copy. It fetches the kept key on first use, which is logged. Call it from the click handler,
+     * so the clipboard write keeps the user gesture.
+     */
+    text: () => Promise<string>;
+    /** Copy `text()` the library's way (`ClipboardItem` with a promise, falling back to `writeText`) and report how it went. */
+    copy: () => Promise<'copied' | 'failed'>;
+}
+/**
+ * Copy text that may not be known yet. Safari only lets a clipboard write follow a click if it starts in the click
+ * handler, so the write gets a `ClipboardItem` whose content is still a promise; where that isn't supported, the text
+ * is awaited and written with `writeText`.
+ */
+export declare function copyText(text: () => Promise<string>): Promise<'copied' | 'failed'>;
+/**
+ * The default copy control: a clipboard icon that turns into a check for a moment once copied, with a tooltip saying
+ * what it copies, and a short error if the clipboard refused.
+ */
+export declare function CopyIcon({ label, copy }: CopyProps): import("react").JSX.Element;
+export interface ScopeLinkProps {
+    grant: Grant;
+    scope: string;
+    entry: GrantLinkEntry;
+    Copy: ComponentType<CopyProps>;
+    copyProps: CopyProps;
+}
+/** What sits after a scope's label while the card has a link for it: by default, just its copy control. */
+export declare function DefaultScopeLink({ Copy, copyProps }: ScopeLinkProps): import("react").JSX.Element;
+export interface ExtraLinksProps {
+    grant: Grant;
+    /** The entries not on a scope row. */
+    entries: readonly GrantLinkEntry[];
+    Copy: ComponentType<CopyProps>;
+    /** Ready-made props for each control, in display order: entries, then key, then all. */
+    copies: readonly CopyProps[];
+    /** Set only while a just-minted key that isn't kept is on screen: hides the icons. */
+    onDismiss?: () => void;
+    /** The shown-once warning to put beside `onDismiss`'s "×". */
+    warning?: ReactNode;
+}
+/** The line under the scopes: each other page, the key and "all", as name + icon pairs. */
+export declare function DefaultExtraLinks({ Copy, copies, onDismiss, warning }: ExtraLinksProps): import("react").JSX.Element;
+/** Swappable pieces of a card's links. Each falls back to the default; behavior (fetching, logging) stays the card's. */
+export interface GrantLinkComponents {
+    /** One copy control: a scope row's, a non-scope entry's, the key's, or "all"'s. */
+    Copy?: ComponentType<CopyProps>;
+    /** What sits after a scope's label: by default `<Copy>` when the card has a link for that scope. */
+    ScopeLink?: ComponentType<ScopeLinkProps>;
+    /** The line under the scopes: non-scope entries, the key and "all". */
+    ExtraLinks?: ComponentType<ExtraLinksProps>;
+}
 /** How the app's `WhoamiChip` shows an `anon` link to its recipient; picks the anon checkbox's default wording. */
 export type AnonChipMode = 'label' | 'pseudonym' | 'hidden';
 export interface GrantMintFormProps {
@@ -130,11 +188,13 @@ export interface GrantCardProps {
     anonChip?: AnonChipMode;
     /** See `GrantLinkProps.keyParam`. */
     keyParam?: string;
-    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes' | 'anon' | 'service' | 'anonToggle' | 'serviceToggle' | 'showLinks' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave', ReactNode>>;
+    /** Replacements for the copy controls and where they sit (`GrantLinkComponents`); each defaults to the built-in. */
+    components?: GrantLinkComponents;
+    labels?: GrantLinkProps['labels'] & Partial<Record<'noMemo' | 'revoked' | 'expired' | 'disabled' | 'disabledNote' | 'enable' | 'disable' | 'rotate' | 'rotateConfirm' | 'revoke' | 'revokeConfirm' | 'lostToken' | 'someone' | 'edit' | 'save' | 'cancel' | 'holderName' | 'holderEmail' | 'allowlist' | 'face' | 'widelyOpened' | 'allowlistKeepsScopes' | 'anon' | 'service' | 'anonToggle' | 'serviceToggle' | 'copyLink' | 'keyName' | 'allName' | 'keptNote' | 'forgetKept' | 'forgetKeptConfirm' | 'keepExisting' | 'keepExistingHint' | 'keepExistingSave', ReactNode>>;
     classNames?: GrantsClassNames;
 }
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, anonChip, keyParam, labels, classNames }: GrantCardProps): import("react").JSX.Element;
+export declare function GrantCard({ grant, grants, scopes, editScopes, buildLink, allowlist, avatarEndpoint, onHolderSaved, anonChip, keyParam, components, labels, classNames }: GrantCardProps): import("react").JSX.Element;
 export type GrantsPanelProps = ({
     client: AuthClient;
     controller?: undefined;
@@ -161,10 +221,12 @@ export type GrantsPanelProps = ({
     editScopes?: boolean;
     /** See `GrantLinkProps.keyParam`. */
     keyParam?: string;
+    /** Passed to each card: see `GrantCardProps.components`. */
+    components?: GrantLinkComponents;
     classNames?: GrantsClassNames & {
         section?: string;
     };
 };
 /** A mint form over the list of links, composed from the exported parts. */
-export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, keyParam, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, keepTokens, }: GrantsPanelProps): import("react").JSX.Element;
+export declare function GrantsPanel({ client, controller, scopes, buildLink, pollMs, onMinted, onChanged, mintIntro, listIntro, mintHeading, listHeading, emptyLabel, labels, cardLabels, editScopes, keyParam, components, classNames, defaultMemo, expiryDays, defaultExpiryDays, maxRedeems, allowlist, avatarEndpoint, anonChip, keepTokens, }: GrantsPanelProps): import("react").JSX.Element;
 export {};
