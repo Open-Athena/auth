@@ -1,12 +1,14 @@
 export interface ExchangeOptions {
-  /** Query param carrying the token. Default `key`. */
-  param?: string
+  /** Query param carrying the token (the gate's `keyParam`; a list accepts each, the first present wins). Default `key`. */
+  param?: string | readonly string[]
   /** Default `/api/auth/exchange`. */
   endpoint?: string
 }
 
+const names = (param: string | readonly string[]): readonly string[] => typeof param === 'string' ? [param] : param
+
 export const hasKeyParam = ({ param = 'key' }: ExchangeOptions = {}): boolean =>
-  typeof window !== 'undefined' && new URL(window.location.href).searchParams.has(param)
+  typeof window !== 'undefined' && names(param).some(p => new URL(window.location.href).searchParams.has(p))
 
 /**
  * Trade a `?key=<token>` share link for a session cookie.
@@ -27,9 +29,9 @@ export async function exchangeKeyParam(opts: ExchangeOptions = {}): Promise<bool
   const { param = 'key', endpoint = '/api/auth/exchange' } = opts
   if (typeof window === 'undefined') return false
   const url = new URL(window.location.href)
-  const token = url.searchParams.get(param)
+  const token = names(param).map(p => url.searchParams.get(p)).find(v => v !== null)
   if (!token) return false
-  url.searchParams.delete(param)
+  for (const p of names(param)) url.searchParams.delete(p)
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
   try {
     const res = await fetch(endpoint, {

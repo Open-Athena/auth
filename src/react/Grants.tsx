@@ -81,6 +81,8 @@ export interface GrantLinkProps {
   omitScopes?: readonly string[]
   /** The key is kept, so these links can be shown again: say so instead of "copy this now". */
   kept?: boolean
+  /** The gate's `keyParam` (the one new links use), for "Copy key". Default `key`. */
+  keyParam?: string
   onDismiss?: () => void
   labels?: Partial<Record<'warning' | 'keptWarning' | 'copy' | 'copied' | 'copyAll' | 'copyKey' | 'copyFailed' | 'dismiss', ReactNode>>
   classNames?: GrantsClassNames
@@ -108,12 +110,12 @@ function useCopy() {
  * The moment a link exists outside its recipient's browser: show it (or one row per page it opens), offer a copy
  * of each, of all of them, and of just the key, and say it won't come back.
  */
-export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = false, onDismiss, labels = {}, classNames }: GrantLinkProps) {
+export function GrantLink({ grant, token, buildLink, omitScopes = [], kept = false, keyParam = 'key', onDismiss, labels = {}, classNames }: GrantLinkProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const clip = useCopy()
   const all = linkEntries(buildLink(grant, token))
   const shown = all.filter(e => !(e.scope !== undefined && omitScopes.includes(e.scope)))
-  const key = shareKey(token)
+  const key = shareKey(token, keyParam)
   const copyLabel = (id: string, idle: ReactNode) => (clip.copied(id) ? (labels.copied ?? 'Copied') : idle)
   return (
     <div className={cx.token}>
@@ -537,6 +539,8 @@ export interface GrantCardProps {
   onHolderSaved?: () => void
   /** See `GrantMintFormProps.anonChip`. */
   anonChip?: AnonChipMode
+  /** See `GrantLinkProps.keyParam`. */
+  keyParam?: string
   labels?: GrantLinkProps['labels'] &
     Partial<
       Record<
@@ -551,7 +555,7 @@ export interface GrantCardProps {
 }
 
 /** One link: its status, scopes, holder, activity, and the verbs that change it. */
-export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', labels = {}, classNames }: GrantCardProps) {
+export function GrantCard({ grant, grants, scopes = [], editScopes = false, buildLink, allowlist = false, avatarEndpoint, onHolderSaved, anonChip = 'label', keyParam, labels = {}, classNames }: GrantCardProps) {
   const cx = { ...DEFAULT_CLASSES, ...classNames }
   const [editing, setEditing] = useState(false)
   const { activity: loadActivity } = grants
@@ -771,6 +775,7 @@ export function GrantCard({ grant, grants, scopes = [], editScopes = false, buil
           buildLink={buildLink}
           omitScopes={[...scoped.keys()]}
           kept={grant.kept}
+          {...(keyParam === undefined ? {} : { keyParam })}
           onDismiss={grants.dismissToken}
           labels={labels}
           classNames={classNames}
@@ -898,6 +903,8 @@ export type GrantsPanelProps = ({ client: AuthClient; controller?: undefined } |
     cardLabels?: GrantCardProps['labels']
     /** Scope checkboxes on each link: see `GrantCard`. */
     editScopes?: boolean
+    /** See `GrantLinkProps.keyParam`. */
+    keyParam?: string
     classNames?: GrantsClassNames & { section?: string }
   }
 
@@ -918,6 +925,7 @@ export function GrantsPanel({
   labels,
   cardLabels,
   editScopes = false,
+  keyParam,
   classNames,
   defaultMemo,
   expiryDays,
@@ -985,6 +993,7 @@ export function GrantsPanel({
               {...(onChanged ? { onHolderSaved: onChanged } : {})}
               {...(avatarEndpoint === undefined ? {} : { avatarEndpoint })}
               {...(anonChip === undefined ? {} : { anonChip })}
+              {...(keyParam === undefined ? {} : { keyParam })}
             />
           ))}
         </div>

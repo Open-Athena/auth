@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AuthClientError, createAuthClient, shareUrl } from '../src/client/api.js'
+import { AuthClientError, createAuthClient, shareKey, shareUrl } from '../src/client/api.js'
 import { createGate } from '../src/core/gate.js'
 import { authRoutes } from '../src/core/routes.js'
 import type { RouteOptions } from '../src/core/routes.js'
@@ -151,5 +151,10 @@ describe('shareUrl', () => {
     try { expect(shareUrl('token')).toBe('https://app.test/page?x=1&key=token#part') }
     finally { vi.unstubAllGlobals() }
     expect(() => shareUrl('token')).toThrow('shareUrl requires a target outside the browser')
+  })
+  it("takes the gate's `keyParam`, as does `shareKey`", () => {
+    expect([shareUrl('tok', 'https://app.test/sre?k=old&tab=1', 'k'), shareKey('tok', 'k'), shareKey('tok')]).toEqual([
+      'https://app.test/sre?k=tok&tab=1', '?k=tok', '?key=tok',
+    ])
   })
 })

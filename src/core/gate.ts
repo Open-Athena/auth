@@ -90,8 +90,12 @@ export interface GateOptions {
    * the link is held as an account to switch to instead (see `RetainedOptions`).
    */
   staffKeepSession?: boolean
-  /** The share-link query parameter, stripped from the URL `redeem`'s responses redirect to. Default `key`. */
-  keyParam?: string
+  /**
+   * The share-link query parameter. Default `key`. A list accepts each (the first present wins) and names the first
+   * as the one new links use, so an app can shorten its links (`['k', 'key']`) without breaking ones already sent.
+   * All of them are stripped from the URL `handleKeyParam` redirects to.
+   */
+  keyParam?: string | readonly string[]
   /**
    * Seals kept link keys. Default `secret`: whoever holds that can already sign a session for any link, so a
    * separate secret adds little; pass one to rotate them apart. Changing it makes kept keys unreadable (they read as
@@ -389,6 +393,16 @@ export function createGate(opts: GateOptions) {
     fetch: fetchImpl = globalThis.fetch,
   } = opts
   const tokenSecret = opts.tokenSecret ?? secret
+  const keyParams: readonly string[] = typeof keyParam === 'string' ? [keyParam] : keyParam
+  if (!keyParams.length || keyParams.some(p => !p)) throw new TypeError('keyParam: expected nonempty parameter names')
+  /** The share-link key this URL presents, under any accepted name (the first present), or null. */
+  const presentedKey = (url: URL): string | null => {
+    for (const p of keyParams) {
+      const v = url.searchParams.get(p)
+      if (v !== null) return v
+    }
+    return null
+  }
   const policy: EmailPolicy = opts.policy
     ? firstMatch(adminPolicy(adminEmails), opts.policy)
     : adminPolicy(adminEmails)
@@ -458,8 +472,9 @@ export function createGate(opts: GateOptions) {
     const url = new URL(req.url)
     const bearer = req.headers.get('Authorization')?.match(/^Bearer(?:\s+(.*))?$/i)
     // `?key=-` (`CLEAR_KEY`) is an instruction to `redeem`, not a credential: no token, no deny row.
-    const tokenPresented = !!bearer || (url.searchParams.has('key') && url.searchParams.get('key') !== CLEAR_KEY)
-    const presented = bearer ? (bearer[1] ?? '') : (url.searchParams.get('key') ?? '')
+    const keyed = presentedKey(url)
+    const tokenPresented = !!bearer || (keyed !== null && keyed !== CLEAR_KEY)
+    const presented = bearer ? (bearer[1] ?? '') : (keyed ?? '')
 
     if (tokenPresented) {
       credential = 'token'
@@ -557,7 +572,7 @@ export function createGate(opts: GateOptions) {
   async function unauthenticated(req: Request, result?: AuthenticationResult): Promise<Response> {
     const failure = result ?? await authenticateResult(req, Date.now(), { logView: false })
     const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-    const explicit = /^Bearer(?:\s|$)/i.test(req.headers.get('Authorization') ?? '') || new URL(req.url).searchParams.has('key')
+    const explicit = /^Bearer(?:\s|$)/i.test(req.headers.get('Authorization') ?? '') || presentedKey(new URL(req.url)) !== null
     if (!failure.auth && failure.credential === 'cookie' && !explicit) {
       if (readCookie(req, cookieName) !== null) {
         headers.append('set-cookie', expireCookie(req))
@@ -599,7 +614,7 @@ export function createGate(opts: GateOptions) {
   /** The request's URL without the key (or `as`), as a same-origin redirect target. */
   function withoutKey(req: Request): URL {
     const url = new URL(req.url)
-    url.searchParams.delete(keyParam)
+    for (const p of keyParams) url.searchParams.delete(p)
     url.searchParams.delete('as')
     return url
   }
@@ -1404,6 +1419,12 @@ export function createGate(opts: GateOptions) {
     rotate,
     revealToken,
     keepToken,
+    /** The share-link parameter new links use (the first `keyParam`). */
+    keyParam: keyParams[0]!,
+    /** Every share-link parameter accepted, new links' first. */
+    keyParams,
+    /** The share-link key this URL presents (under any accepted `keyParam`), or null. */
+    presentedKey,
     /** What a preview bot is shown for this link (`linkPreview`, or the host). */
     previewResponse,
     /**
@@ -1412,7 +1433,7 @@ export function createGate(opts: GateOptions) {
      * preview card, staff kept as themselves, or a cleared link session).
      */
     async handleKeyParam(req: Request, nowMs = Date.now()): Promise<Response | null> {
-      const key = new URL(req.url).searchParams.get(keyParam)
+      const key = presentedKey(new URL(req.url))
       if (key === null) return null
       const res = await redeem(key, req, nowMs)
       if (res.ok) return dropKey(req, res.cookies)

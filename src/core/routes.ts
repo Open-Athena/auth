@@ -496,10 +496,10 @@ export function authRoutes(gate: Gate, opts: RouteOptions = {}) {
         if (method === 'PUT') {
           const b = await body<KeepTokenInput>(req)
           if (typeof b.token !== 'string' || !b.token) return json({ error: 'token required' }, 400)
-          // Accept a whole pasted link, too: the key is its `key` param.
+          // Accept a whole pasted link, too: the key is its `keyParam`.
           let token = b.token.trim()
           try {
-            token = new URL(token, 'https://x.invalid').searchParams.get('key') ?? token
+            token = gate.presentedKey(new URL(token, 'https://x.invalid')) ?? token
           } catch { /* not a URL: the bare key */ }
           return (await gate.keepToken(id, token, actor)) ? reply('keep', { ok: true }) : json({ error: "that isn't this link's current key" }, 400)
         }

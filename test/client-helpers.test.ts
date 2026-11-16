@@ -70,6 +70,17 @@ describe('framework-free exchange helpers', () => {
     }]])
   })
 
+  it('with a list of params, takes the first present and strips them all', async () => {
+    window.history.replaceState({}, '', '/sre?key=OLD&tab=1&k=NEW')
+    const request = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', request)
+    expect(hasKeyParam({ param: ['k', 'key'] })).toBe(true)
+    expect(await exchangeKeyParam({ param: ['k', 'key'] })).toBe(true)
+    expect([window.location.search, request.mock.calls.map(c => (c[1] as RequestInit).body)]).toEqual([
+      '?tab=1', [JSON.stringify({ token: 'NEW' })],
+    ])
+  })
+
   it.each(['http', 'network'])('strips the key even on %s failure', async failure => {
     window.history.replaceState({}, '', '/?key=SECRET#slide')
     vi.stubGlobal('fetch', failure === 'http'
