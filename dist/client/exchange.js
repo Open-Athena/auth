@@ -1,4 +1,5 @@
-export const hasKeyParam = ({ param = 'key' } = {}) => typeof window !== 'undefined' && new URL(window.location.href).searchParams.has(param);
+const names = (param) => typeof param === 'string' ? [param] : param;
+export const hasKeyParam = ({ param = 'key' } = {}) => typeof window !== 'undefined' && names(param).some(p => new URL(window.location.href).searchParams.has(p));
 /**
  * Trade a `?key=<token>` share link for a session cookie.
  *
@@ -19,10 +20,11 @@ export async function exchangeKeyParam(opts = {}) {
     if (typeof window === 'undefined')
         return false;
     const url = new URL(window.location.href);
-    const token = url.searchParams.get(param);
+    const token = names(param).map(p => url.searchParams.get(p)).find(v => v !== null);
     if (!token)
         return false;
-    url.searchParams.delete(param);
+    for (const p of names(param))
+        url.searchParams.delete(p);
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
     try {
         const res = await fetch(endpoint, {

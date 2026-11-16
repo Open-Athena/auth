@@ -1,6 +1,6 @@
 export interface ExchangeOptions {
-    /** Query param carrying the token. Default `key`. */
-    param?: string;
+    /** Query param carrying the token (the gate's `keyParam`; a list accepts each, the first present wins). Default `key`. */
+    param?: string | readonly string[];
     /** Default `/api/auth/exchange`. */
     endpoint?: string;
 }
