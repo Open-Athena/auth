@@ -78,9 +78,16 @@ export interface ProviderOptions {
     tokenTtlS?: number;
     /** Authorization code lifetime (default 60 s). */
     codeTtlS?: number;
+    /**
+     * `POST <basePath>/slack-emoji` lookups allowed per client per minute (default 30), or `false` to turn the route
+     * off. Counted in this isolate's memory: a bound on a runaway client, not an exact quota.
+     */
+    slackEmojiLookupsPerMinute?: number | false;
 }
 /** What a client registry stores in place of a secret. */
 export declare const hashClientSecret: (secret: string) => Promise<string>;
+/** A person's Slack emoji, under `profile`: `:name:`, or null when they have none (so an app's copy is cleared). */
+export declare const SLACK_EMOJI_CLAIM = "oa_slack_emoji";
 export declare function oidcProviderRoutes(opts: ProviderOptions): (req: Request) => Promise<Response | null>;
 /** For an app: the broker as an `OidcProvider` (`@open-athena/auth/oidc`), from its issuer. */
 export declare function brokerProvider(issuer: string, { basePath, scope }?: {

@@ -1,3 +1,4 @@
+import { AVATAR_SEED_PENDING } from '../core/profile.js';
 import { generateId } from '../core/tokens.js';
 export function memoryGrantStore() {
     const rows = new Map();
@@ -180,11 +181,17 @@ export function memoryProfileStore() {
         async get(email) {
             return rows.get(email) ?? null;
         },
-        async put(profile) {
-            rows.set(profile.email, { ...profile });
+        async put({ slackEmoji: _ignored, ...profile }) {
+            // `put` never writes the emoji: one set through `setSlackEmoji` stays.
+            const kept = rows.get(profile.email)?.slackEmoji;
+            rows.set(profile.email, kept === undefined ? profile : { ...profile, slackEmoji: kept });
         },
         async del(email) {
             rows.delete(email);
+        },
+        async setSlackEmoji(email, emoji) {
+            const row = rows.get(email);
+            rows.set(email, row ? { ...row, slackEmoji: emoji } : { email, name: null, avatar: null, avatarSrc: AVATAR_SEED_PENDING, updatedAt: 0, slackEmoji: emoji });
         },
     };
 }

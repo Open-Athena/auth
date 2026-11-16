@@ -141,6 +141,19 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
         const { token } = await client.grants.token(id);
         return { token: { grantId: id, token, source: 'reveal' } };
     });
+    /**
+     * A kept key, returned rather than put in the snapshot: for a component that holds it itself (a card copying its
+     * links). Each call is a logged look on the server. A failure is reported in `error` as `reveal`, and rethrown.
+     */
+    async function fetchKey(id) {
+        try {
+            return (await client.grants.token(id)).token;
+        }
+        catch (error) {
+            set({ error: failure('reveal', id, error) });
+            throw error;
+        }
+    }
     /** Keep this link's current key (pasted), so it can be revealed later. */
     const keepToken = (id, token) => change(id, 'keep', async () => (await client.grants.keepToken(id, token), {}));
     const forgetToken = (id) => change(id, 'forget', async () => {
@@ -178,6 +191,7 @@ export function createGrantsController({ client, whoamiEndpoint = `${client.base
         revoke,
         rotate,
         reveal,
+        fetchKey,
         keepToken,
         forgetToken,
         activity,

@@ -7,6 +7,7 @@
  * Apply `migrations/` first.
  */
 import { previewBot } from '../core/bots.js';
+import { AVATAR_SEED_PENDING } from '../core/profile.js';
 import { formatScopes, parseScopes } from '../core/types.js';
 const COLS = 'id, name, note, subject_json, email, scopes, max_redeems, redeems, expires_at, session_ttl, created_at, created_by, disabled_at, revoked_at, expiry_ends_sessions, sessions_invalid_before, first_used_at, last_used_at, service, anon, token_enc IS NOT NULL AS kept';
 function parseSubject(json) {
@@ -438,13 +439,15 @@ const toProfile = (r) => ({
     avatar: r.avatar,
     avatarSrc: r.avatar_src ?? null,
     updatedAt: r.updated_at,
+    slackEmoji: r.slack_emoji ?? null,
 });
 /** The `profiles` table (`migrations/`). */
 export function d1ProfileStore(db) {
     return {
         async get(email) {
             const row = await db
-                .prepare(`SELECT email, name, avatar, avatar_src, updated_at FROM profiles WHERE email = ?`)
+                // `*`, not a column list: `slack_emoji` (migration 0007) reads as absent on a database without it.
+                .prepare(`SELECT * FROM profiles WHERE email = ?`)
                 .bind(email)
                 .first();
             return row ? toProfile(row) : null;
@@ -465,6 +468,14 @@ export function d1ProfileStore(db) {
         },
         async del(email) {
             await db.prepare(`DELETE FROM profiles WHERE email = ?`).bind(email).run();
+        },
+        async setSlackEmoji(email, emoji) {
+            await db
+                .prepare(`INSERT INTO profiles (email, name, avatar, avatar_src, updated_at, slack_emoji)
+           VALUES (?, NULL, NULL, '${AVATAR_SEED_PENDING}', 0, ?)
+           ON CONFLICT(email) DO UPDATE SET slack_emoji = excluded.slack_emoji`)
+                .bind(email, emoji)
+                .run();
         },
     };
 }

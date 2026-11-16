@@ -156,3 +156,19 @@ export interface OneTapVerifyOptions extends AccountHintOptions {
 export declare function googleOneTapVerify(opts: OneTapVerifyOptions): ({ request }: {
     request: Request;
 }) => Promise<Response>;
+export interface SlackEmojiLookupOptions {
+    /** The broker's issuer, e.g. `https://login.oa.dev`. */
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    /** Where the broker's endpoints live (default `/oidc`, as in `brokerProvider`). */
+    basePath?: string;
+    fetch?: typeof globalThis.fetch;
+}
+/**
+ * An email's Slack emoji (`:name:`) from the broker, or null, for a person who signed in some other way (Google
+ * directly, an emailed code) and so brought no `oa_slack_emoji` claim. Server-side only: it sends the client secret.
+ * Null too for anyone this client's policy wouldn't admit. Throws on a refusal (bad credentials, `429` past the rate
+ * limit), so a caller can tell "none" from "couldn't ask".
+ */
+export declare function lookupSlackEmoji(email: string, opts: SlackEmojiLookupOptions): Promise<string | null>;

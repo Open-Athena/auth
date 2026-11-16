@@ -8,6 +8,8 @@ export interface Subject {
     name?: string;
     email?: string;
     avatar?: string;
+    /** A person's Slack emoji (`:name:`), from their profile. Never on a grant's subject. */
+    slackEmoji?: string;
 }
 export interface Grant {
     id: string;

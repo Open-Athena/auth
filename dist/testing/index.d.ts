@@ -12,7 +12,7 @@
 import type { AccessEvent, AuditSink } from '../core/audit.js';
 import type { AssetStore, StoredAsset } from '../core/assets.js';
 import type { PendingAuth } from '../core/email-codes.js';
-import type { Profile } from '../core/profile.js';
+import { type Profile } from '../core/profile.js';
 import type { AccessRequest } from '../core/requests.js';
 import type { GrantStore, PendingAuthStore, ProfileStore, RequestStore } from '../core/store.js';
 import type { Grant } from '../core/types.js';

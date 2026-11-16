@@ -46,6 +46,7 @@ export declare function createGrantsController({ client, whoamiEndpoint }: Grant
     revoke: (id: string) => Promise<boolean>;
     rotate: (id: string, input?: RotateInput) => Promise<boolean>;
     reveal: (id: string) => Promise<boolean>;
+    fetchKey: (id: string) => Promise<string>;
     keepToken: (id: string, token: string) => Promise<boolean>;
     forgetToken: (id: string) => Promise<boolean>;
     activity: (id: string) => Promise<void>;
