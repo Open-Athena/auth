@@ -51,3 +51,12 @@ Once the claim and lookup are live, disky's site sends the dispatching person's 
   - Apply `0007` to the broker (`db:remote`) and deploy it.
   - Ryan provides a Slack token and runs `propose`, reviews the file, then `apply`.
   - disky applies `0007` and takes the dist.
+
+## After: apps look it up rather than keep a copy (2026-11-16)
+
+Ryan: apps should ask `login.oa.dev` when they need an emoji, not each keep a copy of the mapping that goes stale.
+- **Batch:** `POST /oidc/slack-emoji` takes `email` repeated, up to 100 (`MAX_LOOKUP_EMAILS`). It answers `slack_emojis` by lower-cased email, plus `slack_emoji` when one was asked. A request counts once against the rate limit, whatever its size.
+- **`lookupSlackEmojis(emails, opts)`:** splits a long list into requests of 100. `lookupSlackEmoji` wraps it.
+- **`slackEmojiClient(opts)`:** `get` / `getMany` / `forget`, with a memory cache (`ttlS`, default 600; nulls cached too). Concurrent asks share a request, and a failure isn't cached. Make one per isolate.
+- **The claim and the app-side column stay, but optional:** a sign-in copies the emoji into the column, and it's only as fresh as that person's last sign-in.
+- **Applied:** 34 mappings were written to the broker on 2026-11-16 (32 of them ahead of a first sign-in).

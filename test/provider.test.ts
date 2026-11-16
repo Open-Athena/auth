@@ -6,7 +6,7 @@
  * between" is asserted as the exact hops a browser makes.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { lookupSlackEmoji, oidcCallback, oidcStart, redirectFromOrigin } from '../src/adapters/oidc.js'
+import { lookupSlackEmoji, lookupSlackEmojis, oidcCallback, oidcStart, redirectFromOrigin, slackEmojiClient } from '../src/adapters/oidc.js'
 import { b64uDecodeBytes, b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
 import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
@@ -1006,10 +1006,10 @@ describe('the Slack emoji', () => {
         await lookup(w, as('app-b', 'bob@openathena.ai')),
         await lookup(w, as('app-a', 'carol@openathena.ai')),
       ]).toEqual([
-        [200, { slack_emoji: ':ada:' }],
-        [200, { slack_emoji: ':bob:' }],
-        [200, { slack_emoji: null }],
-        [200, { slack_emoji: null }],
+        [200, { slack_emoji: ':ada:', slack_emojis: { [ADA]: ':ada:' } }],
+        [200, { slack_emoji: ':bob:', slack_emojis: { 'bob@openathena.ai': ':bob:' } }],
+        [200, { slack_emoji: null, slack_emojis: { 'bob@openathena.ai': null } }],
+        [200, { slack_emoji: null, slack_emojis: { 'carol@openathena.ai': null } }],
       ])
     })
 
@@ -1046,6 +1046,66 @@ describe('the Slack emoji', () => {
       const later = await statuses('app-a', 1)
       const off = await world({ profiles: true, lookupsPerMinute: false })
       expect([a, b, later, (await lookup(off, as('app-a', ADA)))[0]]).toEqual([[200, 200, 429], [200], [200], 404])
+    })
+
+    it('answers a batch in one request, by lower-cased email, up to 100', async () => {
+      const w = await world({ profiles: true, lookupsPerMinute: 1 })
+      await w.broker.setSlackEmoji(ADA, 'ada')
+      const batch = (emails: string[]) => {
+        const body = new URLSearchParams({ client_id: 'app-a', client_secret: 'app-a-secret' })
+        for (const e of emails) body.append('email', e)
+        return w.provider(new Request(`${ISSUER}/oidc/slack-emoji`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString() }))
+          .then(async r => [r!.status, await r!.json()])
+      }
+      expect([
+        await batch(['Ada@OpenAthena.ai', 'carol@openathena.ai', 'ada@openathena.ai']),
+        await batch(Array.from({ length: 101 }, (_, i) => `p${i}@openathena.ai`)),
+      ]).toEqual([
+        [200, { slack_emojis: { [ADA]: ':ada:', 'carol@openathena.ai': null } }],
+        [400, { error: 'invalid_request', error_description: 'at most 100 emails' }],
+      ])
+    })
+
+    it('`lookupSlackEmojis` splits a long list into requests of 100', async () => {
+      const w = await world({ profiles: true })
+      await w.broker.setSlackEmoji('p150@openathena.ai', 'p')
+      const sizes: number[] = []
+      const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        sizes.push(new URLSearchParams(String(init!.body)).getAll('email').length)
+        return w.net(new Request(input, init))
+      }) as typeof globalThis.fetch
+      const emails = Array.from({ length: 230 }, (_, i) => `p${i}@openathena.ai`)
+      const found = await lookupSlackEmojis(emails, { issuer: ISSUER, clientId: 'app-a', clientSecret: 'app-a-secret', fetch })
+      expect([sizes, Object.keys(found).length, Object.entries(found).filter(([, e]) => e)]).toEqual([
+        [100, 100, 30], 230, [['p150@openathena.ai', ':p:']],
+      ])
+    })
+
+    it('`slackEmojiClient` reuses answers (nulls too) until they expire, shares a request, and caches no failure', async () => {
+      const w = await world({ profiles: true })
+      await w.broker.setSlackEmoji(ADA, 'ada')
+      const asked: string[][] = []
+      let fail = false
+      const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        asked.push(new URLSearchParams(String(init!.body)).getAll('email'))
+        return fail ? new Response('{}', { status: 503 }) : w.net(new Request(input, init))
+      }) as typeof globalThis.fetch
+      const emoji = slackEmojiClient({ issuer: ISSUER, clientId: 'app-a', clientSecret: 'app-a-secret', fetch, ttlS: 60 })
+      const both = await Promise.all([emoji.getMany([ADA, 'bob@openathena.ai']), emoji.get('ADA@openathena.ai')])
+      await w.broker.setSlackEmoji(ADA, 'ada_2')
+      const cached = await emoji.get(ADA)
+      at(61)
+      fail = true
+      const failed = await emoji.get(ADA).catch(e => (e as Error).message)
+      fail = false
+      const fresh = await emoji.getMany([ADA, 'bob@openathena.ai'])
+      expect([both, cached, failed, fresh, asked]).toEqual([
+        [{ [ADA]: ':ada:', 'bob@openathena.ai': null }, ':ada:'],
+        ':ada:',
+        'slack-emoji lookup failed (503)',
+        { [ADA]: ':ada_2:', 'bob@openathena.ai': null },
+        [[ADA, 'bob@openathena.ai'], [ADA], [ADA, 'bob@openathena.ai']],
+      ])
     })
 
     it("`lookupSlackEmoji` is an app's side of it", async () => {
