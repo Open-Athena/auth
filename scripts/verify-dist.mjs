@@ -75,6 +75,7 @@ import { bootSessionLog, slog } from '@open-athena/auth/session-log/client'
 import { summarize, fmtDuration } from '@open-athena/auth/session-log/model'
 import { brokerProvider, clientManagementRoutes, managementTokenAuth, generateSigningKey, memoryProviderStore, oidcProviderRoutes } from '@open-athena/auth/provider'
 import { d1ProviderStore } from '@open-athena/auth/provider/d1'
+import { oaCallback, oaLoginOptions, oaStart, silentAttempt } from '@open-athena/auth/oa-login'
 import { createRequire } from 'node:module'
 import { readdirSync, readFileSync } from 'node:fs'
 
@@ -139,6 +140,7 @@ const checks = {
   'framework-free client exported': [createAuthClient, shareUrl, exchangeKeyParam, downscaleImage].every(f => typeof f === 'function'),
   'session log entrypoints':      [fromGate, sessionLogRoutes, validateBatch, d1SessionLogStore, bootSessionLog, slog].every(f => typeof f === 'function'),
   'provider entrypoints':         [brokerProvider, generateSigningKey, memoryProviderStore, oidcProviderRoutes, d1ProviderStore].every(f => typeof f === 'function'),
+  'OA login entrypoints':        [oaCallback, oaLoginOptions, oaStart, silentAttempt].every(f => typeof f === 'function'),
   'group snapshot entrypoints':   [groupPolicy, d1GroupSnapshots, syncGroupSnapshots].every(f => typeof f === 'function'),
   'activity entrypoints':         [activityFeed, activityRoutes, activityActorFromAuth, sessionLogActivity, accessLogActivity, d1ActivityStore, slackActivitySink, discordActivitySink].every(f => typeof f === 'function'),
   'activity stylesheet':          readFileSync(createRequire(import.meta.url).resolve('@open-athena/auth/react/activity.css'), 'utf8').includes('.oa-activity'),
