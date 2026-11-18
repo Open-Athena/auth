@@ -1,4 +1,4 @@
-import { LeaseLostError, SlackApiError, SlackClient } from '@open-athena/thrds'
+import { LeaseLostError, memoryStore, oneKeyStore, SlackApiError, SlackClient, syncSlots, upsert } from '@open-athena/thrds'
 import { activityText } from './shape.js'
 import { type ActivityLinks, bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js'
 import type { ActivityActor, ActivityBurst, ActivitySink, ActivityThreadState } from './types.js'
@@ -63,16 +63,14 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
     token: options.token, channel: options.channel, parse: 'none', timeoutMs: 10_000, retries: 0,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   })
-  type Text = { text: string; username?: string; iconUrl?: string }
-  const call = async (write: () => Promise<{ id: string }>): Promise<string> => {
+  /** Thrds' sync, its failures reported in the sink's words. */
+  const sync = async <T>(run: () => Promise<T>): Promise<T> => {
     try {
-      return (await write()).id
+      return await run()
     } catch (e) {
       throw wrapSlackError(e)
     }
   }
-  const post = (msg: Text, threadTs?: string) => call(() => client.post(msg, threadTs))
-  const edit = (ts: string, text: string) => call(() => client.edit(ts, { text }))
 
   return {
     id: options.id,
@@ -80,35 +78,29 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
     async send(burst, messageId, ctx) {
       const sender = await options.actorSender?.(burst.actor, burst) ?? null
       const asActor = sender !== null
-      // `username`/`icon_url` apply when a message is created; an edit keeps the sender it was posted as.
+      // The sender applies when a message is created; an edit keeps the one it was posted as, and isn't in the hash.
       const as = sender ? { username: sender.username.slice(0, 80), ...(sender.iconUrl ? { iconUrl: sender.iconUrl } : {}) } : {}
       const headline = options.renderBurst?.({ burst, asActor, links }).text ?? renderHeadline(burst, { fmt: SLACK_FMT, links, asActor })
-      const text = bound(headline, MAX_TEXT)
-      const parent = messageId ? (await edit(messageId, text), messageId) : await post({ text, ...as })
-      if (!ctx) return parent
-      const state = structuredClone(ctx.state) as ActivityThreadState
-      const save = async () => { if (!(await ctx.put(state))) throw new Error('activity: delivery lease lost') }
-      if (!messageId) {
-        state.parent = { ts: parent, hash: '' }
-        await save()
+      const parent = { text: bound(headline, MAX_TEXT), ...as }
+      // The sink's id is in the key, so two sinks posting to one channel never adopt each other's messages.
+      const key = `activity:${options.id}:${burst.id}`
+      if (!ctx) {
+        // No saved progress (a direct caller): just the parent, posted or edited.
+        const seed = messageId ? { [key]: { parent: { ts: messageId, hash: '' }, slots: {} } } : {}
+        return (await sync(() => upsert(client, memoryStore(seed), key, parent))).ts
       }
       const replies: [string, string | null][] = [
         ['details', renderDetails(burst, { fmt: SLACK_FMT, links })],
         // `kind:` keeps an app's own kind named `details` from sharing that reply.
         ...lineKinds(burst).map(kind => [`kind:${kind}`, renderKindLines(burst, kind, { fmt: SLACK_FMT, links })] as [string, string | null]),
       ]
-      for (const [slot, reply] of replies) {
-        if (!reply) continue
-        const body = bound(reply, MAX_TEXT)
-        const existing = state.slots[slot]?.ts
-        if (existing) {
-          await edit(existing, body)
-        } else {
-          state.slots[slot] = { ts: await post({ text: body, ...as }, parent), hash: '' }
-          await save()
-        }
-      }
-      return parent
+      const slots = replies.flatMap(([slot, reply]) => reply ? [{ slot, msg: { text: bound(reply, MAX_TEXT), ...as } }] : [])
+      const store = oneKeyStore({ get: () => structuredClone(ctx.state) as ActivityThreadState, put: state => ctx.put(state) })
+      // A reply whose text didn't change isn't touched, and a post interrupted before it was saved is found by its
+      // metadata tag and adopted; where the token can't read history, it's posted again (`scan-or-post`). A kind that
+      // ages out of the burst keeps its last reply (no `prune`), and a message deleted in Slack is posted again.
+      const r = await sync(() => syncSlots(client, store, { key, parent, slots }, { recover: 'scan-or-post', now: () => ctx.nowS() * 1000 }))
+      return r.ts
     },
   }
 }

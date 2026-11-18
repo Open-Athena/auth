@@ -4,14 +4,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { activityFeed, sessionTag, type ActivityEvent, type ActivityKinds } from '../src/activity/index.js'
 import { slackActivitySink } from '../src/activity/slack.js'
 import { d1ActivityStore } from '../src/adapters/d1-activity.js'
+import { slotHash, slotMeta } from './activity-slot-tag.js'
 import { testDbRaw } from './d1-shim.js'
 
 const ORIGIN = 'https://app.example'
 const actor = { id: 'grant:g1', name: 'Ada <Admin>', via: 'grant' }
 const close: (() => void)[] = []
-/** A saved thread: its parent and replies by slot, hashes unknown. */
-const state = (parent: string, slots: Record<string, string>) =>
-  ({ slots: Object.fromEntries(Object.entries(slots).map(([slot, ts]) => [slot, { ts, hash: '' }])), parent: { ts: parent, hash: '' } })
 afterEach(() => { close.splice(0).forEach(done => done()) })
 
 function setup(more: { timeZone?: string; kinds?: ActivityKinds } = {}) {
@@ -41,9 +39,14 @@ function setup(more: { timeZone?: string; kinds?: ActivityKinds } = {}) {
   const feed = activityFeed({ store, sinks: [sink], now: () => clock, ...(more.kinds ? { kinds: more.kinds } : {}) })
   const record = (id: string, ts: number, kind: string, more: Partial<ActivityEvent> = {}) =>
     feed.record({ id, actor, origin: ORIGIN, ts, kind, sessionId: 'tab-1', ...more })
-  const parts = () => raw.prepare('SELECT message_id, parts FROM activity_posts').all()
+  /** The one saved thread, its `parts` parsed. */
+  const state = () => {
+    const [row, ...more] = raw.prepare('SELECT message_id, parts FROM activity_posts').all() as { message_id: string; parts: string }[]
+    if (more.length) throw new Error('more than one thread')
+    return { message_id: row!.message_id, state: JSON.parse(row!.parts) as unknown }
+  }
   return {
-    feed, record, calls, parts,
+    feed, record, calls, state,
     at: (s: number) => { clock = s },
     failOn: (f: (body: Record<string, unknown>) => boolean) => { failNext = f },
   }
@@ -61,19 +64,27 @@ describe('Slack activity threads', () => {
     const parent = `share link · 1 page load · 1 URL change · 1 error · 1970-01-01 00:16–00:17Z · <${ORIGIN}/admin/activity?burst=${burstId}|activity>`
     const details = `Pages: <${ORIGIN}/pm|/pm> → <${ORIGIN}/pm/2|/pm/2>\nSession: <${ORIGIN}/admin/sessions?sid=tab-1|🐳sj>`
     const errors = `*1 error*\n• 🐳sj <${ORIGIN}/admin/sessions?sid=tab-1|00:17> TypeError: &lt;b&gt;boom&lt;/b&gt; &amp; co on <${ORIGIN}/pm/2|/pm/2>`
+    const key = `activity:staff:${burstId}`
     expect(t.calls).toEqual([
-      ['chat.postMessage', { ...common, text: parent, ...as }],
-      ['chat.postMessage', { ...common, thread_ts: '1.000', text: details, ...as }],
-      ['chat.postMessage', { ...common, thread_ts: '1.000', text: errors, ...as }],
+      ['chat.postMessage', { ...common, text: parent, ...as, metadata: slotMeta(key, null, parent) }],
+      ['chat.postMessage', { ...common, thread_ts: '1.000', text: details, ...as, metadata: slotMeta(key, 'details', details) }],
+      ['chat.postMessage', { ...common, thread_ts: '1.000', text: errors, ...as, metadata: slotMeta(key, 'kind:error', errors) }],
     ])
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000', 'kind:error': '3.000' })) }])
+    expect(t.state()).toEqual({
+      message_id: '1.000',
+      state: {
+        slots: { details: { ts: '2.000', hash: slotHash(key, 'details', details) }, 'kind:error': { ts: '3.000', hash: slotHash(key, 'kind:error', errors) } },
+        channel: 'C1',
+        parent: { ts: '1.000', hash: slotHash(key, null, parent) },
+      },
+    })
 
     t.calls.length = 0
     await t.record('e2', 1030, 'error', { line: 'TypeError: <b>boom</b> & co', path: '/pm/2' })
     await t.feed.deliver(burstId!)
+    // The details reply didn't change, so it isn't touched.
     expect(t.calls.map(([m, b]) => [m, b.ts, b.text])).toEqual([
       ['chat.update', '1.000', parent.replace('1 error', '2 errors')],
-      ['chat.update', '2.000', details],
       ['chat.update', '3.000', errors.replace('*1 error*', '*2 errors*').replace(/$/, ' ×2')],
     ])
   })
@@ -98,17 +109,21 @@ describe('Slack activity threads', () => {
     const { burstId } = await t.record('e1', 1000, 'error', { line: 'boom', path: '/pm' })
     t.failOn(b => typeof b.text === 'string' && b.text.startsWith('*1 error*'))
     expect(await t.feed.deliver(burstId!).catch((e: Error) => e.message)).toBe('activity: Slack rejected message (ratelimited)')
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000' })) }])
+    // Slack refused the reply outright, so nothing is pending: the parent and details are saved, with what they say.
+    const key = `activity:staff:${burstId}`
+    const [parent, details, errors] = t.calls.map(([, b]) => String(b.text))
+    const saved = { parent: { ts: '1.000', hash: slotHash(key, null, parent!) }, details: { ts: '2.000', hash: slotHash(key, 'details', details!) } }
+    expect(t.state()).toEqual({ message_id: '1.000', state: { slots: { details: saved.details }, channel: 'C1', parent: saved.parent } })
     t.calls.length = 0
     t.at(1030)
     await t.feed.flush()
-    expect(t.calls.map(([m, b]) => [m, b.ts ?? b.thread_ts])).toEqual([
-      ['chat.update', '1.000'],
-      ['chat.update', '2.000'],
-      ['chat.postMessage', '1.000'],
-    ])
+    // Only the refused reply is sent; the parent and details didn't change.
+    expect(t.calls.map(([m, b]) => [m, b.thread_ts, b.text])).toEqual([['chat.postMessage', '1.000', errors]])
     // The refused call took no Slack timestamp, so the retried reply is the third message.
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000', 'kind:error': '3.000' })) }])
+    expect(t.state()).toEqual({
+      message_id: '1.000',
+      state: { slots: { details: saved.details, 'kind:error': { ts: '3.000', hash: slotHash(key, 'kind:error', errors!) } }, channel: 'C1', parent: saved.parent },
+    })
   })
 
   it("several tabs share one thread, each line led by its session's tag; a server line takes the latest tab's", async () => {

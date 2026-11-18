@@ -5,6 +5,7 @@ import { discordActivitySink } from '../src/activity/discord.js'
 import { d1ActivityStore } from '../src/adapters/d1-activity.js'
 import { createGate } from '../src/core/gate.js'
 import { memoryGrantStore } from '../src/testing/index.js'
+import { slotMeta } from './activity-slot-tag.js'
 import { testDbRaw } from './d1-shim.js'
 
 const actor = { id: 'grant:example', name: 'Recipient', via: 'grant' }
@@ -74,7 +75,8 @@ describe('activity sink protocols', () => {
     }) as typeof fetch })
     await sink.send(burst, null)
     await sink.send(burst, '123.456')
-    const body = { channel: 'C123', parse: 'none', unfurl_links: false, unfurl_media: false, text: '*Recipient* (share link) · 1 page load · 1970-01-01 00:16Z' }
+    const text = '*Recipient* (share link) · 1 page load · 1970-01-01 00:16Z'
+    const body = { channel: 'C123', parse: 'none', unfurl_links: false, unfurl_media: false, text, metadata: slotMeta(`activity:staff:${burst.id}`, null, text) }
     expect(calls).toEqual([
       ['https://slack.com/api/chat.postMessage', body],
       ['https://slack.com/api/chat.update', { ...body, ts: '123.456' }],
