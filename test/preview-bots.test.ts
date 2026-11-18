@@ -88,9 +88,12 @@ describe('a preview bot fetching a share link', () => {
     const untouched = (await gate.list({ includeRevoked: true }))[0]!
     const human = await gate.redeem(token, get(`/sre?key=${token}`, CHROME))
     expect([untouched.redeems, untouched.firstUsedAt, human.ok]).toEqual([0, null, true])
-    expect(await log()).toEqual([
+    // The three previews ran concurrently, so their rows land in any order.
+    const [mint, ...rest] = await log()
+    const redeem = rest.pop()
+    expect([mint, rest.sort((a, b) => String(a.path).localeCompare(String(b.path))), redeem]).toEqual([
       { event: 'mint', grantId: grant.id, path: null, reason: null },
-      ...['/', '/sre', '/dir-eng-sf'].map(path => ({ event: 'preview', grantId: grant.id, path, reason: 'Slack' })),
+      ['/', '/dir-eng-sf', '/sre'].map(path => ({ event: 'preview', grantId: grant.id, path, reason: 'Slack' })),
       { event: 'redeem', grantId: grant.id, path: '/sre', reason: null },
     ])
   })
