@@ -189,5 +189,8 @@
     "vue": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@open-athena/thrds": "github:Open-Athena/thrds#e880960"
   }
 }

@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@open-athena/thrds':
+        specifier: github:Open-Athena/thrds#e880960
+        version: https://codeload.github.com/Open-Athena/thrds/tar.gz/e880960
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260601.0
@@ -1007,6 +1011,11 @@ packages:
     engines: {node: ^22.20 || ^24.12 || >=25}
     cpu: [x64]
     os: [linux]
+
+  '@open-athena/thrds@https://codeload.github.com/Open-Athena/thrds/tar.gz/e880960':
+    resolution: {tarball: https://codeload.github.com/Open-Athena/thrds/tar.gz/e880960}
+    version: 0.2.0-dist.9073e29
+    engines: {node: '>=18'}
 
   '@oxc-project/types@0.144.0':
     resolution: {integrity: sha512-nuhZIOLuI6TFQ32I/WnUx+SCPY7SdSKwgnFHydAuoS1+Z4BRcaP+RRJmGzl9lw+0OFF7UmaESf7KQRXaNLHypg==}
@@ -2812,6 +2821,8 @@ snapshots:
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
+
+  '@open-athena/thrds@https://codeload.github.com/Open-Athena/thrds/tar.gz/e880960': {}
 
   '@oxc-project/types@0.144.0': {}
 
