@@ -7,9 +7,11 @@
  * routes, or UI. Policies are captured at ingestion, not retroactive.
  * Dedupe lasts until retention deletes the receipt. Reusing an event ID
  * with changed content is still a duplicate (first accepted write wins).
- * Delivery leases fence database acknowledgements, not remote APIs: a
- * timeout/crash after a remote create, or a send outliving its lease, may
- * duplicate a message. A stale remote edit may need a later flush to repair.
+ * Delivery leases fence database acknowledgements, not remote APIs. The Slack
+ * sink saves a pending post first and tags every message, so a post that
+ * landed before a timeout or crash is adopted on the next send (given a history
+ * scope); a Discord create may still duplicate. A stale remote edit may need a
+ * later flush to repair.
  */
 import { activityInteger, activityText, checkActivityEvent, checkActivityGrouping, checkActivityKind, checkActivityKinds } from './shape.js'
 import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, RESUME_S, type ActivityGrouping, type ActivityEvent, type ActivityKind, type ActivityKinds,

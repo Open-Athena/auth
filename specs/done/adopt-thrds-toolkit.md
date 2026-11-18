@@ -209,3 +209,15 @@ Gaps above, as resolved in thrds `ts` (`b1a1731`, `a6a190c`). Pin `"github:Open-
 ## While migrating: toolkit gaps go back to thrds
 
 Work against the pinned dist SHA; `@open-athena/thrds@^0.2.0` on npm comes only after every consumer runs on a dist SHA. If the toolkit is missing something or gets something wrong, don't patch `node_modules` or fork its code here. Write `specs/<this-project>-<topic>.md` in the thrds TS worktree (`~/c/thrds/wt/ts/specs/`) with the case and a repro (a `fakeChannel` test is ideal); the thrds session fixes it and pushes a new `ts-dist` SHA to bump to. A small local workaround meanwhile is fine; list it in this spec so it gets removed later.
+
+## Done (2026-11-18)
+
+Steps 1–5 landed as planned, pinned to `ts-dist` `e880960` (`0.2.0-dist.9073e29`, after every gap fix above).
+
+- **1.** `@open-athena/thrds` is a `dependency`, at that dist SHA.
+- **2.** `ActivityThreadState` is `SlotState`, including the `channel` field the toolkit added after this spec was written (`test/activity-state.test.ts` pins the type equality). `ActivityClaim.state`, `checkpoint(burstId, sink, token, state)` and `ActivitySendContext { state, put, nowS }` replace `parts` / `save`. `d1ActivityStore.claim` reads legacy flat rows and reconciles the parent with `message_id`.
+- **3.** The transport is `SlackClient` (`parse: 'none'`, `timeoutMs: 10_000`, `retries: 0`), with `wrapSlackError` (exported from `/activity/slack`) at the sink boundary. A transport failure reads `activity: Slack request failed`.
+- **4.** `send` runs `syncSlots(client, oneKeyStore(…), { key: 'activity:<sink>:<burst>', parent, slots }, { recover: 'scan-or-post', now })`; `onGone` stays `repost`, and there's no `prune`. Without a send context (a direct caller), it's `upsert` over a `memoryStore` seeded with `messageId`. `test/activity-recovery.test.ts` covers (a)–(f) over thrds' `fakeChannel` routes; (b) and (c) delete the message from the fake channel rather than intercepting, and (d) fences the claim from inside a post.
+- **5.** README, `docs/activity-adoption.md` and the `index.ts` header describe hash-skip, adoption with a history scope, re-posting, and the metadata tags.
+- Also: `test/preview-bots.test.ts` now compares a concurrent preview burst's rows sorted. It raced before; the access log's per-browser id ([view-dedupe-per-browser](view-dedupe-per-browser.md)) added an await that made it show.
+- **6. Not yet:** the release waits on `@open-athena/thrds@0.2.0` on npm (pin `^0.2.0`, then bump auth to `0.2.0`; the claim, checkpoint and send-context changes are breaking for third-party stores and sinks). No local workarounds for toolkit gaps were needed.
