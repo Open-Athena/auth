@@ -1,6 +1,6 @@
 import { activityText } from './shape.js'
 import { type ActivityLinks, bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js'
-import type { ActivityActor, ActivityBurst, ActivitySink } from './types.js'
+import type { ActivityActor, ActivityBurst, ActivitySink, ActivityThreadState } from './types.js'
 
 /** Who a burst's posts are sent as. Needs the bot's `chat:write.customize` scope; without it Slack posts as the bot. */
 export interface ActivitySender {
@@ -74,8 +74,12 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
       const text = bound(headline, MAX_TEXT)
       const parent = messageId ? (await call('chat.update', { ts: messageId, text }), messageId) : await call('chat.postMessage', { text, ...as })
       if (!ctx) return parent
-      const parts = { ...ctx.parts }
-      if (!messageId) await ctx.save(parent, parts)
+      const state = structuredClone(ctx.state) as ActivityThreadState
+      const save = async () => { if (!(await ctx.put(state))) throw new Error('activity: delivery lease lost') }
+      if (!messageId) {
+        state.parent = { ts: parent, hash: '' }
+        await save()
+      }
       const replies: [string, string | null][] = [
         ['details', renderDetails(burst, { fmt: SLACK_FMT, links })],
         // `kind:` keeps an app's own kind named `details` from sharing that reply.
@@ -84,12 +88,12 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
       for (const [slot, reply] of replies) {
         if (!reply) continue
         const body = bound(reply, MAX_TEXT)
-        const existing = parts[slot]
+        const existing = state.slots[slot]?.ts
         if (existing) {
           await call('chat.update', { ts: existing, text: body })
         } else {
-          parts[slot] = await call('chat.postMessage', { thread_ts: parent, text: body, ...as })
-          await ctx.save(parent, parts)
+          state.slots[slot] = { ts: await call('chat.postMessage', { thread_ts: parent, text: body, ...as }), hash: '' }
+          await save()
         }
       }
       return parent

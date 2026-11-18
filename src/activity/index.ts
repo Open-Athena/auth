@@ -113,13 +113,14 @@ export function activityFeed(options: ActivityFeedOptions) {
         }
         burst.notice = reasons.length ? { color: 'red', reasons } : { color: 'green', reasons: [] }
       }
-      let parts: Record<string, string> = { ...claim.parts }
+      let state = structuredClone(claim.state)
       const ctx: ActivitySendContext = {
-        get parts() { return parts },
-        async save(messageId, next) {
-          parts = { ...next }
-          if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts))) throw new Error('activity: delivery lease lost')
+        get state() { return state },
+        async put(next) {
+          state = structuredClone(next)
+          return store.checkpoint(burstId, sink.id, claim.token, state)
         },
+        nowS: now,
       }
       const messageId = await sink.send(burst, posted, ctx)
       const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version)

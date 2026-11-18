@@ -9,6 +9,9 @@ import { testDbRaw } from './d1-shim.js'
 const ORIGIN = 'https://app.example'
 const actor = { id: 'grant:g1', name: 'Ada <Admin>', via: 'grant' }
 const close: (() => void)[] = []
+/** A saved thread: its parent and replies by slot, hashes unknown. */
+const state = (parent: string, slots: Record<string, string>) =>
+  ({ slots: Object.fromEntries(Object.entries(slots).map(([slot, ts]) => [slot, { ts, hash: '' }])), parent: { ts: parent, hash: '' } })
 afterEach(() => { close.splice(0).forEach(done => done()) })
 
 function setup(more: { timeZone?: string; kinds?: ActivityKinds } = {}) {
@@ -63,7 +66,7 @@ describe('Slack activity threads', () => {
       ['chat.postMessage', { ...common, thread_ts: '1.000', text: details, ...as }],
       ['chat.postMessage', { ...common, thread_ts: '1.000', text: errors, ...as }],
     ])
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify({ details: '2.000', 'kind:error': '3.000' }) }])
+    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000', 'kind:error': '3.000' })) }])
 
     t.calls.length = 0
     await t.record('e2', 1030, 'error', { line: 'TypeError: <b>boom</b> & co', path: '/pm/2' })
@@ -95,7 +98,7 @@ describe('Slack activity threads', () => {
     const { burstId } = await t.record('e1', 1000, 'error', { line: 'boom', path: '/pm' })
     t.failOn(b => typeof b.text === 'string' && b.text.startsWith('*1 error*'))
     expect(await t.feed.deliver(burstId!).catch((e: Error) => e.message)).toBe('activity: Slack rejected message (ratelimited)')
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify({ details: '2.000' }) }])
+    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000' })) }])
     t.calls.length = 0
     t.at(1030)
     await t.feed.flush()
@@ -105,7 +108,7 @@ describe('Slack activity threads', () => {
       ['chat.postMessage', '1.000'],
     ])
     // The refused call took no Slack timestamp, so the retried reply is the third message.
-    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify({ details: '2.000', 'kind:error': '3.000' }) }])
+    expect(t.parts()).toEqual([{ message_id: '1.000', parts: JSON.stringify(state('1.000', { details: '2.000', 'kind:error': '3.000' })) }])
   })
 
   it("several tabs share one thread, each line led by its session's tag; a server line takes the latest tab's", async () => {
