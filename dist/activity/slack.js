@@ -1,8 +1,22 @@
+import { LeaseLostError, memoryStore, oneKeyStore, SlackApiError, SlackClient, syncSlots, upsert } from '@open-athena/thrds';
 import { activityText } from './shape.js';
 import { bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js';
-/** Slack's error codes are short fixed strings (`not_in_channel`); anything else is left out of logs. */
-function slackErrorCode(error) {
-    return typeof error === 'string' && /^[a-z_]{1,64}$/.test(error) ? ` (${error})` : '';
+/**
+ * A Slack failure as the sink reports it. `SlackApiError` carries Slack's whole reply, so only its short error code
+ * (`not_in_channel`, and only one that looks like one) or HTTP status is kept.
+ */
+export function wrapSlackError(e) {
+    if (e instanceof LeaseLostError)
+        return new Error('activity: delivery lease lost');
+    if (!(e instanceof SlackApiError))
+        return e;
+    if (e.kind === 'timeout')
+        return new Error('activity: Slack timeout');
+    if (e.kind === 'transport')
+        return new Error('activity: Slack request failed');
+    if (e.status !== 200)
+        return new Error(`activity: Slack HTTP ${e.status}`);
+    return new Error(`activity: Slack rejected message${e.slackCode ? ` (${e.slackCode})` : ''}`);
 }
 /** Slack's limit is far higher; this keeps one message readable. */
 const MAX_TEXT = 3500;
@@ -23,55 +37,49 @@ export function slackActivitySink(options) {
         ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     };
     checkTimeZone(options.timeZone);
-    async function call(method, body) {
-        const response = await (options.fetch ?? fetch)(`https://slack.com/api/${method}`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${options.token}`, 'content-type': 'application/json' },
-            signal: AbortSignal.timeout(10_000),
-            body: JSON.stringify({ channel: options.channel, parse: 'none', unfurl_links: false, unfurl_media: false, ...body }),
-        });
-        if (!response.ok)
-            throw new Error(`activity: Slack HTTP ${response.status}`);
-        const result = await response.json();
-        if (result.ok !== true || typeof result.ts !== 'string' || !result.ts)
-            throw new Error(`activity: Slack rejected message${slackErrorCode(result.error)}`);
-        return result.ts;
-    }
+    // No retries: the feed's `defer` backoff is the retry policy, and an in-call wait could outlive the delivery lease.
+    const client = new SlackClient({
+        token: options.token, channel: options.channel, parse: 'none', timeoutMs: 10_000, retries: 0,
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+    });
+    /** Thrds' sync, its failures reported in the sink's words. */
+    const sync = async (run) => {
+        try {
+            return await run();
+        }
+        catch (e) {
+            throw wrapSlackError(e);
+        }
+    };
     return {
         id: options.id,
         staffOnly: true,
         async send(burst, messageId, ctx) {
             const sender = await options.actorSender?.(burst.actor, burst) ?? null;
             const asActor = sender !== null;
-            // `username`/`icon_url` apply when a message is created; an edit keeps the sender it was posted as.
-            const as = sender ? { username: sender.username.slice(0, 80), ...(sender.iconUrl ? { icon_url: sender.iconUrl } : {}) } : {};
+            // The sender applies when a message is created; an edit keeps the one it was posted as, and isn't in the hash.
+            const as = sender ? { username: sender.username.slice(0, 80), ...(sender.iconUrl ? { iconUrl: sender.iconUrl } : {}) } : {};
             const headline = options.renderBurst?.({ burst, asActor, links }).text ?? renderHeadline(burst, { fmt: SLACK_FMT, links, asActor });
-            const text = bound(headline, MAX_TEXT);
-            const parent = messageId ? (await call('chat.update', { ts: messageId, text }), messageId) : await call('chat.postMessage', { text, ...as });
-            if (!ctx)
-                return parent;
-            const parts = { ...ctx.parts };
-            if (!messageId)
-                await ctx.save(parent, parts);
+            const parent = { text: bound(headline, MAX_TEXT), ...as };
+            // The sink's id is in the key, so two sinks posting to one channel never adopt each other's messages.
+            const key = `activity:${options.id}:${burst.id}`;
+            if (!ctx) {
+                // No saved progress (a direct caller): just the parent, posted or edited.
+                const seed = messageId ? { [key]: { parent: { ts: messageId, hash: '' }, slots: {} } } : {};
+                return (await sync(() => upsert(client, memoryStore(seed), key, parent))).ts;
+            }
             const replies = [
                 ['details', renderDetails(burst, { fmt: SLACK_FMT, links })],
                 // `kind:` keeps an app's own kind named `details` from sharing that reply.
                 ...lineKinds(burst).map(kind => [`kind:${kind}`, renderKindLines(burst, kind, { fmt: SLACK_FMT, links })]),
             ];
-            for (const [slot, reply] of replies) {
-                if (!reply)
-                    continue;
-                const body = bound(reply, MAX_TEXT);
-                const existing = parts[slot];
-                if (existing) {
-                    await call('chat.update', { ts: existing, text: body });
-                }
-                else {
-                    parts[slot] = await call('chat.postMessage', { thread_ts: parent, text: body, ...as });
-                    await ctx.save(parent, parts);
-                }
-            }
-            return parent;
+            const slots = replies.flatMap(([slot, reply]) => reply ? [{ slot, msg: { text: bound(reply, MAX_TEXT), ...as } }] : []);
+            const store = oneKeyStore({ get: () => structuredClone(ctx.state), put: state => ctx.put(state) });
+            // A reply whose text didn't change isn't touched, and a post interrupted before it was saved is found by its
+            // metadata tag and adopted; where the token can't read history, it's posted again (`scan-or-post`). A kind that
+            // ages out of the burst keeps its last reply (no `prune`), and a message deleted in Slack is posted again.
+            const r = await sync(() => syncSlots(client, store, { key, parent, slots }, { recover: 'scan-or-post', now: () => ctx.nowS() * 1000 }));
+            return r.ts;
         },
     };
 }

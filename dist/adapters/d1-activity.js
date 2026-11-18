@@ -1,6 +1,26 @@
 import { activityInteger, activityPath, activityText, checkActivityGrouping, checkActivityKind, checkActivityWrite } from '../activity/shape.js';
 import { fmtGap } from '../activity/render.js';
 import { ACTIVITY_LINES, ACTIVITY_SESSIONS } from '../activity/types.js';
+/** `message_id` of a burst the feed decided not to post (`QUIET` in `activity/index.ts`). */
+const QUIET = '-';
+/**
+ * A row's `parts` as thread state. The current shape has an object `slots`; a legacy row's is a flat `{ slot: ts }`
+ * (slot names are only `details` and `kind:*`, so none has a `slots` key), read with unknown hashes, so the first send
+ * after the upgrade edits each message once. `message_id` stays canonical for the parent: none (or QUIET) drops it, and
+ * one that disagrees replaces it, hash unknown.
+ */
+function threadState(parts, messageId) {
+    const raw = JSON.parse(parts);
+    const state = raw.slots !== null && typeof raw.slots === 'object'
+        ? raw
+        : { slots: Object.fromEntries(Object.entries(raw).flatMap(([slot, ts]) => typeof ts === 'string' ? [[slot, { ts, hash: '' }]] : [])) };
+    const parent = messageId === null || messageId === QUIET ? null : messageId;
+    if (parent === null)
+        delete state.parent;
+    else if (state.parent?.ts !== parent)
+        state.parent = { ts: parent, hash: '' };
+    return state;
+}
 /**
  * Optional `migrations/activity/` track. All grouping/dedupe and delivery claims
  * use transactional batches, not isolate-local locks or read/modify/write JSON.
@@ -167,7 +187,7 @@ export function d1ActivityStore(db) {
                 sql('SELECT message_id, failures, parts FROM activity_posts WHERE burst_id = ? AND sink = ? AND claim_token = ?', burstId, sink, token),
             ]);
             const row = rows[1].results[0];
-            return row ? { token, messageId: row.message_id, failures: row.failures, parts: JSON.parse(row.parts) } : null;
+            return row ? { token, messageId: row.message_id, failures: row.failures, state: threadState(row.parts, row.message_id) } : null;
         },
         async complete(burstId, sink, token, messageId, version) {
             activityText(messageId, 'message id');
@@ -200,10 +220,13 @@ export function d1ActivityStore(db) {
             await sql(`INSERT INTO activity_service_state (actor_id, origin, sink, red, updated_ts) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(actor_id, origin, sink) DO UPDATE SET red = excluded.red, updated_ts = excluded.updated_ts`, actorId, origin, sink, red ? 1 : 0, nowS).run();
         },
-        async checkpoint(burstId, sink, token, messageId, parts) {
-            activityText(messageId, 'message id');
+        async checkpoint(burstId, sink, token, state) {
+            // `message_id` mirrors the parent, and may be NULL under a live claim: a parent's `pending` is saved before it exists.
+            const parent = state.parent?.ts ?? null;
+            if (parent !== null)
+                activityText(parent, 'message id');
             const result = await sql(`UPDATE activity_posts SET message_id = ?, parts = ?
-        WHERE burst_id = ? AND sink = ? AND claim_token = ?`, messageId, JSON.stringify(parts), burstId, sink, token).run();
+        WHERE burst_id = ? AND sink = ? AND claim_token = ?`, parent, JSON.stringify(state), burstId, sink, token).run();
             return result.meta.changes === 1;
         },
         async defer(burstId, sink, token, retryAtS) {

@@ -1,6 +1,6 @@
 {
   "name": "@open-athena/auth",
-  "version": "0.1.0-dist.c3dd970",
+  "version": "0.1.0-dist.cc7da45",
   "description": "Named share links, SSO, and an access log for gated dashboards.",
   "license": "MIT",
   "repository": "github:Open-Athena/auth",
@@ -156,5 +156,8 @@
     "vue": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@open-athena/thrds": "github:Open-Athena/thrds#e880960"
   }
 }

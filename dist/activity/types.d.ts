@@ -93,13 +93,36 @@ export type ActivityRecordResult = {
     status: 'stored' | 'duplicate';
     burstId: string;
 };
+/**
+ * A threaded sink's progress on one burst: the parent message, its replies by slot (`details`, `kind:<kind>`), each
+ * with a hash of what was last sent, and a post that started but wasn't recorded. Structurally thrds' `SlotState` (a
+ * test pins the equality), so this file needn't import thrds.
+ */
+export interface ActivityThreadState {
+    /** The channel the thread lives in. */
+    channel?: string;
+    parent?: {
+        ts: string;
+        hash: string;
+    };
+    slots: Record<string, {
+        ts: string;
+        hash: string;
+    }>;
+    /** `slot` null is the parent; `at` is epoch seconds. */
+    pending?: {
+        slot: string | null;
+        hash: string;
+        at: number;
+    };
+}
 export interface ActivityClaim {
     token: string;
     messageId: string | null;
     /** Consecutive failed sends of this burst to this sink. */
     failures: number;
-    /** Thread replies already posted, by slot (see `ActivitySendContext`). */
-    parts: Record<string, string>;
+    /** A threaded sink's saved progress (see `ActivitySendContext`). */
+    state: ActivityThreadState;
 }
 /** After the nth consecutive failure, a burst waits `min(2^(n-1) × 30s, 15 min)` before its next send to that sink. */
 export declare const ACTIVITY_RETRY_S = 30;
@@ -128,8 +151,11 @@ export interface ActivityStore {
     /** Whether the actor's last service notice (on this origin, in this sink) was red. */
     serviceRed(actorId: string, origin: string, sink: string): Promise<boolean>;
     setServiceRed(actorId: string, origin: string, sink: string, red: boolean, nowS: number): Promise<void>;
-    /** Save a send's progress under its lease, so a failure partway through doesn't post the parent twice. False when the lease is lost. */
-    checkpoint(burstId: string, sink: string, token: string, messageId: string, parts: Record<string, string>): Promise<boolean>;
+    /**
+     * Save a send's progress under its lease, so a failure partway through doesn't post the parent twice; the parent's
+     * ts (`state.parent`) is also the burst's message id. False when the lease is lost.
+     */
+    checkpoint(burstId: string, sink: string, token: string, state: ActivityThreadState): Promise<boolean>;
     /** Drop the claim after a failed send, count the failure, and refuse claims until `retryAtS`. */
     defer(burstId: string, sink: string, token: string, retryAtS: number): Promise<void>;
     /** Bounded incremental purge by server receipt time; no remote messages are deleted. */
@@ -146,13 +172,15 @@ export interface ActivitySink {
     staffOnly: true;
     /**
      * Post the burst (`messageId` null) or edit its message, returning the message id. A threaded sink posts
-     * replies too, recording each in `ctx.parts` and saving progress with `ctx.save` as it goes.
+     * replies too, keeping its progress in `ctx.state` and saving it with `ctx.put` as it goes.
      */
     send(burst: ActivityBurst, messageId: string | null, ctx?: ActivitySendContext): Promise<string>;
 }
 export interface ActivitySendContext {
-    /** Replies already posted for this burst, by slot (`details`, or `kind:<kind>`). */
-    parts: Readonly<Record<string, string>>;
-    /** Persist progress under the current lease: the parent id and every reply posted so far. */
-    save(messageId: string, parts: Record<string, string>): Promise<void>;
+    /** The thread's saved progress: its parent, its replies by slot (`details`, or `kind:<kind>`), a pending post. */
+    state: Readonly<ActivityThreadState>;
+    /** Persist progress under the delivery lease; false once the lease is lost. */
+    put(state: ActivityThreadState): Promise<boolean>;
+    /** The feed's clock, epoch seconds. */
+    nowS(): number;
 }

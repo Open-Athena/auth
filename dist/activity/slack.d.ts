@@ -27,6 +27,11 @@ export interface SlackActivityOptions extends ActivityLinks {
     fetch?: typeof fetch;
 }
 /**
+ * A Slack failure as the sink reports it. `SlackApiError` carries Slack's whole reply, so only its short error code
+ * (`not_in_channel`, and only one that looks like one) or HTTP status is kept.
+ */
+export declare function wrapSlackError(e: unknown): unknown;
+/**
  * One Slack thread per burst, edited as it grows: a parent line (who, counts, when), a details reply (pages,
  * sessions), and one reply per notify=`line` kind. Posts as the actor when `actorSender` resolves one.
  */

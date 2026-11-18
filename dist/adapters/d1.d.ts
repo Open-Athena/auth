@@ -31,7 +31,7 @@ export declare function rollupAccessLog(db: D1Database, { olderThanDays, nowS }?
 export declare function d1AuditQuery(db: D1Database): AuditQuery;
 /**
  * Access-log sink. `view` rows carry an hour bucket and hit a partial unique
- * index, so the per-(session, path, hour) dedupe is enforced by the DB rather
+ * index, so the per-(session, browser, path, hour) dedupe is enforced by the DB rather
  * than by a read-then-write race in the worker.
  */
 export declare function d1AuditSink(db: D1Database): AuditSink;
