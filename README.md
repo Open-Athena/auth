@@ -296,6 +296,25 @@ Tested against the OpenID Foundation's **Basic OP** conformance plan, suite **v5
 
 **Delegated broker registration.** `/provider` also exports `clientManagementRoutes` and `managementTokenAuth`: an optional hash-only, expiring machine capability scoped to exact app IDs, callback URLs and operations. Matching create retries never rotate a credential; explicit rotation uses atomic compare-and-swap and audit. Metadata responses contain no secret hashes, and browser cookies grant no access. The reference broker leaves the API disabled until configured. See [the agent-facing contract](docs/client-management.md) for wiring, secret delivery/recovery and the optional MCP boundary (not implemented).
 
+### An App Signing In Through login.oa.dev
+
+`@open-athena/auth/oa-login` is the relying-party side for an OA app (`specs/oa-login-rp.md`): "Sign in with OA" through the broker, beside whatever else the app offers (Google for people outside OA, share links, email codes), plus one silent attempt before the wall, so someone signed in to any OA app is signed in here without a click. It takes a `Request` and returns a `Response`, so a Worker and a Pages Function use it alike.
+
+```ts
+import { clearedOnSignIn, markedSignedOut, oaCallback, oaLoginOptions, oaStart, silentAttempt } from '@open-athena/auth/oa-login'
+
+// OA_LOGIN_ISSUER = "https://login.oa.dev", OA_LOGIN_CLIENT_ID (vars); OA_LOGIN_CLIENT_SECRET (secret). Any unset: null, no route, no button.
+const oa = oaLoginOptions(gate, env, req, { signInPath: '/signin' })
+if (path === '/auth/oa') return oaStart(oa, req)                  // the "Sign in with OA" button links here, with ?next=
+if (path === '/auth/oa/callback') return oaCallback(oa, req)
+// Before serving a walled page: one `prompt=none` round trip, at most every five minutes, never after a deliberate sign-out.
+const bounce = await silentAttempt(req, { notWalled: /^\/(api|auth|assets)(\/|$)|^\/signin$/, anonymous: () => false, configured: () => !!oa, presents: async () => (await gate.authenticate(req)) !== null })
+if (bounce) return bounce
+// Logout: `markedSignedOut(req, !!oa, res)`. Every response: `clearedOnSignIn(req, 'oa_auth', () => !!oa, res)`.
+```
+
+Register the app with `broker/scripts/oa-client.mjs create <id> --callback https://<host>/auth/oa/callback | wrangler secret put OA_LOGIN_CLIENT_SECRET`. The broker admits only `openathena.ai`; anyone else keeps the app's other paths, and the gate's policy decides admission whichever way someone signs in. PR previews take a `<id>-preview` client (`OA_LOGIN_PREVIEW_CLIENT_*`, `{ preview: true }`).
+
 ## Minimal Demo Routes
 
 The demo's [root][demo-root] and [Vanilla][demo-vanilla] routes use the framework-free client; [Vue][demo-vue] and [React][demo-react] show their respective wrappers. Framework links navigate to separate documents so vanilla loads neither framework, and Vue and React do not load each other.
@@ -455,7 +474,7 @@ A verified address that policy rejects redirects with `?denied=<email>` rather t
 
 `gate.update(id, patch)` changes a link's terms after the fact — expiry, cap, TTL, memo — so extending a deadline doesn't mean minting and re-sending a second link. (`sessionTtlS` is baked into the cookie at redeem, so it only affects future redemptions.)
 
-**The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, path, hour) by a partial unique index, and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`. In their place each row keeps where Cloudflare places the client (`request.cf` city, region, and network operator, e.g. "Comcast"), alongside the country, user agent and referer; `GET <basePath>/log` returns all of them, so an admin can tell whether a redeem came from the person the link was sent to.
+**The access log** is one store for auth-lifecycle events and (optionally) views, so "who viewed what" joins to `grants` natively. Lifecycle events always log; `view` events are deduped per (session, browser, path, hour) by a partial unique index, so two people opening one share link within the hour each get a row (the browser is a keyed hash of its session cookie, or of its network and user agent when it presented a key), and are **off by default** — turn them on alongside the "access is logged" disclosure copy, not silently. Client IPs are never stored, only `HMAC(ip, secret)`. In their place each row keeps where Cloudflare places the client (`request.cf` city, region, and network operator, e.g. "Comcast"), alongside the country, user agent and referer; `GET <basePath>/log` returns all of them, so an admin can tell whether a redeem came from the person the link was sent to.
 
 **Magic links / passwordless sign-up.** `anyEmailPolicy` auto-approves any address, mints a grant bound to it, and hands it to `notify` — which becomes a real sign-in flow once `notify` can send mail:
 
