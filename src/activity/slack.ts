@@ -1,3 +1,4 @@
+import { LeaseLostError, SlackApiError, SlackClient } from '@open-athena/thrds'
 import { activityText } from './shape.js'
 import { type ActivityLinks, bound, checkTimeZone, lineKinds, renderDetails, renderHeadline, renderKindLines, SLACK_FMT } from './render.js'
 import type { ActivityActor, ActivityBurst, ActivitySink, ActivityThreadState } from './types.js'
@@ -24,9 +25,17 @@ export interface SlackActivityOptions extends ActivityLinks {
   fetch?: typeof fetch
 }
 
-/** Slack's error codes are short fixed strings (`not_in_channel`); anything else is left out of logs. */
-function slackErrorCode(error: unknown): string {
-  return typeof error === 'string' && /^[a-z_]{1,64}$/.test(error) ? ` (${error})` : ''
+/**
+ * A Slack failure as the sink reports it. `SlackApiError` carries Slack's whole reply, so only its short error code
+ * (`not_in_channel`, and only one that looks like one) or HTTP status is kept.
+ */
+export function wrapSlackError(e: unknown): unknown {
+  if (e instanceof LeaseLostError) return new Error('activity: delivery lease lost')
+  if (!(e instanceof SlackApiError)) return e
+  if (e.kind === 'timeout') return new Error('activity: Slack timeout')
+  if (e.kind === 'transport') return new Error('activity: Slack request failed')
+  if (e.status !== 200) return new Error(`activity: Slack HTTP ${e.status}`)
+  return new Error(`activity: Slack rejected message${e.slackCode ? ` (${e.slackCode})` : ''}`)
 }
 
 /** Slack's limit is far higher; this keeps one message readable. */
@@ -49,18 +58,21 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
   }
   checkTimeZone(options.timeZone)
 
-  async function call(method: 'chat.postMessage' | 'chat.update', body: Record<string, unknown>): Promise<string> {
-    const response = await (options.fetch ?? fetch)(`https://slack.com/api/${method}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${options.token}`, 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-      body: JSON.stringify({ channel: options.channel, parse: 'none', unfurl_links: false, unfurl_media: false, ...body }),
-    })
-    if (!response.ok) throw new Error(`activity: Slack HTTP ${response.status}`)
-    const result = await response.json() as { ok?: boolean; ts?: string; error?: unknown }
-    if (result.ok !== true || typeof result.ts !== 'string' || !result.ts) throw new Error(`activity: Slack rejected message${slackErrorCode(result.error)}`)
-    return result.ts
+  // No retries: the feed's `defer` backoff is the retry policy, and an in-call wait could outlive the delivery lease.
+  const client = new SlackClient({
+    token: options.token, channel: options.channel, parse: 'none', timeoutMs: 10_000, retries: 0,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  })
+  type Text = { text: string; username?: string; iconUrl?: string }
+  const call = async (write: () => Promise<{ id: string }>): Promise<string> => {
+    try {
+      return (await write()).id
+    } catch (e) {
+      throw wrapSlackError(e)
+    }
   }
+  const post = (msg: Text, threadTs?: string) => call(() => client.post(msg, threadTs))
+  const edit = (ts: string, text: string) => call(() => client.edit(ts, { text }))
 
   return {
     id: options.id,
@@ -69,10 +81,10 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
       const sender = await options.actorSender?.(burst.actor, burst) ?? null
       const asActor = sender !== null
       // `username`/`icon_url` apply when a message is created; an edit keeps the sender it was posted as.
-      const as = sender ? { username: sender.username.slice(0, 80), ...(sender.iconUrl ? { icon_url: sender.iconUrl } : {}) } : {}
+      const as = sender ? { username: sender.username.slice(0, 80), ...(sender.iconUrl ? { iconUrl: sender.iconUrl } : {}) } : {}
       const headline = options.renderBurst?.({ burst, asActor, links }).text ?? renderHeadline(burst, { fmt: SLACK_FMT, links, asActor })
       const text = bound(headline, MAX_TEXT)
-      const parent = messageId ? (await call('chat.update', { ts: messageId, text }), messageId) : await call('chat.postMessage', { text, ...as })
+      const parent = messageId ? (await edit(messageId, text), messageId) : await post({ text, ...as })
       if (!ctx) return parent
       const state = structuredClone(ctx.state) as ActivityThreadState
       const save = async () => { if (!(await ctx.put(state))) throw new Error('activity: delivery lease lost') }
@@ -90,9 +102,9 @@ export function slackActivitySink(options: SlackActivityOptions): ActivitySink {
         const body = bound(reply, MAX_TEXT)
         const existing = state.slots[slot]?.ts
         if (existing) {
-          await call('chat.update', { ts: existing, text: body })
+          await edit(existing, body)
         } else {
-          state.slots[slot] = { ts: await call('chat.postMessage', { thread_ts: parent, text: body, ...as }), hash: '' }
+          state.slots[slot] = { ts: await post({ text: body, ...as }, parent), hash: '' }
           await save()
         }
       }

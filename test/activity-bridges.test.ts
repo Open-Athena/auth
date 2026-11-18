@@ -122,4 +122,22 @@ describe('activity sink protocols', () => {
       'activity: Discord HTTP 502',
     ])
   })
+
+  it('names a Slack reply without a message, a refused HTTP status, and a timeout', async () => {
+    const { store, feed } = setup()
+    const result = await feed.record({ id: 'one', actor, origin: 'https://app.example', ts: 1000, kind: 'view' })
+    const burst = (await store.get(result.burstId!))!
+    const slack = (fetch: () => Promise<Response>) =>
+      slackActivitySink({ id: 'staff', staffOnly: true, token: 'fake-test-token', channel: 'C123', fetch: fetch as typeof globalThis.fetch })
+        .send(burst, null).then(() => 'sent', (e: Error) => e.message)
+    expect(await Promise.all([
+      slack(async () => Response.json({ ok: true })),
+      slack(async () => new Response('slow down', { status: 429 })),
+      slack(async () => { throw new DOMException('The operation timed out.', 'TimeoutError') }),
+    ])).toEqual([
+      'activity: Slack rejected message',
+      'activity: Slack HTTP 429',
+      'activity: Slack timeout',
+    ])
+  })
 })
