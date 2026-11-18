@@ -1,4 +1,4 @@
-# `@open-athena/auth`
+# <img src="logo/logo.svg" width="40" alt="" align="top"> `@open-athena/auth`
 
 > Named share links, Google sign-in, email codes, and an access log for gated dashboards.
 

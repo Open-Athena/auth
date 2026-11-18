@@ -1,4 +1,6 @@
 /** The broker's server-rendered pages. */
+/** `logo/logo.svg`, inline: the broker serves no static files. */
+const FAVICON = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 512 512%22%3E%3Crect width=%22512%22 height=%22512%22 rx=%22112%22 fill=%22%2315181d%22/%3E%3Cg fill=%22none%22 stroke=%22%236fbfa6%22 stroke-width=%2248%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Ccircle cx=%22121%22 cy=%22245%22 r=%2282%22/%3E%3Cpath d=%22M203 245H473%22/%3E%3Cpath d=%22M343 245L325.1 357%22/%3E%3Cpath d=%22M418.6 155L450.9 357%22/%3E%3C/g%3E%3C/svg%3E'
 export const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
 
 export function page(title: string, body: string, status = 200, { headers = {}, wide = false }: { headers?: Record<string, string>; wide?: boolean } = {}): Response {
@@ -8,6 +10,7 @@ export function page(title: string, body: string, status = 200, { headers = {}, 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · OA sign-in</title>
+<link rel="icon" href="${FAVICON}">
 <style>
 :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafafa; --muted: #666; --accent: #2563eb; --card: #fff; --border: #ddd }
 @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --accent: #60a5fa; --card: #1e1e1e; --border: #333 } }

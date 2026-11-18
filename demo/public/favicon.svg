@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- "OA" as a key: the O is the bow, the shaft is the A's crossbar, and the A's legs below it are the teeth. -->
+  <rect width="512" height="512" rx="112" fill="#15181d"/>
+  <g fill="none" stroke="#6fbfa6" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="121" cy="245" r="82"/>
+    <path d="M203 245H473"/>
+    <path d="M343 245L325.1 357"/>
+    <path d="M418.6 155L450.9 357"/>
+  </g>
+</svg>
