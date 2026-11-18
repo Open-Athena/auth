@@ -7,9 +7,11 @@
  * routes, or UI. Policies are captured at ingestion, not retroactive.
  * Dedupe lasts until retention deletes the receipt. Reusing an event ID
  * with changed content is still a duplicate (first accepted write wins).
- * Delivery leases fence database acknowledgements, not remote APIs: a
- * timeout/crash after a remote create, or a send outliving its lease, may
- * duplicate a message. A stale remote edit may need a later flush to repair.
+ * Delivery leases fence database acknowledgements, not remote APIs. The Slack
+ * sink saves a pending post first and tags every message, so a post that
+ * landed before a timeout or crash is adopted on the next send (given a history
+ * scope); a Discord create may still duplicate. A stale remote edit may need a
+ * later flush to repair.
  */
 import { activityInteger, activityText, checkActivityEvent, checkActivityGrouping, checkActivityKind, checkActivityKinds } from './shape.js';
 import { ACTIVITY_RETRY_MAX_S, ACTIVITY_RETRY_S, BATCH_GAP_S, DEFAULT_ACTIVITY_KINDS, RESUME_S } from './types.js';
@@ -76,14 +78,14 @@ export function activityFeed(options) {
                 }
                 burst.notice = reasons.length ? { color: 'red', reasons } : { color: 'green', reasons: [] };
             }
-            let parts = { ...claim.parts };
+            let state = structuredClone(claim.state);
             const ctx = {
-                get parts() { return parts; },
-                async save(messageId, next) {
-                    parts = { ...next };
-                    if (!(await store.checkpoint(burstId, sink.id, claim.token, messageId, parts)))
-                        throw new Error('activity: delivery lease lost');
+                get state() { return state; },
+                async put(next) {
+                    state = structuredClone(next);
+                    return store.checkpoint(burstId, sink.id, claim.token, state);
                 },
+                nowS: now,
             };
             const messageId = await sink.send(burst, posted, ctx);
             const completed = await store.complete(burstId, sink.id, claim.token, messageId, burst.version);
