@@ -36,6 +36,12 @@ export interface AccessEvent {
   event: AccessEventKind
   grantId?: string | null
   sessionSub?: string | null
+  /**
+   * Which browser: a keyed hash of its session cookie, or of its network and user agent when it presented a key
+   * instead. Views and repeat denies dedupe per (event, session, browser, path, hour), so two people on one share link
+   * each get a row.
+   */
+  sid?: string | null
   path?: string | null
   status?: number | null
   /** HMAC of the client IP — correlate sessions without retaining addresses. */

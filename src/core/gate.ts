@@ -62,7 +62,7 @@ import {
 } from './decisions.js'
 import { ALL_SCOPES, type Auth, formatScopes, type Grant, type GrantPatch, holderIdentity, type NewGrant, type Subject } from './types.js'
 import { openToken, sealToken } from './token-vault.js'
-import { generateId, generateToken, hashToken } from './tokens.js'
+import { generateId, generateToken, hashIp, hashToken } from './tokens.js'
 import { type RetainedOptions, retainedMode } from './retained.js'
 import type { EmailProof } from './retained-store.js'
 
@@ -449,9 +449,27 @@ export function createGate(opts: GateOptions) {
     : null
   const log = (event: AccessEvent): Promise<void> => audit.log(event)
 
-  async function logWithRequest(req: Request, event: Omit<AccessEvent, 'ts' | 'path'>, nowS: number): Promise<void> {
+  async function logWithRequest(req: Request, event: Omit<AccessEvent, 'ts' | 'path'>, nowS: number, minted?: string[]): Promise<void> {
     const meta = await requestMeta(req, secret)
-    await log({ ts: nowS, ...meta, ...event })
+    await log({ ts: nowS, ...meta, sid: await browserSid(req, minted), ...event })
+  }
+
+  /**
+   * Which browser a request comes from, for the access log's per-browser dedupe: a keyed hash of the cookie that names
+   * its session (a retained login's handle, else the session cookie). `minted` (this response's `Set-Cookie`s) wins
+   * over the request's, so a redemption shares the id of the views after it. A request with neither (a presented key)
+   * is told apart by its network and user agent.
+   */
+  async function browserSid(req: Request, minted: string[] = []): Promise<string> {
+    const set = (name: string) => minted.map(c => c.split(';')[0]!).find(c => c.startsWith(`${name}=`))?.slice(name.length + 1)
+    for (const name of [...(retained ? [retained.handleCookie] : []), cookieName]) {
+      const value = set(name) || readCookie(req, name)
+      if (value) return `c:${(await hashIp(`sid:${value}`, secret)).slice(0, 16)}`
+    }
+    const h = req.headers
+    const ip = h.get('CF-Connecting-IP') ?? h.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? ''
+    const ua = h.get('User-Agent') ?? ''
+    return ip || ua ? `n:${(await hashIp(`sid:${ip}|${ua}`, secret)).slice(0, 16)}` : ''
   }
 
   function cookieFor(req: Request, value: string, ttlS: number): string {
@@ -608,6 +626,7 @@ export function createGate(opts: GateOptions) {
     const meta = await requestMeta(req, secret)
     await log({
       ...meta,
+      sid: await browserSid(req),
       // A beacon reports the SPA route the visitor actually saw; without it the
       // log would only ever show `/api/track`, which answers nothing.
       ...(path ? { path } : {}),
@@ -717,7 +736,7 @@ export function createGate(opts: GateOptions) {
         }
       }
       const grant = (await store.byId(existing.id)) ?? existing
-      if (r.minted) await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS)
+      if (r.minted) await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS, r.cookies)
       return { ok: true, grant, auth: grantAuth(grant), cookie: r.cookies[0]!, cookies: r.cookies, selection: r.selection }
     }
     const grant = await store.redeem(existing.id, nowS)
@@ -731,7 +750,7 @@ export function createGate(opts: GateOptions) {
     }
     const ttlS = grant.sessionTtlS ?? sessionTtlS
     const cookie = cookieFor(req, await signSession(grantSub(grant.id), secret, nowMs, ttlS), ttlS)
-    await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS)
+    await logWithRequest(req, { event: 'redeem', grantId: grant.id, sessionSub: grantSub(grant.id) }, nowS, [cookie])
     return { ok: true, grant, auth: grantAuth(grant), cookie, cookies: [cookie] }
   }
 
@@ -761,7 +780,7 @@ export function createGate(opts: GateOptions) {
     const cookies = retained
       ? await retained.signIn(req, email, nowMs, proof)
       : [cookieFor(req, await signSession(emailSub(email), secret, nowMs, sessionTtlS), sessionTtlS)]
-    await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS)
+    await logWithRequest(req, { event: 'signin', sessionSub: emailSub(email) }, nowS, cookies)
     const auth: Auth = { kind: 'sso', email, admin: isAdmin(email), scopes, subject: await subjectFor(email) }
     return { auth, cookie: cookies[0]!, cookies }
   }

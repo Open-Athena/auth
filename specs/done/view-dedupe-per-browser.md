@@ -30,3 +30,14 @@ Ryan wants visits marked "that was me". The plan is a long-lived per-browser id 
 ## What `jobs` will do after this lands
 
 Bump the dist. If the dedupe key changes in a migration, `scripts/deploy.sh` applies it.
+
+## Done (2026-11-18)
+
+Confirmed by `test/view-dedupe.test.ts` before the fix: the second browser's view was dropped (one row, not two).
+
+- A new `access_log.sid` column (migration `0008_access_log_sid.sql`, `NOT NULL DEFAULT ''`) holds which browser a row came from, and `access_log_dedupe` is now on `(event, session_sub, sid, path, bucket)`. That's the spec's second option; `session_sub` keeps its `g:<id>` / `e:<email>` meaning, so everything grouping by grant or by session is unchanged.
+- `sid` is `c:` plus 16 characters of an HMAC (under the gate secret) of the cookie naming the browser's session. In retained mode that's the browser's handle cookie, which outlives logins; otherwise it's the session cookie. A redemption and a sign-in use the cookie their response sets, so they share the id of the views after them. A request with no such cookie (a presented `?key=` or Bearer token) gets `n:` plus a hash of its IP and user agent. Events logged without a request (mint, revoke, reveal) get `''`.
+- SSO sessions dedupe per browser too, for free.
+- Every `AccessEvent` from a request now carries `sid` (`AccessEvent.sid`), a step toward [that-was-me](../that-was-me.md).
+- Not done: grant stats still count distinct clients by `ip_hash`. Counting sessions instead (`COUNT(DISTINCT sid)`) is a one-line change in `d1AuditQuery.activity` plus a new `AccessStats` field, left for when a consumer wants it.
+- Two browsers that redeem one link in the same second get identical session cookies, so they share a `sid`. Rare enough to leave.

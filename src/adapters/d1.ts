@@ -533,13 +533,13 @@ export function d1AuditQuery(db: D1Database): AuditQuery {
 
 /**
  * Access-log sink. `view` rows carry an hour bucket and hit a partial unique
- * index, so the per-(session, path, hour) dedupe is enforced by the DB rather
+ * index, so the per-(session, browser, path, hour) dedupe is enforced by the DB rather
  * than by a read-then-write race in the worker.
  */
 export function d1AuditSink(db: D1Database): AuditSink {
   return {
     async log(e: AccessEvent) {
-      // Dedupe per (event, session, path, hour) for chatty-but-uninformative
+      // Dedupe per (event, session, browser, path, hour) for chatty-but-uninformative
       // repeats: `view` rows, and `deny` rows from a session we can already
       // name — a revoked link's browser re-denies on every page load, and the
       // second row through the tenth tell you nothing the first didn't.
@@ -551,8 +551,8 @@ export function d1AuditSink(db: D1Database): AuditSink {
       const bucket = dedupe ? Math.floor(e.ts / 3600) : null
       await db
         .prepare(
-          `INSERT INTO access_log (ts, event, grant_id, session_sub, path, status, ip_hash, ua, country, city, region, as_org, referer, reason, bucket)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO access_log (ts, event, grant_id, session_sub, sid, path, status, ip_hash, ua, country, city, region, as_org, referer, reason, bucket)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT DO NOTHING`,
         )
         .bind(
@@ -560,6 +560,7 @@ export function d1AuditSink(db: D1Database): AuditSink {
           e.event,
           e.grantId ?? null,
           e.sessionSub ?? null,
+          e.sid ?? '',
           e.path ?? null,
           e.status ?? null,
           e.ipHash ?? null,

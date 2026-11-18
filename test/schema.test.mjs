@@ -23,7 +23,7 @@ const tables = () => {
 describe('migrations/', () => {
   // Pre-1.0: one baseline, plus any additions not yet squashed into it.
   it('is the baseline plus unsquashed additions', () => {
-    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql', '0005_grant_flags.sql', '0006_kept_tokens.sql', '0007_slack_emoji.sql'])
+    expect(migrationFiles(dir)).toEqual(['0001_init.sql', '0002_access_log_location.sql', '0003_retained_logins.sql', '0004_retained_principals.sql', '0005_grant_flags.sql', '0006_kept_tokens.sql', '0007_slack_emoji.sql', '0008_access_log_sid.sql'])
   })
 
   it('builds exactly these tables and columns', () => {
@@ -69,6 +69,7 @@ describe('migrations/', () => {
         'city TEXT',
         'region TEXT',
         'as_org TEXT',
+        "sid TEXT NOT NULL DEFAULT ''",
       ],
       access_log_daily: [
         'day INTEGER NOT NULL PK#1',
