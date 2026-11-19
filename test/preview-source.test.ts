@@ -25,6 +25,9 @@ describe('previewSourceProblem', () => {
       { ...SOURCE, label: '{n}-' },
       { ...SOURCE, label: 'pr--{n}' },
       { ...SOURCE, label: `${'a'.repeat(55)}{n}` },
+      { ...SOURCE, environment: 'preview/r2' },
+      { ...SOURCE, environment: 'preview r2' },
+      { ...SOURCE, environment: '' },
     ]
     expect(cases.map(previewSourceProblem)).toEqual([
       null,
@@ -44,6 +47,9 @@ describe('previewSourceProblem', () => {
       "label: no leading, trailing or doubled hyphens (they can't form every PR's host)",
       "label: no leading, trailing or doubled hyphens (they can't form every PR's host)",
       'label: too long for a DNS label',
+      null,
+      'environment: a GitHub environment name, e.g. preview/r2',
+      'environment: a GitHub environment name, e.g. preview/r2',
     ])
   })
 })
@@ -122,7 +128,7 @@ describe('previewRecord', () => {
 
 describe('githubPreviewPrs', () => {
   /** A fake GitHub: PR 9 (`pr`), the head's deployments, the repo's, and each record's latest status. */
-  function setup(o: { token?: string; pr?: Record<string, unknown> | number | Error; atHead?: unknown[]; all?: unknown[] | number; status?: string } = {}) {
+  function setup(o: { token?: string; pr?: Record<string, unknown> | number | Error; atHead?: unknown[]; all?: unknown[] | number; inEnvironment?: unknown[]; status?: string } = {}) {
     let clock = 0
     const calls: [string, Record<string, string>][] = []
     const answers: (Record<string, unknown> | number | Error)[] = []
@@ -133,6 +139,7 @@ describe('githubPreviewPrs', () => {
       const answer = path === 'pulls/9' ? (answers.shift() ?? o.pr ?? prBody)
         : path === `deployments?sha=${HEAD}&per_page=100` ? (o.atHead ?? [])
         : path === 'deployments?per_page=100' ? (o.all ?? [])
+        : path === 'deployments?environment=preview%2Fr2&per_page=100' ? (o.inEnvironment ?? [])
         : /^deployments\/\d+\/statuses\?per_page=1$/.test(path) ? [{ state: o.status ?? 'success' }]
         : 599
       if (answer instanceof Error) throw answer
@@ -187,6 +194,15 @@ describe('githubPreviewPrs', () => {
       ['pulls/9', `deployments?sha=${HEAD}&per_page=100`, 'deployments/7/statuses?per_page=1'],
       { status: 'live', sha: OLD, at: '2026-11-19T02:04:03Z' },
       ['pulls/9', `deployments?sha=${HEAD}&per_page=100`, 'deployments?per_page=100', 'deployments/5/statuses?per_page=1'],
+    ])
+  })
+
+  it("with the source's environment, looks there alone", async () => {
+    const t = setup({ inEnvironment: [record(5, { payload: { verified_sha: OLD } })], atHead: [record(7)] })
+    const r = await t.prs({ ...SOURCE, environment: 'preview/r2' }, 9, HOST)
+    expect([r.status === 'found' && r.deployment, t.paths()]).toEqual([
+      { status: 'live', sha: OLD, at: '2026-11-19T02:04:03Z' },
+      ['pulls/9', 'deployments?environment=preview%2Fr2&per_page=100', 'deployments/5/statuses?per_page=1'],
     ])
   })
 

@@ -10,7 +10,7 @@
  *   oa-client.mjs set-callbacks oa-jobs --callback https://jobs.oa.dev/auth/oa/callback
  *   oa-client.mjs create oa-hf-usage-preview --preview --name 'HF usage (PR previews)' \
  *     --callback 'https://*.oa-hf-usage.pages.dev/auth/oa/callback' | gcloud secrets create … --data-file=-
- *   oa-client.mjs set-source oa-hf-usage-preview --repo Open-Athena/disky --label 'pr-{n}'
+ *   oa-client.mjs set-source oa-hf-usage-preview --repo Open-Athena/disky --label 'pr-{n}' --environment preview/hf
  *   oa-client.mjs set-source oa-hf-usage-preview --clear
  *   oa-client.mjs disable oa-jobs
  *   oa-client.mjs enable oa-jobs
@@ -21,7 +21,8 @@
  * callbacks may use `https://*.<host>/<path>` for a host in `wrangler.toml`'s
  * `PREVIEW_HOST_SUFFIXES`. `set-source` names a preview client's GitHub repo
  * and which host label is which PR (`--label`, default `pr-{n}`), for the
- * consent page to show that PR. `--local` uses the local dev database. Needs
+ * consent page to show that PR, and optionally the GitHub environment its
+ * preview workflow records deployments in (`--environment`). `--local` uses the local dev database. Needs
  * `pnpm build` at the root.
  */
 import { spawnSync } from 'node:child_process'
@@ -104,6 +105,7 @@ async function main() {
     options: {
       callback: { type: 'string', multiple: true, default: [] },
       clear: { type: 'boolean', default: false },
+      environment: { type: 'string' },
       label: { type: 'string', default: 'pr-{n}' },
       local: { type: 'boolean', default: false },
       name: { type: 'string' },
@@ -165,7 +167,7 @@ async function main() {
     case 'set-source': {
       if (o.clear === Boolean(o.repo)) die('set-source takes --repo (and optionally --label), or --clear')
       if (!run(isPreviewSql(id))[0].results.length) die(`${id} is not a preview client`)
-      const source = o.clear ? null : { provider: 'github', repo: o.repo, label: o.label }
+      const source = o.clear ? null : { provider: 'github', repo: o.repo, label: o.label, ...(o.environment ? { environment: o.environment } : {}) }
       const problem = source && previewSourceProblem(source)
       if (problem) die(problem)
       const old = run(previewSourceSql(id))[0].results[0]?.source

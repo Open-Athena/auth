@@ -370,7 +370,7 @@ describe('oa-client.mjs', () => {
   it("sets and clears a preview client's PR source, logged old → new, which the provider then carries", async () => {
     const { raw, registry } = setup()
     const PATTERN = 'https://*.oa-r2-usage.pages.dev/auth/oa/callback'
-    const SOURCE = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' }
+    const SOURCE = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}', environment: 'preview/r2' }
     raw.exec(createSql({ id: 'oa-r2-usage-preview', name: 'R2 previews', secretHash: 'h1', redirectUris: [PATTERN], preview: true }, 'cli:me', T))
     raw.exec(setPreviewSourceSql('oa-r2-usage-preview', SOURCE, null, 'cli:me', T + 1))
     const set = [(await registry.get('oa-r2-usage-preview'))!.previewSource, (await clientLookup(registry)('oa-r2-usage-preview'))!.previewSource, raw.prepare(previewSourceSql('oa-r2-usage-preview')).all()]

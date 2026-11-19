@@ -11,6 +11,11 @@ export interface PreviewSource {
   repo: string
   /** The host label for PR n: lower-case letters, digits and hyphens around exactly one `{n}`, e.g. `pr-{n}`. */
   label: string
+  /**
+   * The GitHub environment its preview workflow records this client's deployments in (disky: `preview/<target>`).
+   * With it, a deployment is looked up there; without, in the head commit's deployments, then the repo's newest 100.
+   */
+  environment?: string
 }
 
 /** A PR as the consent page shows it. Everything but `number` is GitHub's, and `title` is the author's. */
@@ -52,13 +57,14 @@ export type PreviewPrs = (source: PreviewSource, n: number, host: string) => Pro
 
 const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 const LABEL_PART = /^[a-z0-9-]*$/
+const ENVIRONMENT = /^[A-Za-z0-9._/-]{1,255}$/
 /** Up to this many digits for `{n}`: GitHub's numbers are far smaller, and a label stays under 63 characters. */
 const N_DIGITS = 9
 
 /** What's wrong with this source, or null. */
 export function previewSourceProblem(s: unknown): string | null {
   if (s === null || typeof s !== 'object' || Array.isArray(s)) return 'a source is { provider, repo, label }'
-  const { provider, repo, label, ...rest } = s as Record<string, unknown>
+  const { provider, repo, label, environment, ...rest } = s as Record<string, unknown>
   if (Object.keys(rest).length) return `unexpected field: ${Object.keys(rest)[0]}`
   if (provider !== 'github') return "provider: only 'github'"
   if (typeof repo !== 'string' || !REPO.test(repo) || repo.endsWith('/.') || repo.endsWith('/..')) return 'repo: owner/name'
@@ -69,6 +75,7 @@ export function previewSourceProblem(s: unknown): string | null {
   if (!LABEL_PART.test(before) || !LABEL_PART.test(after)) return 'label: lower-case letters, digits and hyphens around {n}'
   if (before.startsWith('-') || after.endsWith('-') || label.includes('--')) return "label: no leading, trailing or doubled hyphens (they can't form every PR's host)"
   if (before.length + after.length + N_DIGITS > 63) return 'label: too long for a DNS label'
+  if (environment !== undefined && (typeof environment !== 'string' || !ENVIRONMENT.test(environment))) return 'environment: a GitHub environment name, e.g. preview/r2'
   return null
 }
 
@@ -161,12 +168,16 @@ export function githubPreviewPrs({ token, ttlS = 60, fetch: f = fetch, now = Dat
     return r.json()
   }
 
-  /** The head's own records first; if none is this host's, the repo's newest 100 (a preview behind its head). */
-  async function deployment(pr: PreviewPr, host: string): Promise<PreviewDeployment> {
+  /**
+   * The source's environment's newest 100 records; without one, the head's own records first, and if none is this
+   * host's, the repo's newest 100 (a preview behind its head).
+   */
+  async function deployment(pr: PreviewPr, host: string, environment: string | undefined): Promise<PreviewDeployment> {
     try {
-      const record =
-        previewRecord(await json(`${pr.repo}/deployments?sha=${pr.head.sha}&per_page=100`), pr.repo, pr.number, host) ??
-        previewRecord(await json(`${pr.repo}/deployments?per_page=100`), pr.repo, pr.number, host)
+      const record = environment
+        ? previewRecord(await json(`${pr.repo}/deployments?environment=${encodeURIComponent(environment)}&per_page=100`), pr.repo, pr.number, host)
+        : previewRecord(await json(`${pr.repo}/deployments?sha=${pr.head.sha}&per_page=100`), pr.repo, pr.number, host) ??
+          previewRecord(await json(`${pr.repo}/deployments?per_page=100`), pr.repo, pr.number, host)
       if (!record) return { status: 'unconfirmed' }
       const [latest] = (await json(`${pr.repo}/deployments/${record.id}/statuses?per_page=1`)) as { state?: unknown }[]
       return latest?.state === 'success' && record.sha ? { status: 'live', sha: record.sha, at: record.at } : { status: 'unconfirmed' }
@@ -176,7 +187,7 @@ export function githubPreviewPrs({ token, ttlS = 60, fetch: f = fetch, now = Dat
   }
 
   return async (source, n, host) => {
-    const key = `${source.repo}#${n}@${host}`
+    const key = `${source.repo}#${n}@${host}@${source.environment ?? ''}`
     const hit = cache.get(key)
     if (hit && now() - hit.at < ttlS * 1000) return hit.lookup
     let lookup: PreviewPrLookup
@@ -184,7 +195,7 @@ export function githubPreviewPrs({ token, ttlS = 60, fetch: f = fetch, now = Dat
       const r = await get(`${source.repo}/pulls/${n}`)
       const pr = r.ok ? readPr(source.repo, n, await r.json()) : null
       lookup = r.status === 404 ? { status: 'missing' }
-        : pr ? { status: 'found', pr, deployment: pr.state === 'open' || pr.state === 'draft' ? await deployment(pr, host) : { status: 'unconfirmed' } }
+        : pr ? { status: 'found', pr, deployment: pr.state === 'open' || pr.state === 'draft' ? await deployment(pr, host, source.environment) : { status: 'unconfirmed' } }
         : { status: 'unavailable' }
     } catch {
       lookup = { status: 'unavailable' }
