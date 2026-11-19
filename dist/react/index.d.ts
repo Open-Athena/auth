@@ -14,6 +14,8 @@ export { EmailCodeForm } from './EmailCodeForm.js';
 export type { EmailCodeFormProps, EmailCodeState } from './EmailCodeForm.js';
 export { GoogleOneTap } from './GoogleOneTap.js';
 export type { GoogleOneTapProps } from './GoogleOneTap.js';
+export { OA_BRAND, OaMark, OaSignInButton } from './OaSignInButton.js';
+export type { OaSignInAccount, OaSignInBrand, OaSignInButtonProps, OaSignInVariant } from './OaSignInButton.js';
 export { ProfilePanel } from './ProfilePanel.js';
 export type { ProfilePanelProps } from './ProfilePanel.js';
 export { exchangeKeyParam, hasKeyParam, useKeyExchange } from './exchange.js';
