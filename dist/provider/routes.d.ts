@@ -18,7 +18,8 @@ export interface ProviderClient {
      * patterns (one DNS label, `redirects.ts`), and since a preview is unreviewed
      * code, it never signs anyone in silently. The first sign-in per preview
      * host, account and client is one click on a page here naming the host,
-     * remembered for 7 days; `prompt=none` gets `interaction_required` until
+     * remembered for 7 days (`prompt=consent` asks again anyway, e.g. an app's
+     * `/auth/oa?prompt=consent`); `prompt=none` gets `interaction_required` until
      * then. Give it its own id (so its tokens' `aud` differs from the app's)
      * and its own secret, held only by the preview deployment.
      */

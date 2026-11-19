@@ -380,7 +380,8 @@ ${contextHtml(context)}<form method="post" action="${esc(`${url.pathname}${url.s
             const sub = await subOf(email);
             const held = await previewConsents(req, nowS);
             const mine = (c) => c.s === sub && c.c === client.id && c.h === host;
-            if (!held.some(mine)) {
+            // `prompt=consent` asks again though the click is remembered (e.g. to see the PR before a new sign-in).
+            if (!held.some(mine) || prompts.has('consent')) {
                 if (decision === 'deny')
                     return fail('access_denied');
                 if (decision !== 'allow')
