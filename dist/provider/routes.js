@@ -12,6 +12,7 @@ import { b64uDecodeString, b64uEncode } from '../core/base64.js';
 import { generateToken, hashToken } from '../core/tokens.js';
 import { keySet } from './keys.js';
 import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js';
+import { prNumberFor } from './preview-source.js';
 import { redirectAllowed } from './redirects.js';
 /** What a client registry stores in place of a secret. */
 export const hashClientSecret = (secret) => hashToken(secret);
@@ -66,6 +67,83 @@ function same(a, b) {
         d |= a.charCodeAt(i) ^ b.charCodeAt(i);
     return d === 0;
 }
+const gh = (path) => `https://github.com/${path}`;
+/** A branch's page: each path segment encoded, the slashes kept. */
+const treeUrl = (repo, ref) => gh(`${repo}/tree/${ref.split('/').map(encodeURIComponent).join('/')}`);
+const prUrl = (pr) => gh(`${pr.repo}/pull/${pr.number}`);
+const prLink = (pr) => `<a href="${esc(prUrl(pr))}">${esc(pr.repo)} #${pr.number}</a>`;
+/** The title is the PR author's text, so it's quoted, attributed and cut, never the page's own words. */
+const TITLE_MAX = 120;
+/** `2026-11-18 20:14 UTC`, or GitHub's string as it came if it isn't a time. */
+function when(iso) {
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? iso : `${new Date(t).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+/** The consent page's PR section: everything from GitHub, escaped. */
+function contextHtml(c) {
+    switch (c.kind) {
+        case 'unsourced':
+            return '';
+        case 'not-pr':
+            return '<p class="note">Not a PR preview: no PR found for this address.</p>\n';
+        case 'missing':
+            return `<p class="note">GitHub has no PR #${c.n} in <code>${esc(c.repo)}</code>.</p>\n`;
+        case 'unavailable':
+            return "<p class=\"note\">Couldn't check GitHub: PR details unavailable.</p>\n";
+        case 'pr': {
+            const { pr } = c;
+            const title = pr.title.length > TITLE_MAX ? `${pr.title.slice(0, TITLE_MAX - 1)}…` : pr.title;
+            const fork = pr.head.repo === null ? '<p class="fork">From a deleted fork.</p>\n'
+                : pr.head.repo.toLowerCase() !== pr.repo.toLowerCase() ? `<p class="fork">From a fork: <code>${esc(pr.head.repo)}</code></p>\n` : '';
+            const head = pr.head.repo === null ? `<code>${esc(pr.head.ref)}</code>` : `<a href="${esc(treeUrl(pr.head.repo, pr.head.ref))}"><code>${esc(pr.head.ref)}</code></a>`;
+            const avatar = pr.author.avatarUrl ? `<img class="avatar" src="${esc(pr.author.avatarUrl)}" alt="" width="20" height="20"> ` : '';
+            return `<section class="pr">
+<p>${prLink(pr)} · ${pr.state} · updated ${esc(when(pr.updatedAt))}</p>
+${fork}<p>Title, as its author wrote it: <q class="title">${esc(title)}</q></p>
+<p>By ${avatar}<a href="${esc(gh(pr.author.login))}">${esc(pr.author.login)}</a></p>
+<p>Branch: ${head} → <a href="${esc(treeUrl(pr.repo, pr.base.ref))}"><code>${esc(pr.base.ref)}</code></a></p>
+<p>Head commit: <a href="${esc(`${prUrl(pr)}/commits/${encodeURIComponent(pr.head.sha)}`)}"><code>${esc(pr.head.sha.slice(0, 7))}</code></a></p>
+</section>
+`;
+        }
+    }
+}
+/** A page of the preview flow: the broker's own, framed by nothing, posting only here or to the preview. */
+function previewPage(target, status, title, main, avatars) {
+    const body = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; padding: 16px; display: grid; place-items: center; min-height: 90vh; }
+main { max-width: 32rem; }
+.host, code { font-family: ui-monospace, monospace; }
+.host { overflow-wrap: anywhere; }
+.muted { opacity: 0.7; font-size: 0.9em; }
+.pr { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 8px; padding: 0 1em; margin: 1em 0; overflow-wrap: anywhere; }
+.fork { font-weight: 600; color: #c2410c; }
+.avatar { vertical-align: middle; border-radius: 50%; }
+button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
+</style></head>
+<body><main>
+${main}
+</main></body></html>
+`;
+    return new Response(body, {
+        status,
+        headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store',
+            'content-security-policy': `default-src 'none'; style-src 'unsafe-inline';${avatars ? ' img-src https://avatars.githubusercontent.com;' : ''} form-action 'self' ${target.origin}; frame-ancestors 'none'; base-uri 'none'`,
+            'x-frame-options': 'DENY',
+            // Not `no-referrer`: under it a browser sends `Origin: null` on the form's own POST, which
+            // `authorize` must refuse. `same-origin` keeps the real Origin there, and still sends no
+            // Referer (with the authorize URL's state and PKCE challenge) anywhere else.
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+        },
+    });
+}
 export function oidcProviderRoutes(opts) {
     const { gate, store, subjectSecret, loginUrl, policy, tokenTtlS = 300, codeTtlS = 60 } = opts;
     const issuer = opts.issuer.replace(/\/+$/, '');
@@ -106,45 +184,34 @@ export function oidcProviderRoutes(opts) {
         const value = `${body}.${await hmac(subjectSecret, `preview-consent:${body}`)}`;
         return `${consentCookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${PREVIEW_CONSENT_TTL_S}${secure ? '; Secure' : ''}`;
     }
+    /** What a preview client's host is, from its admin-set source: shown on the consent page. */
+    async function previewContext(client, host) {
+        const source = client.previewSource;
+        if (!source)
+            return { kind: 'unsourced' };
+        const n = prNumberFor(source.label, host);
+        if (n === null)
+            return { kind: 'not-pr' };
+        const lookup = opts.previewPrs ? await opts.previewPrs(source, n) : { status: 'unavailable' };
+        return lookup.status === 'found' ? { kind: 'pr', pr: lookup.pr } : { kind: lookup.status, repo: source.repo, n };
+    }
     /** The one click a preview client needs: posts back to this same `/authorize` request. */
-    function previewConsentPage(url, client, email, redirectUri) {
+    function previewConsentPage(url, client, email, redirectUri, context) {
         const target = new URL(redirectUri);
         const app = client.name ?? client.id;
-        const body = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in to a preview?</title>
-<style>
-:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-body { margin: 0; padding: 16px; display: grid; place-items: center; min-height: 90vh; }
-main { max-width: 32rem; }
-.host { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
-.muted { opacity: 0.7; font-size: 0.9em; }
-button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
-</style></head>
-<body><main>
-<h1>Sign in to a preview?</h1>
+        return previewPage(target, 200, 'Sign in to a preview?', `<h1>Sign in to a preview?</h1>
 <p><strong class="host">${esc(target.host)}</strong> wants to sign you in as <strong>${esc(email)}</strong>.</p>
 <p>It's a preview of ${esc(app)}, built from a branch whose code may not have been reviewed. Continue only if you meant to open it.</p>
-<form method="post" action="${esc(`${url.pathname}${url.search}`)}">
+${contextHtml(context)}<form method="post" action="${esc(`${url.pathname}${url.search}`)}">
 <button name="decision" value="allow">Continue</button><button name="decision" value="deny">Cancel</button>
 </form>
-<p class="muted">You won't be asked again for this address for 7 days.</p>
-</main></body></html>
-`;
-        return new Response(body, {
-            status: 200,
-            headers: {
-                'content-type': 'text/html; charset=utf-8',
-                'cache-control': 'no-store',
-                'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${target.origin}; frame-ancestors 'none'; base-uri 'none'`,
-                'x-frame-options': 'DENY',
-                // Not `no-referrer`: under it a browser sends `Origin: null` on the form's own POST, which
-                // `authorize` must refuse. `same-origin` keeps the real Origin there, and still sends no
-                // Referer (with the authorize URL's state and PKCE challenge) anywhere else.
-                'referrer-policy': 'same-origin',
-                'x-content-type-options': 'nosniff',
-            },
-        });
+<p class="muted">You won't be asked again for this address for 7 days.</p>`, context.kind === 'pr' && context.pr.author.avatarUrl !== null);
+    }
+    /** A preview whose PR is closed or merged: it shouldn't still be serving, so it signs no one in. */
+    function retiredPreviewPage(redirectUri, pr) {
+        const target = new URL(redirectUri);
+        return previewPage(target, 403, 'This preview is retired', `<h1>This preview is retired</h1>
+<p><strong class="host">${esc(target.host)}</strong> was built from ${prLink(pr)}, which is ${pr.state}. A preview of a ${pr.state} PR shouldn't still be serving, so it can't sign you in.</p>`, false);
     }
     const discovery = () => ({
         issuer,
@@ -294,6 +361,11 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
         const cookies = [];
         if (client.preview) {
             const host = new URL(redirectUri).host;
+            const context = await previewContext(client, host);
+            // Even with consent remembered: a closed PR's preview is stale, whoever said yes to it.
+            if (context.kind === 'pr' && (context.pr.state === 'closed' || context.pr.state === 'merged')) {
+                return decision === null && prompts.has('none') ? fail('access_denied') : retiredPreviewPage(redirectUri, context.pr);
+            }
             const sub = await subOf(email);
             const held = await previewConsents(req, nowS);
             const mine = (c) => c.s === sub && c.c === client.id && c.h === host;
@@ -301,7 +373,7 @@ button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
                 if (decision === 'deny')
                     return fail('access_denied');
                 if (decision !== 'allow')
-                    return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri);
+                    return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri, context);
                 cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, x: nowS + PREVIEW_CONSENT_TTL_S }]));
             }
         }

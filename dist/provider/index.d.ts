@@ -9,5 +9,6 @@ export { generateSigningKey, keySet, type KeySet, type PublicJwk, type SigningJw
 export { brokerProvider, type ClaimsInput, hashClientSecret, oidcProviderRoutes, type ProviderClient, type ProviderOptions, SLACK_EMOJI_CLAIM } from './routes.js';
 export { type ClientAction, type ClientChanges, type ClientEvent, clientIdProblem, clientLookup, type ClientRegistry, mintClientSecret, type NewClient, redirectUriProblem, type RegisteredClient, } from './registry.js';
 export { previewPattern, redirectAllowed } from './redirects.js';
+export { githubPreviewPrs, type GithubPreviewPrsOptions, prNumberFor, type PreviewPr, type PreviewPrLookup, type PreviewPrs, type PreviewSource, previewSourceProblem, readPr, } from './preview-source.js';
 export { type CodeRecord, memoryProviderStore, type ProviderStore } from './store.js';
 export { clientManagementRoutes, managementTokenAuth, type ClientManagementOptions, type ClientCallbackPolicy, type ManagementAction, type ManagementGrant, type ManagementPrincipal } from './management.js';

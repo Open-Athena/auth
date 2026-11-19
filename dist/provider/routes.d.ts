@@ -1,5 +1,6 @@
 import type { Gate } from '../core/gate.js';
 import { type SigningJwk } from './keys.js';
+import type { PreviewPrs, PreviewSource } from './preview-source.js';
 import type { ProviderStore } from './store.js';
 /** One app allowed to sign people in here. */
 export interface ProviderClient {
@@ -22,6 +23,12 @@ export interface ProviderClient {
      * and its own secret, held only by the preview deployment.
      */
     preview?: boolean;
+    /**
+     * A preview client's builds: which GitHub repo, and which host label is which PR (`pr-{n}`). With it
+     * (and `ProviderOptions.previewPrs`), the consent page shows the PR, looked up here, and a closed or
+     * merged PR's preview is refused. Admin-set, never the preview's own say.
+     */
+    previewSource?: PreviewSource;
     /** A per-app admission rule on top of the provider's `policy`. */
     allow?: (email: string) => boolean | Promise<boolean>;
     /**
@@ -83,6 +90,8 @@ export interface ProviderOptions {
      * off. Counted in this isolate's memory: a bound on a runaway client, not an exact quota.
      */
     slackEmojiLookupsPerMinute?: number | false;
+    /** Looks up a preview client's PR (`githubPreviewPrs`). Without it, a `previewSource` shows "couldn't check GitHub". */
+    previewPrs?: PreviewPrs;
 }
 /** What a client registry stores in place of a secret. */
 export declare const hashClientSecret: (secret: string) => Promise<string>;
