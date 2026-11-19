@@ -84,6 +84,7 @@ interface ClientRow {
   post_logout_redirect_uris: string
   preview: number
   preview_source: string | null
+  preview_consent_ttl_s: number | null
   disabled_at: number | null
   created_at: number
   created_by: string
@@ -99,6 +100,7 @@ const clientFromRow = (r: ClientRow): RegisteredClient => ({
   postLogoutRedirectUris: JSON.parse(r.post_logout_redirect_uris) as string[],
   preview: r.preview === 1,
   previewSource: r.preview === 1 && r.preview_source ? (JSON.parse(r.preview_source) as PreviewSource) : null,
+  previewConsentTtlS: r.preview === 1 ? r.preview_consent_ttl_s : null,
   disabledAt: r.disabled_at,
   createdAt: r.created_at,
   createdBy: r.created_by,
@@ -107,7 +109,8 @@ const clientFromRow = (r: ClientRow): RegisteredClient => ({
 })
 
 const SELECT_CLIENT = `SELECT c.*, EXISTS (SELECT 1 FROM provider_preview_clients p WHERE p.client_id = c.id) AS preview,
-  (SELECT s.source FROM provider_preview_sources s WHERE s.client_id = c.id) AS preview_source FROM provider_clients c`
+  (SELECT s.source FROM provider_preview_sources s WHERE s.client_id = c.id) AS preview_source,
+  (SELECT t.ttl_s FROM provider_preview_consent_ttls t WHERE t.client_id = c.id) AS preview_consent_ttl_s FROM provider_clients c`
 
 export function d1ClientRegistry(db: D1Database): ClientRegistry {
   const now = () => Math.floor(Date.now() / 1000)
@@ -222,6 +225,22 @@ export function d1ClientRegistry(db: D1Database): ClientRegistry {
           : db.prepare('DELETE FROM provider_preview_sources WHERE client_id = ?').bind(id),
         db.prepare('UPDATE provider_clients SET updated_at = ?, updated_by = ? WHERE id = ?').bind(at, actor, id),
         logged(id, 'update', actor, at, JSON.stringify({ previewSource: [row.source ? JSON.parse(row.source) : null, source] })),
+      ])
+      return true
+    },
+    async setPreviewConsentTtl(id, ttlS, actor) {
+      const row = await db
+        .prepare('SELECT (SELECT ttl_s FROM provider_preview_consent_ttls WHERE client_id = p.client_id) AS ttl_s FROM provider_preview_clients p WHERE p.client_id = ?')
+        .bind(id)
+        .first<{ ttl_s: number | null }>()
+      if (!row) return false
+      const at = now()
+      await db.batch([
+        ttlS === null
+          ? db.prepare('DELETE FROM provider_preview_consent_ttls WHERE client_id = ?').bind(id)
+          : db.prepare('INSERT INTO provider_preview_consent_ttls (client_id, ttl_s) VALUES (?, ?) ON CONFLICT (client_id) DO UPDATE SET ttl_s = excluded.ttl_s').bind(id, ttlS),
+        db.prepare('UPDATE provider_clients SET updated_at = ?, updated_by = ? WHERE id = ?').bind(at, actor, id),
+        logged(id, 'update', actor, at, JSON.stringify({ previewConsentTtlS: [row.ttl_s, ttlS] })),
       ])
       return true
     },

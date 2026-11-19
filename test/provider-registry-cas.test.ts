@@ -14,6 +14,7 @@ const CLIENT: RegisteredClient = {
   postLogoutRedirectUris: ['https://cas.oa.dev/'],
   preview: false,
   previewSource: null,
+  previewConsentTtlS: null,
   disabledAt: null,
   createdAt: CREATED_AT,
   createdBy: 'creator',

@@ -46,7 +46,7 @@ async function result(response: Response | null) {
 }
 const failure = (status: number, error: string) => ({ status, body: { error }, cache: 'no-store' })
 const client = (patch: Record<string, unknown> = {}) => ({
-  id: 'oa-disky', name: 'Disky', redirectUris: [CALLBACK], postLogoutRedirectUris: [LOGOUT], preview: false, previewSource: null, disabledAt: null,
+  id: 'oa-disky', name: 'Disky', redirectUris: [CALLBACK], postLogoutRedirectUris: [LOGOUT], preview: false, previewSource: null, previewConsentTtlS: null, disabledAt: null,
   createdAt: NOW, createdBy: ACTOR, updatedAt: NOW, updatedBy: ACTOR, ...patch,
 })
 

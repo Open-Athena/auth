@@ -12,6 +12,8 @@
  *     --callback 'https://*.oa-hf-usage.pages.dev/auth/oa/callback' | gcloud secrets create … --data-file=-
  *   oa-client.mjs set-source oa-hf-usage-preview --repo Open-Athena/disky --label 'pr-{n}' --environment preview/hf
  *   oa-client.mjs set-source oa-hf-usage-preview --clear
+ *   oa-client.mjs set-consent-ttl oa-hf-usage-preview --days 0
+ *   oa-client.mjs set-consent-ttl oa-hf-usage-preview --clear
  *   oa-client.mjs disable oa-jobs
  *   oa-client.mjs enable oa-jobs
  *
@@ -22,7 +24,9 @@
  * `PREVIEW_HOST_SUFFIXES`. `set-source` names a preview client's GitHub repo
  * and which host label is which PR (`--label`, default `pr-{n}`), for the
  * consent page to show that PR, and optionally the GitHub environment its
- * preview workflow records deployments in (`--environment`). `--local` uses the local dev database. Needs
+ * preview workflow records deployments in (`--environment`). `set-consent-ttl`
+ * sets how long a preview client's consent click lasts (`--days`, at most 30; 0
+ * asks at every sign-in), or `--clear`s it back to 7 days. `--local` uses the local dev database. Needs
  * `pnpm build` at the root.
  */
 import { spawnSync } from 'node:child_process'
@@ -68,6 +72,18 @@ export const setPreviewSourceSql = (id, source, old, actor, at) =>
     event(id, 'update', actor, at, JSON.stringify({ previewSource: [old, source] })),
   ].join('; ')
 
+export const previewConsentTtlSql = id => `SELECT ttl_s FROM provider_preview_consent_ttls WHERE client_id = ${lit(id)}`
+
+/** Set (or, with `ttlS` null, clear to the default) a preview client's consent TTL, logged as an update from `old`. */
+export const setPreviewConsentTtlSql = (id, ttlS, old, actor, at) =>
+  [
+    ttlS === null
+      ? `DELETE FROM provider_preview_consent_ttls WHERE client_id = ${lit(id)}`
+      : `INSERT INTO provider_preview_consent_ttls (client_id, ttl_s) VALUES (${lit(id)}, ${Number(ttlS)}) ON CONFLICT (client_id) DO UPDATE SET ttl_s = excluded.ttl_s`,
+    `UPDATE provider_clients SET updated_at = ${at}, updated_by = ${lit(actor)} WHERE id = ${lit(id)}`,
+    event(id, 'update', actor, at, JSON.stringify({ previewConsentTtlS: [old, ttlS] })),
+  ].join('; ')
+
 /** The hosts a preview client's pattern may cover: `wrangler.toml`'s `PREVIEW_HOST_SUFFIXES`, what the deployed broker has. */
 export const previewSuffixes = toml =>
   (/^PREVIEW_HOST_SUFFIXES\s*=\s*"([^"]*)"/m.exec(toml)?.[1] ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
@@ -105,6 +121,7 @@ async function main() {
     options: {
       callback: { type: 'string', multiple: true, default: [] },
       clear: { type: 'boolean', default: false },
+      days: { type: 'string' },
       environment: { type: 'string' },
       label: { type: 'string', default: 'pr-{n}' },
       local: { type: 'boolean', default: false },
@@ -114,7 +131,7 @@ async function main() {
       'secret-hash': { type: 'string' },
     },
   })
-  const { clientIdProblem, hashClientSecret, mintClientSecret, previewSourceProblem, redirectUriProblem } = await import('../../dist/provider/index.js')
+  const { clientIdProblem, hashClientSecret, mintClientSecret, previewConsentTtlProblem, previewSourceProblem, redirectUriProblem } = await import('../../dist/provider/index.js')
   const actor = `cli:${process.env.USER ?? 'unknown'}`
   const at = Math.floor(Date.now() / 1000)
   const run = sql => execute(sql, o.local)
@@ -135,7 +152,7 @@ async function main() {
     for (const c of run(listSql)[0].results) console.log([c.id, c.disabled_at === null ? 'active' : 'disabled', c.name, ...JSON.parse(c.redirect_uris)].join('\t'))
     return
   }
-  if (!id) die(`usage: oa-client.mjs list | {create,rotate,set-callbacks,set-source,disable,enable} <id>`)
+  if (!id) die(`usage: oa-client.mjs list | {create,rotate,set-callbacks,set-source,set-consent-ttl,disable,enable} <id>`)
   switch (command) {
     case 'create': {
       const idProblem = clientIdProblem(id)
@@ -172,6 +189,16 @@ async function main() {
       if (problem) die(problem)
       const old = run(previewSourceSql(id))[0].results[0]?.source
       run(setPreviewSourceSql(id, source, old ? JSON.parse(old) : null, actor, at))
+      break
+    }
+    case 'set-consent-ttl': {
+      if (o.clear === (o.days !== undefined)) die('set-consent-ttl takes --days (0: every sign-in), or --clear')
+      if (!run(isPreviewSql(id))[0].results.length) die(`${id} is not a preview client`)
+      const ttlS = o.clear ? null : Math.round(Number(o.days) * 86400)
+      const problem = ttlS !== null && (o.days.trim() === '' || previewConsentTtlProblem(ttlS))
+      if (problem) die(`--days: ${problem === true ? 'a number' : problem}`)
+      const old = run(previewConsentTtlSql(id))[0].results[0]?.ttl_s ?? null
+      run(setPreviewConsentTtlSql(id, ttlS, old, actor, at))
       break
     }
     case 'disable':

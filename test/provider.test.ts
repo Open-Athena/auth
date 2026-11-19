@@ -102,6 +102,8 @@ interface WorldOptions {
   /** The preview client's (`app-p`) PR source, and the provider's lookup. */
   previewSource?: PreviewSource
   previewPrs?: PreviewPrs
+  /** The preview client's consent TTL (`w.previewClient`, which a test may change between requests). */
+  previewConsentTtlS?: number
 }
 
 async function world(o: WorldOptions = {}) {
@@ -134,21 +136,23 @@ async function world(o: WorldOptions = {}) {
     postLogoutRedirectUris: [`https://${host}/bye`],
     ...(allow ? { allow } : {}),
   })
+  const previewClient: ProviderClient = {
+    id: 'app-p',
+    name: 'Project',
+    secretHash: await hashClientSecret('app-p-secret'),
+    redirectUris: [`https://*.${PREVIEW}/auth/cb`],
+    postLogoutRedirectUris: [`https://*.${PREVIEW}/bye`],
+    preview: true,
+    ...(o.previewSource ? { previewSource: o.previewSource } : {}),
+    ...(o.previewConsentTtlS === undefined ? {} : { previewConsentTtlS: o.previewConsentTtlS }),
+  }
   const provider = oidcProviderRoutes({
     gate: broker,
     issuer: ISSUER,
     clients: [
       { ...(await client('app-a', 'a.test')), ...(o.pkceOptionalA ? { requirePkce: false } : {}) },
       await client('app-b', 'b.test', o.allowB),
-      {
-        id: 'app-p',
-        name: 'Project',
-        secretHash: await hashClientSecret('app-p-secret'),
-        redirectUris: [`https://*.${PREVIEW}/auth/cb`],
-        postLogoutRedirectUris: [`https://*.${PREVIEW}/bye`],
-        preview: true,
-        ...(o.previewSource ? { previewSource: o.previewSource } : {}),
-      },
+      previewClient,
     ],
     keys: [KEY],
     store,
@@ -211,7 +215,7 @@ async function world(o: WorldOptions = {}) {
     const auth = await apps.get(host)!.gate.authenticate(new Request(`https://${host}/x`, { headers: { cookie } }))
     return auth?.kind === 'sso' ? auth.email : auth ? 'grant' : null
   }
-  return { broker, brokerProfiles, brokerAssets, appProfiles, provider, store, net, browser, signInAtBroker, whoAt }
+  return { broker, brokerProfiles, brokerAssets, appProfiles, provider, previewClient, store, net, browser, signInAtBroker, whoAt }
 }
 
 /** A PKCE pair, for driving `/authorize` and `/token` by hand. */
@@ -671,6 +675,80 @@ describe('PR-preview clients', () => {
       `${PREVIEW_HOSTS[0]}/home`,
       `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
       `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+    ])
+  })
+
+  it("a client's own TTL: 0 asks at every sign-in and remembers nothing; 1 day lasts a day; the page says which", async () => {
+    const run = async (ttl: number) => {
+      const w = await world({ previewConsentTtlS: ttl })
+      const b = w.browser()
+      await w.signInAtBroker(b, 'ada@openathena.ai')
+      const asked = (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res
+      const html = await asked.clone().text()
+      const allowed = (await consent(b, asked, 'allow')).hops.at(-1)!
+      const silently = async () => (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=none`)).hops.at(-1)!
+      const now = await silently()
+      at(86400 - 1)
+      await w.signInAtBroker(b, 'ada@openathena.ai')
+      const dayLess = await silently()
+      at(86400)
+      await w.signInAtBroker(b, 'ada@openathena.ai')
+      const day = await silently()
+      at(0)
+      return [/<p class="muted">(You[^<]+)<\/p>/.exec(html)![1], short(allowed), short(now), short(dayLess), short(day), b.jar('login.test').get('__Host-oa_preview_ok') ?? null]
+    }
+    const [every, oneDay] = [await run(0), await run(86400)]
+    expect([every, oneDay.slice(0, 5)]).toEqual([
+      [
+        "You'll be asked each time you sign in to this preview.",
+        `${PREVIEW_HOSTS[0]}/home`,
+        `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+        `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+        `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+        null,
+      ],
+      [
+        "You won't be asked again for this address for 1 day.",
+        `${PREVIEW_HOSTS[0]}/home`,
+        `${PREVIEW_HOSTS[0]}/home`,
+        `${PREVIEW_HOSTS[0]}/home`,
+        `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`,
+      ],
+    ])
+  })
+
+  it('lowering the TTL applies to clicks already given; raising it lengthens them, up to 30 days', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    await consent(b, (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res, 'allow')
+    const silently = async () => short((await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=none`)).hops.at(-1)!)
+    at(3600)
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const before = await silently()
+    w.previewClient.previewConsentTtlS = 3600
+    const lowered = await silently()
+    w.previewClient.previewConsentTtlS = 30 * 86400
+    at(20 * 86400)
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    const raised = await silently()
+    expect([before, lowered, raised]).toEqual([`${PREVIEW_HOSTS[0]}/home`, `${PREVIEW_HOSTS[0]}/home?sso=interaction_required`, `${PREVIEW_HOSTS[0]}/home`])
+  })
+
+  it('a configured client with a TTL out of range is refused at startup', async () => {
+    const make = (ttl: number) => () => oidcProviderRoutes({
+      gate: createGate({ store: memoryStore(), audit: memoryAudit(), secret: 'broker-secret-0123456789abcdef', policy: async () => ['member'] }),
+      issuer: ISSUER,
+      clients: [{ id: 'p', secretHash: 'h', redirectUris: [], preview: true, previewConsentTtlS: ttl }],
+      keys: [KEY],
+      store: memoryProviderStore(),
+      subjectSecret: 'subject-secret',
+      loginUrl: '/signin',
+    })
+    expect([-1, 1.5, 30 * 86400 + 1].map(t => { try { make(t)(); return null } catch (e) { return (e as Error).message } })).toEqual([
+      'p: previewConsentTtlS: a whole number of seconds from 0 (every sign-in) to 2592000 (30 days)',
+      'p: previewConsentTtlS: a whole number of seconds from 0 (every sign-in) to 2592000 (30 days)',
+      'p: previewConsentTtlS: a whole number of seconds from 0 (every sign-in) to 2592000 (30 days)',
     ])
   })
 

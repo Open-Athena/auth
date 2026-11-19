@@ -10,11 +10,24 @@ import {
   type ClientRegistry,
   hashClientSecret,
   mintClientSecret,
+  PREVIEW_CONSENT_TTL_S,
+  previewConsentLasting,
   type ProviderClient,
   redirectUriProblem,
   type RegisteredClient,
 } from '@open-athena/auth/provider'
 import { esc, page, redirect } from './page.js'
+
+/** A logged change's detail: a client's callbacks (create, set-callbacks) or a setting's old → new. */
+function eventDetail(detail: string): string {
+  const d = JSON.parse(detail) as unknown
+  if (Array.isArray(d)) return d.join(' ')
+  return Object.entries(d as Record<string, [unknown, unknown]>).map(([k, [from, to]]) => `${k}: ${JSON.stringify(from)} → ${JSON.stringify(to)}`).join('; ')
+}
+
+/** A preview client's consent TTL, as the table says it. */
+const consentText = (ttlS: number | null) =>
+  ttlS === 0 ? 'Asks at every sign-in' : `A click lasts ${previewConsentLasting(ttlS ?? PREVIEW_CONSENT_TTL_S).replace(/^for /, '')}${ttlS === null ? ' (default)' : ''}`
 
 export interface AdminOptions {
   gate: Gate
@@ -68,7 +81,7 @@ function clientRows(c: RegisteredClient, draft: Draft | null): string {
   return `<tr class="app-row">
 <th scope="row"><span class="app-name">${esc(c.name)}</span><code class="app-id muted">${esc(c.id)}</code></th>
 <td class="callbacks">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</td>
-<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span>${c.preview ? ' <span class="status">Preview</span>' : ''}${c.previewSource ? `<br><span class="muted">PRs: <code>${esc(c.previewSource.repo)}</code> as <code>${esc(c.previewSource.label)}</code></span>` : ''}</td>
+<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span>${c.preview ? ' <span class="status">Preview</span>' : ''}${c.previewSource ? `<br><span class="muted">PRs: <code>${esc(c.previewSource.repo)}</code> as <code>${esc(c.previewSource.label)}</code></span>` : ''}${c.preview ? `<br><span class="muted">${consentText(c.previewConsentTtlS)}</span>` : ''}</td>
 <td><div class="row-actions"><button type="button" class="quiet" data-edit aria-controls="${esc(editor)}" aria-expanded="${draft ? 'true' : 'false'}">Edit</button>
 <form method="post" action="${esc(action)}"><button class="quiet" name="action" value="${c.disabledAt === null ? 'disable' : 'enable'}">${c.disabledAt === null ? 'Disable' : 'Enable'}</button></form></div></td>
 </tr>
@@ -115,9 +128,9 @@ ${
 <h2>Changes</h2>
 ${
   events.length
-    ? `<div class="scroll"><table><thead><tr><th>When</th><th>App</th><th>Change</th><th>By</th><th>Callbacks</th></tr></thead><tbody>
+    ? `<div class="scroll"><table><thead><tr><th>When</th><th>App</th><th>Change</th><th>By</th><th>Detail</th></tr></thead><tbody>
 ${events
-  .map(e => `<tr><td>${esc(when(e.at))}</td><td><code>${esc(e.clientId)}</code></td><td>${esc(e.action)}</td><td>${esc(e.actor)}</td><td>${e.detail ? `<code>${esc((JSON.parse(e.detail) as string[]).join(' '))}</code>` : ''}</td></tr>`)
+  .map(e => `<tr><td>${esc(when(e.at))}</td><td><code>${esc(e.clientId)}</code></td><td>${esc(e.action)}</td><td>${esc(e.actor)}</td><td>${e.detail ? `<code>${esc(eventDetail(e.detail))}</code>` : ''}</td></tr>`)
   .join('\n')}
 </tbody></table></div>`
     : '<p class="muted">None yet.</p>'

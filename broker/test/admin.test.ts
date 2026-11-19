@@ -9,7 +9,7 @@ import { d1AuditSink, d1GrantStore } from '../../src/adapters/d1.js'
 import { createGate, domainPolicy } from '../../src/index.js'
 import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '../../src/provider/index.js'
 import { testDbRaw } from '../../test/d1-shim.js'
-import { createSql, existsSql, isPreviewSql, lit, listSql, previewSourceSql, previewSuffixes, rotateSql, setCallbacksSql, setDisabledSql, setPreviewSourceSql } from '../scripts/oa-client.mjs'
+import { createSql, existsSql, isPreviewSql, lit, listSql, previewConsentTtlSql, previewSourceSql, previewSuffixes, rotateSql, setCallbacksSql, setDisabledSql, setPreviewConsentTtlSql, setPreviewSourceSql } from '../scripts/oa-client.mjs'
 import { adminRoutes, parseAdmins } from '../src/admin.js'
 
 const ORIGIN = 'https://login.test'
@@ -88,6 +88,27 @@ describe('who gets in', () => {
     mkdirSync('tmp/broker-preview', { recursive: true })
     writeFileSync('tmp/broker-preview/index.html', html)
   })
+  it("says how long each preview client's consent click lasts", async () => {
+    const { get, cookieFor, registry } = setup()
+    for (const [id, ttl] of [['p-default', null], ['p-every', 0], ['p-day', 86400], ['p-12h', 12 * 3600]] as const) {
+      await registry.create({ id, name: id, secretHash: 'test-only-hash', redirectUris: [CB], preview: true }, ADMIN)
+      if (ttl !== null) await registry.setPreviewConsentTtl!(id, ttl, ADMIN)
+    }
+    await registry.create({ id: 'plain', name: 'plain', secretHash: 'test-only-hash', redirectUris: [CB] }, ADMIN)
+    const html = await (await get(await cookieFor(ADMIN))).text()
+    expect([...html.matchAll(/<span class="status">Preview<\/span><br><span class="muted">([^<]+)<\/span>/g)].map(m => m[1])).toEqual([
+      'A click lasts 12 hours',
+      'A click lasts 1 day',
+      'A click lasts 7 days (default)',
+      'Asks at every sign-in',
+    ])
+    expect([...html.matchAll(/<td><code>(p-[^<]+)<\/code><\/td><td>update<\/td><td>[^<]+<\/td><td><code>([^<]+)<\/code><\/td>/g)].map(m => [m[1], m[2]])).toEqual([
+      ['p-12h', 'previewConsentTtlS: null → 43200'],
+      ['p-day', 'previewConsentTtlS: null → 86400'],
+      ['p-every', 'previewConsentTtlS: null → 0'],
+    ])
+  })
+
   it('sends someone not signed in to sign in', async () => {
     const { admin } = setup()
     const res = (await admin(new Request(`${ORIGIN}/admin`)))!
@@ -285,6 +306,28 @@ describe('changing an app', () => {
     expect((await registry.events()).map(e => e.actor)).toEqual(['first'])
   })
 
+  it('a consent TTL only on a preview client, set and cleared through the registry', async () => {
+    const { registry } = setup()
+    await registry.create({ id: 'p', name: 'P', secretHash: 'h', redirectUris: [CB], preview: true }, 'me')
+    await registry.create({ id: 'o', name: 'O', secretHash: 'h', redirectUris: [CB] }, 'me')
+    const results = [
+      await registry.setPreviewConsentTtl!('p', 86400, 'admin'),
+      await registry.setPreviewConsentTtl!('o', 86400, 'admin'),
+      await registry.setPreviewConsentTtl!('missing', 86400, 'admin'),
+      (await registry.get('p'))!.previewConsentTtlS,
+      (await registry.get('o'))!.previewConsentTtlS,
+      await registry.setPreviewConsentTtl!('p', null, 'admin'),
+      (await registry.get('p'))!.previewConsentTtlS,
+    ]
+    expect([results, (await registry.events()).slice(0, 2).map(e => [e.clientId, e.action, e.detail])]).toEqual([
+      [true, false, false, 86400, null, true, null],
+      [
+        ['p', 'update', JSON.stringify({ previewConsentTtlS: [86400, null] })],
+        ['p', 'update', JSON.stringify({ previewConsentTtlS: [null, 86400] })],
+      ],
+    ])
+  })
+
   it('a PR source only on a preview client: at creation, or set later; never on an ordinary one', async () => {
     const { registry } = setup()
     const SOURCE = { provider: 'github' as const, repo: 'Open-Athena/disky', label: 'pr-{n}' }
@@ -329,6 +372,7 @@ describe('oa-client.mjs', () => {
       postLogoutRedirectUris: [],
       preview: false,
       previewSource: null,
+      previewConsentTtlS: null,
       disabledAt: null,
       createdAt: T,
       createdBy: 'cli:me',
@@ -383,6 +427,26 @@ describe('oa-client.mjs', () => {
       [
         ['update', T + 2, JSON.stringify({ previewSource: [SOURCE, null] })],
         ['update', T + 1, JSON.stringify({ previewSource: [null, SOURCE] })],
+      ],
+    ])
+  })
+
+  it("sets and clears a preview client's consent TTL, logged old → new, which the provider then carries", async () => {
+    const { raw, registry } = setup()
+    raw.exec(createSql({ id: 'oa-r2-usage-preview', name: 'R2 previews', secretHash: 'h1', redirectUris: ['https://*.oa-r2-usage.pages.dev/auth/oa/callback'], preview: true }, 'cli:me', T))
+    const unset = (await clientLookup(registry)('oa-r2-usage-preview'))!.previewConsentTtlS
+    raw.exec(setPreviewConsentTtlSql('oa-r2-usage-preview', 0, null, 'cli:me', T + 1))
+    const set = [(await registry.get('oa-r2-usage-preview'))!.previewConsentTtlS, (await clientLookup(registry)('oa-r2-usage-preview'))!.previewConsentTtlS, raw.prepare(previewConsentTtlSql('oa-r2-usage-preview')).all()]
+    raw.exec(setPreviewConsentTtlSql('oa-r2-usage-preview', null, 0, 'cli:me', T + 2))
+    expect([unset, ...set, (await registry.get('oa-r2-usage-preview'))!.previewConsentTtlS, (await registry.events()).slice(0, 2).map(e => [e.action, e.at, e.detail])]).toEqual([
+      undefined,
+      0,
+      0,
+      [{ ttl_s: 0 }],
+      null,
+      [
+        ['update', T + 2, JSON.stringify({ previewConsentTtlS: [0, null] })],
+        ['update', T + 1, JSON.stringify({ previewConsentTtlS: [null, 0] })],
       ],
     ])
   })
