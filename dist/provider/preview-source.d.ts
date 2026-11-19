@@ -10,6 +10,11 @@ export interface PreviewSource {
     repo: string;
     /** The host label for PR n: lower-case letters, digits and hyphens around exactly one `{n}`, e.g. `pr-{n}`. */
     label: string;
+    /**
+     * The GitHub environment its preview workflow records this client's deployments in (disky: `preview/<target>`).
+     * With it, a deployment is looked up there; without, in the head commit's deployments, then the repo's newest 100.
+     */
+    environment?: string;
 }
 /** A PR as the consent page shows it. Everything but `number` is GitHub's, and `title` is the author's. */
 export interface PreviewPr {
