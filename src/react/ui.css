@@ -149,3 +149,81 @@
 }
 .oa-ui-um-item:hover,
 .oa-ui-um-item:focus-visible { background: var(--oa-ui-panel); }
+
+/*
+ * "Sign in with OA" (`<OaSignInButton>`): sized to sit beside Google's button. Each variant is variables, so a host
+ * (or another org's brand) restyles it by setting them on `.oa-signin` or `.oa-signin-<variant>`.
+ */
+:where(.oa-signin) {
+  --oa-signin-bg: #a99b8d;
+  --oa-signin-ink: #1f1e1b;
+  --oa-signin-line: var(--oa-signin-bg);
+  --oa-signin-ring: currentColor;
+  --oa-signin-stem: currentColor;
+  --oa-signin-tile: transparent;
+  --oa-signin-radius: 4px;
+}
+:where(.oa-signin-neutral) {
+  --oa-signin-bg: light-dark(#fff, #131314);
+  --oa-signin-ink: light-dark(#1f1e1b, #e3e3e3);
+  --oa-signin-line: light-dark(#747775, #8e918f);
+  --oa-signin-ring: light-dark(#696751, #a99b8d);
+  --oa-signin-stem: light-dark(#9c683c, #b57e4f);
+}
+:where(.oa-signin-blue) {
+  --oa-signin-bg: #224a82;
+  --oa-signin-ink: #fff;
+  --oa-signin-ring: #696751;
+  --oa-signin-stem: #9c683c;
+  --oa-signin-tile: #fff;
+}
+.oa-signin {
+  align-items: center;
+  background: var(--oa-signin-bg);
+  border: 1px solid var(--oa-signin-line);
+  border-radius: var(--oa-signin-radius);
+  box-sizing: border-box;
+  color: var(--oa-signin-ink);
+  display: flex;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  text-decoration: none;
+  width: 100%;
+}
+.oa-signin:hover { filter: brightness(1.06); }
+.oa-signin:focus-visible { outline: 2px solid var(--oa-signin-ink); outline-offset: 2px; }
+.oa-signin-logo {
+  align-items: center;
+  background: var(--oa-signin-tile);
+  border-radius: calc(var(--oa-signin-radius) - 1px);
+  display: flex;
+  flex: none;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+.oa-signin-blue .oa-signin-logo { height: 32px; margin-left: -8px; width: 32px; }
+.oa-signin-blue:not(.oa-signin-account) .oa-signin-spacer { width: 24px; }
+.oa-signin-blue.oa-signin-account .oa-signin-logo { margin: 0 -8px 0 0; }
+.oa-signin-ring { fill: var(--oa-signin-ring); }
+.oa-signin-stem { fill: var(--oa-signin-stem); }
+.oa-signin-label { flex: 1; text-align: center; }
+.oa-signin-spacer { flex: none; width: 22px; }
+.oa-signin-account { padding: 4px 12px 4px 8px; }
+.oa-signin-avatar {
+  align-items: center;
+  background: color-mix(in srgb, var(--oa-signin-ink) 18%, transparent);
+  border-radius: 50%;
+  display: flex;
+  flex: none;
+  font-size: 13px;
+  height: 28px;
+  justify-content: center;
+  object-fit: cover;
+  width: 28px;
+}
+.oa-signin-who { display: flex; flex: 1; flex-direction: column; line-height: 1.25; min-width: 0; text-align: left; }
+.oa-signin-email { font-size: 12px; font-weight: 400; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
