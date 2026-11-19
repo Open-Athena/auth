@@ -150,10 +150,8 @@
 .oa-ui-um-item:hover,
 .oa-ui-um-item:focus-visible { background: var(--oa-ui-panel); }
 
-/*
- * "Sign in with OA" (`<OaSignInButton>`): sized to sit beside Google's button. Each variant is variables, so a host
- * (or another org's brand) restyles it by setting them on `.oa-signin` or `.oa-signin-<variant>`.
- */
+/* "Sign in with OA" (`<OaSignInButton>`): its styles are `OA_SIGNIN_CSS` (src/signin), which the build appends here. */
+
 :where(.oa-signin) {
   --oa-signin-bg: #a99b8d;
   --oa-signin-ink: #1f1e1b;
