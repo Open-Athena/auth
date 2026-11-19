@@ -17,7 +17,7 @@
 import { createGate, domainPolicy, safeNext } from '@open-athena/auth'
 import { d1AuditSink, d1GrantStore, d1ProfileStore } from '@open-athena/auth/d1'
 import { oidcCallback, oidcStart } from '@open-athena/auth/oidc'
-import { clientLookup, clientManagementRoutes, managementTokenAuth, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '@open-athena/auth/provider'
+import { clientLookup, clientManagementRoutes, githubPreviewPrs, managementTokenAuth, generateSigningKey, hashClientSecret, oidcProviderRoutes, type PreviewPrs, type SigningJwk } from '@open-athena/auth/provider'
 import { d1ClientRegistry, d1ProviderStore } from '@open-athena/auth/provider/d1'
 import { adminRoutes, parseAdmins } from './admin.js'
 import { clients } from './clients.js'
@@ -32,6 +32,11 @@ export interface Env {
   CLIENT_REDIRECT_DOMAIN: string
   /** Comma-separated hosts a preview client's `https://*.<host>/<path>` callback may cover (e.g. `oa-gcs-usage.pages.dev`). */
   PREVIEW_HOST_SUFFIXES?: string
+  /**
+   * Read-only GitHub token (`pull_requests: read` on preview clients' repos), for the preview consent page's
+   * PR details (`previewSource`). Optional: without it, public repos at GitHub's anonymous rate.
+   */
+  GITHUB_PREVIEW_TOKEN?: string
   /** JSON array of scoped, expiring management grants. Absent = API disabled. Hashes only. */
   CLIENT_MANAGEMENT_GRANTS?: string
   SESSION_SECRET?: string
@@ -49,6 +54,13 @@ const AUTHORIZE = '/oidc/authorize'
 const isLoopback = (url: URL) => url.hostname === 'localhost' || url.hostname === '127.0.0.1'
 
 let devKey: Promise<SigningJwk> | null = null
+
+/** One per isolate (and token), so its 60 s cache outlives a request. */
+let prs: { token: string | undefined; lookup: PreviewPrs } | null = null
+function previewPrs(token: string | undefined): PreviewPrs {
+  if (!prs || prs.token !== token) prs = { token, lookup: githubPreviewPrs(token ? { token } : {}) }
+  return prs.lookup
+}
 
 function config(env: Env, req: Request) {
   const url = new URL(req.url)
@@ -111,6 +123,7 @@ export default {
       store: d1ProviderStore(env.DB),
       subjectSecret: secret,
       loginUrl: '/signin',
+      previewPrs: previewPrs(env.GITHUB_PREVIEW_TOKEN),
     })
     const fromProvider = await provider(req)
     if (fromProvider) return fromProvider

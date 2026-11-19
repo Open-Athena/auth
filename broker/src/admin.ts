@@ -68,7 +68,7 @@ function clientRows(c: RegisteredClient, draft: Draft | null): string {
   return `<tr class="app-row">
 <th scope="row"><span class="app-name">${esc(c.name)}</span><code class="app-id muted">${esc(c.id)}</code></th>
 <td class="callbacks">${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join('<br>')}</td>
-<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span>${c.preview ? ' <span class="status">Preview</span>' : ''}</td>
+<td><span class="status ${c.disabledAt !== null ? 'disabled' : 'active'}">${c.disabledAt !== null ? 'Disabled' : 'Active'}</span>${c.preview ? ' <span class="status">Preview</span>' : ''}${c.previewSource ? `<br><span class="muted">PRs: <code>${esc(c.previewSource.repo)}</code> as <code>${esc(c.previewSource.label)}</code></span>` : ''}</td>
 <td><div class="row-actions"><button type="button" class="quiet" data-edit aria-controls="${esc(editor)}" aria-expanded="${draft ? 'true' : 'false'}">Edit</button>
 <form method="post" action="${esc(action)}"><button class="quiet" name="action" value="${c.disabledAt === null ? 'disable' : 'enable'}">${c.disabledAt === null ? 'Disable' : 'Enable'}</button></form></div></td>
 </tr>

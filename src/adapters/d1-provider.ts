@@ -3,6 +3,7 @@
  * `migrations/provider/` (a track of its own, applied only on the deployment
  * that issues identity).
  */
+import type { PreviewSource } from '../provider/preview-source.js'
 import type { ClientAction, ClientEvent, ClientRegistry, RegisteredClient } from '../provider/registry.js'
 import type { CodeRecord, ProviderStore } from '../provider/store.js'
 
@@ -82,6 +83,7 @@ interface ClientRow {
   redirect_uris: string
   post_logout_redirect_uris: string
   preview: number
+  preview_source: string | null
   disabled_at: number | null
   created_at: number
   created_by: string
@@ -96,6 +98,7 @@ const clientFromRow = (r: ClientRow): RegisteredClient => ({
   redirectUris: JSON.parse(r.redirect_uris) as string[],
   postLogoutRedirectUris: JSON.parse(r.post_logout_redirect_uris) as string[],
   preview: r.preview === 1,
+  previewSource: r.preview === 1 && r.preview_source ? (JSON.parse(r.preview_source) as PreviewSource) : null,
   disabledAt: r.disabled_at,
   createdAt: r.created_at,
   createdBy: r.created_by,
@@ -103,8 +106,8 @@ const clientFromRow = (r: ClientRow): RegisteredClient => ({
   updatedBy: r.updated_by,
 })
 
-const SELECT_CLIENT =
-  'SELECT c.*, EXISTS (SELECT 1 FROM provider_preview_clients p WHERE p.client_id = c.id) AS preview FROM provider_clients c'
+const SELECT_CLIENT = `SELECT c.*, EXISTS (SELECT 1 FROM provider_preview_clients p WHERE p.client_id = c.id) AS preview,
+  (SELECT s.source FROM provider_preview_sources s WHERE s.client_id = c.id) AS preview_source FROM provider_clients c`
 
 export function d1ClientRegistry(db: D1Database): ClientRegistry {
   const now = () => Math.floor(Date.now() / 1000)
@@ -137,6 +140,9 @@ export function d1ClientRegistry(db: D1Database): ClientRegistry {
           .bind(c.id, c.name, c.secretHash, JSON.stringify(c.redirectUris), JSON.stringify(c.postLogoutRedirectUris ?? []), at, actor, at, actor),
         // Only with the row just inserted: a taken id never becomes a preview client.
         db.prepare('INSERT OR IGNORE INTO provider_preview_clients (client_id) SELECT ? WHERE ? = 1 AND changes() = 1').bind(c.id, c.preview ? 1 : 0),
+        // And its source with it: only a client that just became a preview client.
+        db.prepare('INSERT OR IGNORE INTO provider_preview_sources (client_id, source) SELECT ?, ? WHERE ? IS NOT NULL AND changes() = 1')
+          .bind(c.id, c.preview && c.previewSource ? JSON.stringify(c.previewSource) : null, c.preview && c.previewSource ? 1 : null),
         db
           .prepare(
             `INSERT INTO provider_client_events (client_id, action, actor, at, detail)
@@ -201,6 +207,23 @@ export function d1ClientRegistry(db: D1Database): ClientRegistry {
           .bind(id, disabled ? 'disable' : 'enable', actor, at),
       ])
       return (updated?.meta.changes ?? 0) > 0
+    },
+    async setPreviewSource(id, source, actor) {
+      const row = await db
+        .prepare('SELECT (SELECT source FROM provider_preview_sources WHERE client_id = p.client_id) AS source FROM provider_preview_clients p WHERE p.client_id = ?')
+        .bind(id)
+        .first<{ source: string | null }>()
+      if (!row) return false
+      const at = now()
+      const next = source ? JSON.stringify(source) : null
+      await db.batch([
+        next
+          ? db.prepare('INSERT INTO provider_preview_sources (client_id, source) VALUES (?, ?) ON CONFLICT (client_id) DO UPDATE SET source = excluded.source').bind(id, next)
+          : db.prepare('DELETE FROM provider_preview_sources WHERE client_id = ?').bind(id),
+        db.prepare('UPDATE provider_clients SET updated_at = ?, updated_by = ? WHERE id = ?').bind(at, actor, id),
+        logged(id, 'update', actor, at, JSON.stringify({ previewSource: [row.source ? JSON.parse(row.source) : null, source] })),
+      ])
+      return true
     },
     async events(limit = 50) {
       const { results } = await db

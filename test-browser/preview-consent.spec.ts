@@ -1,13 +1,24 @@
 // The PR-preview consent page in a real browser: the Origin its own form POST
 // carries is the browser's to decide (from the page's referrer policy), which
-// is what the 2026-11-12 `no-referrer` bug got wrong and in-process tests missed.
+// is what the 2026-11-12 `no-referrer` bug got wrong and in-process tests missed. With a `previewSource`, the
+// page shows the branch's PR, from a mocked GitHub, its author's avatar allowed by the page's CSP.
 import { expect, test } from '@playwright/test'
 import { createGate } from '../dist/index.js'
-import { generateSigningKey, hashClientSecret, memoryProviderStore, oidcProviderRoutes } from '../dist/provider/index.js'
+import { generateSigningKey, githubPreviewPrs, hashClientSecret, memoryProviderStore, oidcProviderRoutes } from '../dist/provider/index.js'
 import { memoryGrantStore } from '../dist/testing/index.js'
 
 const ISSUER = 'https://login.test'
 const BRANCH = 'pr-1.proj.pages.dev'
+const AVATAR = 'https://avatars.githubusercontent.com/u/1?v=4'
+/** GitHub's answer for PR 1, as the broker's own lookup gets it. */
+const githubFetch = (async () => Response.json({
+  number: 1, title: 'R2 preview pilot', state: 'open', draft: false, merged_at: null, updated_at: '2026-11-18T20:14:03Z',
+  user: { login: 'ryan-williams', avatar_url: AVATAR },
+  head: { ref: 'rw/r2-preview-pilot', sha: 'abcdef1234567890', repo: { full_name: 'Open-Athena/disky' } },
+  base: { ref: 'r2' },
+})) as typeof fetch
+/** A 1×1 PNG, for the avatar. */
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 
 async function broker() {
   const gate = createGate({
@@ -24,7 +35,9 @@ async function broker() {
       secretHash: await hashClientSecret('app-p-secret'),
       redirectUris: ['https://*.proj.pages.dev/auth/cb'],
       preview: true,
+      previewSource: { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' },
     }],
+    previewPrs: githubPreviewPrs({ fetch: githubFetch }),
     keys: [await generateSigningKey('k1')],
     store: memoryProviderStore(),
     subjectSecret: 'subject-secret',
@@ -53,6 +66,11 @@ test('one click on "Sign in to a preview?" posts with the real Origin and is sen
     await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: Buffer.from(await res.arrayBuffer()) })
   })
 
+  const avatars: string[] = []
+  await context.route(AVATAR, route => { avatars.push(route.request().url()); return route.fulfill({ contentType: 'image/png', body: PNG }) })
+  const blocked: string[] = []
+  page.on('console', m => { if (/Content Security Policy/.test(m.text())) blocked.push(m.text()) })
+
   const authorize = new URL(`${ISSUER}/oidc/authorize`)
   for (const [k, v] of Object.entries({
     client_id: 'app-p', redirect_uri: `https://${BRANCH}/auth/cb`, response_type: 'code', scope: 'openid email', state: 's1',
@@ -60,6 +78,15 @@ test('one click on "Sign in to a preview?" posts with the real Origin and is sen
   })) authorize.searchParams.set(k, v)
   await page.goto(authorize.toString())
   await expect(page.getByText(`${BRANCH} wants to sign you in as ada@openathena.ai.`)).toBeVisible()
+  await expect(page.locator('.pr p')).toHaveText([
+    'Open-Athena/disky #1 · open · updated 2026-11-18 20:14 UTC',
+    'Title, as its author wrote it: R2 preview pilot',
+    'By ryan-williams',
+    'Branch: rw/r2-preview-pilot → r2',
+    'Head commit: abcdef1',
+  ])
+  await expect.poll(() => page.locator('.avatar').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
+  expect([avatars, blocked]).toEqual([[AVATAR], []])
   await page.screenshot({ path: `tmp/preview-consent-${info.project.name}.png`, fullPage: true })
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByRole('heading', { name: 'Answered 302' })).toBeVisible()

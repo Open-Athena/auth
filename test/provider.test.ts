@@ -9,7 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { lookupSlackEmoji, lookupSlackEmojis, oidcCallback, oidcStart, redirectFromOrigin, slackEmojiClient } from '../src/adapters/oidc.js'
 import { b64uDecodeBytes, b64uDecodeString, b64uEncode } from '../src/core/base64.js'
 import { createGate, type Gate } from '../src/core/gate.js'
-import { brokerProvider, generateSigningKey, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
+import { brokerProvider, generateSigningKey, githubPreviewPrs, hashClientSecret, keySet, memoryProviderStore, oidcProviderRoutes, type PreviewPrs, type PreviewSource, type ProviderClient, type SigningJwk } from '../src/provider/index.js'
 import { d1GrantStore } from '../src/adapters/d1.js'
 import { d1ProviderStore } from '../src/adapters/d1-provider.js'
 import { d1RetainedStore } from '../src/adapters/d1-retained.js'
@@ -22,7 +22,8 @@ import { memoryAudit, memoryStore } from './memory-store.js'
 const ISSUER = 'https://login.test'
 /** A Pages project's branch hosts, all one preview client (`app-p`). */
 const PREVIEW = 'proj.pages.dev'
-const PREVIEW_HOSTS = ['pr-1', 'pr-2', 'pr-3'].map(b => `${b}.${PREVIEW}`)
+/** Three PR branches' hosts, then one that isn't a PR's (`dev`). */
+const PREVIEW_HOSTS = ['pr-1', 'pr-2', 'pr-3', 'dev'].map(b => `${b}.${PREVIEW}`)
 const T0 = Date.UTC(2026, 9, 25, 12, 0, 0)
 const enc = new TextEncoder()
 
@@ -98,6 +99,9 @@ interface WorldOptions {
   assets?: boolean
   /** `slackEmojiLookupsPerMinute` on the provider. */
   lookupsPerMinute?: number | false
+  /** The preview client's (`app-p`) PR source, and the provider's lookup. */
+  previewSource?: PreviewSource
+  previewPrs?: PreviewPrs
 }
 
 async function world(o: WorldOptions = {}) {
@@ -143,6 +147,7 @@ async function world(o: WorldOptions = {}) {
         redirectUris: [`https://*.${PREVIEW}/auth/cb`],
         postLogoutRedirectUris: [`https://*.${PREVIEW}/bye`],
         preview: true,
+        ...(o.previewSource ? { previewSource: o.previewSource } : {}),
       },
     ],
     keys: [KEY],
@@ -153,6 +158,7 @@ async function world(o: WorldOptions = {}) {
     scopes: ['groups'],
     ...(o.policy ? { policy: o.policy } : {}),
     ...(o.lookupsPerMinute === undefined ? {} : { slackEmojiLookupsPerMinute: o.lookupsPerMinute }),
+    ...(o.previewPrs ? { previewPrs: o.previewPrs } : {}),
   })
   const apps = new Map<string, { gate: Gate; start: ReturnType<typeof oidcStart>; callback: ReturnType<typeof oidcCallback> }>()
   const appProfiles = new Map([['a.test', memoryProfileStore()], ['b.test', memoryProfileStore()], ...PREVIEW_HOSTS.map(h => [h, memoryProfileStore()] as const)])
@@ -726,6 +732,152 @@ describe('PR-preview clients', () => {
     ]) statuses.push((await b.request(authorizeUrl({ client_id: client_id!, redirect_uri: redirect_uri!, code_challenge: (await pkce()).challenge, code_challenge_method: 'S256' }))).status)
     expect(statuses).toEqual([400, 400, 400, 400])
   })
+})
+
+describe('preview consent: the PR, from GitHub (`previewSource`)', () => {
+  const SOURCE: PreviewSource = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' }
+  /** GitHub's `pulls/{n}` answer for PR 1, with `over` on top. */
+  const ghPr = (over: Record<string, unknown> = {}) => ({
+    number: 1,
+    title: 'R2 preview <pilot>',
+    state: 'open',
+    draft: false,
+    merged_at: null,
+    updated_at: '2026-11-18T20:14:03Z',
+    user: { login: 'ryan-williams', avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4' },
+    head: { ref: 'rw/r2-preview-pilot', sha: 'abcdef1234567890', repo: { full_name: 'Open-Athena/disky' } },
+    base: { ref: 'r2' },
+    ...over,
+  })
+  /** A world whose GitHub answers PR 1 with `answer()` (a body, or a status), uncached; `asked` lists the URLs. */
+  async function setup(answer: () => unknown, o: { prs?: boolean } = {}) {
+    const asked: string[] = []
+    const fetch = (async (url: string) => {
+      asked.push(url)
+      const a = answer()
+      return typeof a === 'number' ? new Response('{}', { status: a }) : Response.json(a)
+    }) as typeof globalThis.fetch
+    const w = await world({ previewSource: SOURCE, ...(o.prs === false ? {} : { previewPrs: githubPreviewPrs({ fetch, ttlS: 0 }) }) })
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    return { w, b, asked }
+  }
+  const start = (b: Browser, host: string, more = '') => b.follow(`https://${host}/auth/start?next=/home${more}`)
+  /** The page's `<main>`, its form's action (the authorize URL, with this request's state) elided. */
+  const mainOf = async (res: Response) =>
+    /<main>\n([\s\S]*)\n<\/main>/.exec(await res.clone().text())![1]!.replace(/<form method="post" action="[^"]*">/, '<form method="post" action="…">')
+  const intro = (host: string) => [
+    '<h1>Sign in to a preview?</h1>',
+    `<p><strong class="host">${host}</strong> wants to sign you in as <strong>ada@openathena.ai</strong>.</p>`,
+    "<p>It's a preview of Project, built from a branch whose code may not have been reviewed. Continue only if you meant to open it.</p>",
+  ]
+  const outro = [
+    '<form method="post" action="…">',
+    '<button name="decision" value="allow">Continue</button><button name="decision" value="deny">Cancel</button>',
+    '</form>',
+    '<p class="muted">You won\'t be asked again for this address for 7 days.</p>',
+  ]
+  const HOST = PREVIEW_HOSTS[0]!
+  const BRANCH = '<p>Branch: <a href="https://github.com/Open-Athena/disky/tree/rw/r2-preview-pilot"><code>rw/r2-preview-pilot</code></a> → <a href="https://github.com/Open-Athena/disky/tree/r2"><code>r2</code></a></p>'
+  const COMMIT = '<p>Head commit: <a href="https://github.com/Open-Athena/disky/pull/1/commits/abcdef1234567890"><code>abcdef1</code></a></p>'
+  const AUTHOR = '<p>By <img class="avatar" src="https://avatars.githubusercontent.com/u/1?v=4" alt="" width="20" height="20"> <a href="https://github.com/ryan-williams">ryan-williams</a></p>'
+
+  it("shows an open PR: repo and number, state, the author's title quoted as theirs, author, branches and head commit", async () => {
+    const { b, asked } = await setup(() => ghPr())
+    const { res } = await start(b, HOST)
+    expect([res.status, await mainOf(res), res.headers.get('content-security-policy'), asked]).toEqual([
+      200,
+      [
+        ...intro(HOST),
+        '<section class="pr">',
+        '<p><a href="https://github.com/Open-Athena/disky/pull/1">Open-Athena/disky #1</a> · open · updated 2026-11-18 20:14 UTC</p>',
+        '<p>Title, as its author wrote it: <q class="title">R2 preview &lt;pilot&gt;</q></p>',
+        AUTHOR,
+        BRANCH,
+        COMMIT,
+        '</section>',
+        ...outro,
+      ].join('\n'),
+      `default-src 'none'; style-src 'unsafe-inline'; img-src https://avatars.githubusercontent.com; form-action 'self' https://${HOST}; frame-ancestors 'none'; base-uri 'none'`,
+      ['https://api.github.com/repos/Open-Athena/disky/pulls/1'],
+    ])
+  })
+
+  it('flags a fork (or a deleted one), says draft, cuts a long title, and drops an avatar not on GitHub', async () => {
+    const title = `${'x'.repeat(130)}`
+    let pr: unknown = ghPr({ draft: true, title, head: { ref: 'feat', sha: 'abcdef1234567890', repo: { full_name: 'someone/disky' } }, user: { login: 'someone', avatar_url: 'https://evil.test/a.png' } })
+    const { b } = await setup(() => pr)
+    const fork = (await mainOf((await start(b, HOST)).res)).split('\n').slice(3, 10)
+    pr = ghPr({ head: { ref: 'feat', sha: 'abcdef1234567890', repo: null } })
+    const deleted = (await mainOf((await start(b, HOST)).res)).split('\n').slice(3, 6)
+    expect([fork, deleted]).toEqual([
+      [
+        '<section class="pr">',
+        '<p><a href="https://github.com/Open-Athena/disky/pull/1">Open-Athena/disky #1</a> · draft · updated 2026-11-18 20:14 UTC</p>',
+        '<p class="fork">From a fork: <code>someone/disky</code></p>',
+        `<p>Title, as its author wrote it: <q class="title">${'x'.repeat(119)}…</q></p>`,
+        '<p>By <a href="https://github.com/someone">someone</a></p>',
+        '<p>Branch: <a href="https://github.com/someone/disky/tree/feat"><code>feat</code></a> → <a href="https://github.com/Open-Athena/disky/tree/r2"><code>r2</code></a></p>',
+        COMMIT,
+      ],
+      [
+        '<section class="pr">',
+        '<p><a href="https://github.com/Open-Athena/disky/pull/1">Open-Athena/disky #1</a> · open · updated 2026-11-18 20:14 UTC</p>',
+        '<p class="fork">From a deleted fork.</p>',
+      ],
+    ])
+  })
+
+  it("says so when it can't tell: GitHub down, no such PR, a host that isn't a PR's, or no lookup configured; and still lets you in", async () => {
+    let answer: unknown = 503
+    const { b } = await setup(() => answer)
+    const down = await start(b, HOST)
+    answer = 404
+    const missing = await start(b, PREVIEW_HOSTS[1]!)
+    const notPr = await start(b, PREVIEW_HOSTS[3]!)
+    const unconfigured = await start((await setup(() => ghPr(), { prs: false })).b, HOST)
+    const note = async (res: Response) => (await mainOf(res)).split('\n')[3]
+    expect([await note(down.res), await note(missing.res), await note(notPr.res), await note(unconfigured.res), down.res.headers.get('content-security-policy')]).toEqual([
+      '<p class="note">Couldn\'t check GitHub: PR details unavailable.</p>',
+      '<p class="note">GitHub has no PR #2 in <code>Open-Athena/disky</code>.</p>',
+      '<p class="note">Not a PR preview: no PR found for this address.</p>',
+      '<p class="note">Couldn\'t check GitHub: PR details unavailable.</p>',
+      `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://${HOST}; frame-ancestors 'none'; base-uri 'none'`,
+    ])
+    expect((await consentAllow(b, down.res)).at(-1)).toBe(`https://${HOST}/home`)
+  })
+
+  it('refuses a closed or merged PR\'s preview, even with consent remembered; silently, as access_denied', async () => {
+    let pr: unknown = ghPr()
+    const { b } = await setup(() => pr)
+    expect((await consentAllow(b, (await start(b, HOST)).res)).at(-1)).toBe(`https://${HOST}/home`)
+    pr = ghPr({ state: 'closed', merged_at: '2026-11-19T01:00:00Z' })
+    const merged = await start(b, HOST)
+    pr = ghPr({ state: 'closed' })
+    const closed = await start(b, HOST)
+    const silent = await start(b, HOST, '&prompt=none')
+    expect([merged.res.status, await mainOf(merged.res), closed.res.status, (await mainOf(closed.res)).split('\n')[1], silent.hops.at(-1)]).toEqual([
+      403,
+      [
+        '<h1>This preview is retired</h1>',
+        `<p><strong class="host">${HOST}</strong> was built from <a href="https://github.com/Open-Athena/disky/pull/1">Open-Athena/disky #1</a>, which is merged. A preview of a merged PR shouldn't still be serving, so it can't sign you in.</p>`,
+      ].join('\n'),
+      403,
+      `<p><strong class="host">${HOST}</strong> was built from <a href="https://github.com/Open-Athena/disky/pull/1">Open-Athena/disky #1</a>, which is closed. A preview of a closed PR shouldn't still be serving, so it can't sign you in.</p>`,
+      `https://${HOST}/home?sso=access_denied`,
+    ])
+  })
+
+  /** Click Continue on a consent page; the hops after it. */
+  async function consentAllow(b: Browser, res: Response): Promise<string[]> {
+    const action = /<form method="post" action="([^"]+)">/.exec(await res.clone().text())![1]!.replace(/&amp;/g, '&')
+    const posted = await b.request(new URL(action, ISSUER).toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ISSUER },
+      body: 'decision=allow',
+    })
+    return (await b.follow(new URL(posted.headers.get('location')!).toString())).hops
+  }
 })
 
 describe('logout', () => {

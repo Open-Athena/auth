@@ -20,5 +20,16 @@ export {
   type RegisteredClient,
 } from './registry.js'
 export { previewPattern, redirectAllowed } from './redirects.js'
+export {
+  githubPreviewPrs,
+  type GithubPreviewPrsOptions,
+  prNumberFor,
+  type PreviewPr,
+  type PreviewPrLookup,
+  type PreviewPrs,
+  type PreviewSource,
+  previewSourceProblem,
+  readPr,
+} from './preview-source.js'
 export { type CodeRecord, memoryProviderStore, type ProviderStore } from './store.js'
 export { clientManagementRoutes, managementTokenAuth, type ClientManagementOptions, type ClientCallbackPolicy, type ManagementAction, type ManagementGrant, type ManagementPrincipal } from './management.js'

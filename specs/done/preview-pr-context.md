@@ -61,3 +61,20 @@ All of it broker-rendered and escaped:
 ## Rollout
 
 Register `previewSource` on disky's four preview clients (`oa-{hf,cw-s3,gcs,r2}-usage-preview` → `Open-Athena/disky`, `pr-{n}`), with Ryan's go per client. Then open a PR preview on any of them and check the page (r2's pilot pattern: create, sign in, close).
+
+## Done
+
+Implemented as above, with these differences:
+
+- **Storage:** a table, `provider_preview_sources (client_id, source)` (`migrations/provider/0005_preview_sources.sql`), not a column. The broker re-runs its provider migrations on every deploy, so each must be idempotent (`CREATE TABLE IF NOT EXISTS`), which an `ALTER TABLE … ADD COLUMN` isn't.
+- **Who sets it:** `oa-client.mjs set-source <id> --repo <owner/name> [--label 'pr-{n}']` (or `--clear`), run with the broker's Cloudflare token, and `ClientRegistry.setPreviewSource` (D1: refuses a non-preview client, logs an `update` with `{"previewSource":[old,new]}`). `create` takes one too. The machine management API (`/api/clients`) returns it but can't set it: its tokens are scoped per app, and an app's operator vouching for its own previews isn't the admin's say. `/admin` lists it, without an editor.
+- **Lookup:** `githubPreviewPrs({ token, ttlS = 60, fetch, timeoutMs = 5000 })` → `ProviderOptions.previewPrs`. It caches found and missing PRs per isolate for the TTL, never failures, and drops a stale entry when GitHub then fails. The broker builds one per isolate from `GITHUB_PREVIEW_TOKEN` (optional: disky is public, but GitHub's anonymous limit is 60 an hour per IP, shared on Workers).
+- **Step 3 (deployment confirmation):** not done. disky's `cf-preview` manages Cloudflare Pages deployments but records no GitHub deployments, so there's nothing to confirm against yet. The page shows the PR's head commit only.
+- **No such PR** (GitHub 404): a note ("GitHub has no PR #n in `repo`"), not a refusal, like the other can't-tell cases. A private repo the token can't read also answers 404.
+- **Closed or merged:** checked on every sign-in to a sourced preview, before remembered consent, so a click given while the PR was open doesn't outlive it: a 403 "This preview is retired" page, or `access_denied` to the app under `prompt=none`.
+- **Consent memory:** unchanged (per subject, client and host, 7 days); a new head author or a fork doesn't ask again.
+- **Page:** the PR section's avatar is allowed by `img-src https://avatars.githubusercontent.com` only when shown (an avatar URL elsewhere is dropped); all URLs are built from repo, number, login, refs and SHA, none taken from GitHub's `html_url`s.
+
+Tests: `test/preview-source.test.ts` (validation, label parsing, `readPr`, cache and headers), `test/provider.test.ts` ("preview consent: the PR, from GitHub", exact HTML for open, fork, deleted fork, draft, long title, GitHub down, missing, non-PR host, unconfigured lookup, closed and merged, with consent remembered and silently), `broker/test/admin.test.ts` (registry and CLI set/clear and their log), `test-browser/preview-consent.spec.ts` (mocked GitHub; the PR shown, the avatar loading under the CSP, and the click still posting with the real Origin).
+
+Rollout (pending, each with Ryan's go): deploy the broker (applies `0005`), optionally `wrangler secret put GITHUB_PREVIEW_TOKEN`, then `oa-client.mjs set-source oa-{hf,cw-s3,gcs,r2}-usage-preview --repo Open-Athena/disky`.

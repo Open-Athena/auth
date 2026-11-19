@@ -13,6 +13,7 @@ const CLIENT: RegisteredClient = {
   redirectUris: ['https://cas.oa.dev/callback'],
   postLogoutRedirectUris: ['https://cas.oa.dev/'],
   preview: false,
+  previewSource: null,
   disabledAt: null,
   createdAt: CREATED_AT,
   createdBy: 'creator',

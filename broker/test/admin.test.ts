@@ -9,7 +9,7 @@ import { d1AuditSink, d1GrantStore } from '../../src/adapters/d1.js'
 import { createGate, domainPolicy } from '../../src/index.js'
 import { clientLookup, generateSigningKey, hashClientSecret, oidcProviderRoutes, type SigningJwk } from '../../src/provider/index.js'
 import { testDbRaw } from '../../test/d1-shim.js'
-import { createSql, existsSql, isPreviewSql, lit, listSql, previewSuffixes, rotateSql, setCallbacksSql, setDisabledSql } from '../scripts/oa-client.mjs'
+import { createSql, existsSql, isPreviewSql, lit, listSql, previewSourceSql, previewSuffixes, rotateSql, setCallbacksSql, setDisabledSql, setPreviewSourceSql } from '../scripts/oa-client.mjs'
 import { adminRoutes, parseAdmins } from '../src/admin.js'
 
 const ORIGIN = 'https://login.test'
@@ -284,6 +284,35 @@ describe('changing an app', () => {
     expect((await registry.get('a'))!.secretHash).toBe('h')
     expect((await registry.events()).map(e => e.actor)).toEqual(['first'])
   })
+
+  it('a PR source only on a preview client: at creation, or set later; never on an ordinary one', async () => {
+    const { registry } = setup()
+    const SOURCE = { provider: 'github' as const, repo: 'Open-Athena/disky', label: 'pr-{n}' }
+    const OTHER = { ...SOURCE, label: 'preview-{n}' }
+    expect([
+      await registry.create({ id: 'p', name: 'P', secretHash: 'h', redirectUris: [CB], preview: true, previewSource: SOURCE }, 'me'),
+      await registry.create({ id: 'o', name: 'O', secretHash: 'h', redirectUris: [CB], previewSource: SOURCE }, 'me'),
+      await registry.setPreviewSource!('p', OTHER, 'admin'),
+      await registry.setPreviewSource!('o', SOURCE, 'admin'),
+      await registry.setPreviewSource!('missing', SOURCE, 'admin'),
+      (await registry.get('p'))!.previewSource,
+      (await registry.get('o'))!.previewSource,
+      (await registry.events()).map(e => [e.clientId, e.action, e.actor, e.detail]),
+    ]).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      OTHER,
+      null,
+      [
+        ['p', 'update', 'admin', JSON.stringify({ previewSource: [SOURCE, OTHER] })],
+        ['o', 'create', 'me', JSON.stringify([CB])],
+        ['p', 'create', 'me', JSON.stringify([CB])],
+      ],
+    ])
+  })
 })
 
 describe('oa-client.mjs', () => {
@@ -299,6 +328,7 @@ describe('oa-client.mjs', () => {
       redirectUris: [CB],
       postLogoutRedirectUris: [],
       preview: false,
+      previewSource: null,
       disabledAt: null,
       createdAt: T,
       createdBy: 'cli:me',
@@ -335,6 +365,26 @@ describe('oa-client.mjs', () => {
       [],
     ])
     expect(await authorize('oa-hf-usage-preview', 'https://pr-3.oa-hf-usage.pages.dev/auth/oa/callback')).toBe(302)
+  })
+
+  it("sets and clears a preview client's PR source, logged old → new, which the provider then carries", async () => {
+    const { raw, registry } = setup()
+    const PATTERN = 'https://*.oa-r2-usage.pages.dev/auth/oa/callback'
+    const SOURCE = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' }
+    raw.exec(createSql({ id: 'oa-r2-usage-preview', name: 'R2 previews', secretHash: 'h1', redirectUris: [PATTERN], preview: true }, 'cli:me', T))
+    raw.exec(setPreviewSourceSql('oa-r2-usage-preview', SOURCE, null, 'cli:me', T + 1))
+    const set = [(await registry.get('oa-r2-usage-preview'))!.previewSource, (await clientLookup(registry)('oa-r2-usage-preview'))!.previewSource, raw.prepare(previewSourceSql('oa-r2-usage-preview')).all()]
+    raw.exec(setPreviewSourceSql('oa-r2-usage-preview', null, SOURCE, 'cli:me', T + 2))
+    expect([...set, (await registry.get('oa-r2-usage-preview'))!.previewSource, (await registry.events()).slice(0, 2).map(e => [e.action, e.at, e.detail])]).toEqual([
+      SOURCE,
+      SOURCE,
+      [{ source: JSON.stringify(SOURCE) }],
+      null,
+      [
+        ['update', T + 2, JSON.stringify({ previewSource: [SOURCE, null] })],
+        ['update', T + 1, JSON.stringify({ previewSource: [null, SOURCE] })],
+      ],
+    ])
   })
 
   it("reads the preview allowlist from wrangler.toml, as the deployed broker has it", () => {
