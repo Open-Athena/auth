@@ -17,6 +17,7 @@ export const clientLookup = (registry) => async (id) => {
             redirectUris: c.redirectUris,
             postLogoutRedirectUris: c.postLogoutRedirectUris,
             ...(c.preview ? { preview: true } : {}),
+            ...(c.preview && c.previewSource ? { previewSource: c.previewSource } : {}),
         }
         : null;
 };

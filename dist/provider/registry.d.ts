@@ -1,3 +1,4 @@
+import type { PreviewSource } from './preview-source.js';
 import type { ProviderClient } from './routes.js';
 export interface RegisteredClient {
     id: string;
@@ -8,6 +9,8 @@ export interface RegisteredClient {
     postLogoutRedirectUris: string[];
     /** A PR-preview client (`ProviderClient.preview`). Fixed at creation. */
     preview: boolean;
+    /** A preview client's PR source (`ProviderClient.previewSource`), or null. Admin-set, after creation too. */
+    previewSource: PreviewSource | null;
     /** Epoch s, or null while active. */
     disabledAt: number | null;
     createdAt: number;
@@ -33,6 +36,8 @@ export interface NewClient {
     postLogoutRedirectUris?: string[];
     /** Default false. Can't be changed later: make a new client instead. */
     preview?: boolean;
+    /** Only with `preview`. */
+    previewSource?: PreviewSource | null;
 }
 export interface ClientChanges {
     name: string;
@@ -52,6 +57,8 @@ export interface ClientRegistry {
     setDisabled(id: string, disabled: boolean, actor: string): Promise<boolean>;
     /** Atomic state transition and audit; false if missing or already in that state. */
     setDisabledIfChanged?(id: string, disabled: boolean, actor: string): Promise<boolean>;
+    /** Set or clear a preview client's PR source, logged as an `update` (old → new); false if it isn't a preview client. */
+    setPreviewSource?(id: string, source: PreviewSource | null, actor: string): Promise<boolean>;
     /** Newest first. */
     events(limit?: number): Promise<ClientEvent[]>;
 }

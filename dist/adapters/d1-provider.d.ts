@@ -1,8 +1,3 @@
-/**
- * The OIDC provider's D1 stores: `provider_codes` and the client registry, from
- * `migrations/provider/` (a track of its own, applied only on the deployment
- * that issues identity).
- */
 import type { ClientRegistry } from '../provider/registry.js';
 import type { ProviderStore } from '../provider/store.js';
 export interface D1ProviderOptions {
