@@ -33,9 +33,30 @@ export interface PreviewPr {
     /** ISO 8601, as GitHub gives it. */
     updatedAt: string;
 }
+/**
+ * Whether the host serves this PR, by the records its preview workflow leaves on GitHub (disky's `cf-preview`: a
+ * deployment by `github-actions[bot]` whose payload is `protocol: 'cf-preview-v1'`, the repo, `pr`, `hostname` and
+ * `verified_sha`, the commit it read back from the live host). The newest such record for this PR and host decides.
+ */
+export type PreviewDeployment = 
+/** Its newest record's latest status is `success`: `sha` is the commit the workflow saw this host serve. */
+{
+    status: 'live';
+    sha: string;
+    at: string;
+}
+/** No record says this host serves this PR (none found, or the newest isn't `success`, e.g. retired). */
+ | {
+    status: 'unconfirmed';
+}
+/** GitHub couldn't be asked about deployments. */
+ | {
+    status: 'unavailable';
+};
 export type PreviewPrLookup = {
     status: 'found';
     pr: PreviewPr;
+    deployment: PreviewDeployment;
 }
 /** GitHub answered that there's no such PR. */
  | {
@@ -45,8 +66,8 @@ export type PreviewPrLookup = {
  | {
     status: 'unavailable';
 };
-/** Looks up PR `n` of a preview client's source. */
-export type PreviewPrs = (source: PreviewSource, n: number) => Promise<PreviewPrLookup>;
+/** Looks up PR `n` of a preview client's source, and whether `host` serves it. */
+export type PreviewPrs = (source: PreviewSource, n: number, host: string) => Promise<PreviewPrLookup>;
 /** What's wrong with this source, or null. */
 export declare function previewSourceProblem(s: unknown): string | null;
 /** The PR number a host's first label names under `label`, or null (`dev`, a deployment hash, another pattern). */
@@ -68,5 +89,11 @@ export interface GithubPreviewPrsOptions {
 }
 /** GitHub's `GET /repos/{repo}/pulls/{n}`, read into a `PreviewPr`, or null if it isn't one. */
 export declare function readPr(repo: string, n: number, body: unknown): PreviewPr | null;
+/** The newest of `deployments` (GitHub's list, newest first) that records PR `n` of `repo` at `host`. */
+export declare function previewRecord(deployments: unknown, repo: string, n: number, host: string): {
+    id: number;
+    sha: string;
+    at: string;
+} | null;
 /** `PreviewPrs` over GitHub's REST API, cached in this isolate's memory. */
 export declare function githubPreviewPrs({ token, ttlS, fetch: f, now, timeoutMs }?: GithubPreviewPrsOptions): PreviewPrs;

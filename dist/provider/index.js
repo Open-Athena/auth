@@ -9,6 +9,6 @@ export { generateSigningKey, keySet } from './keys.js';
 export { brokerProvider, hashClientSecret, oidcProviderRoutes, SLACK_EMOJI_CLAIM } from './routes.js';
 export { clientIdProblem, clientLookup, mintClientSecret, redirectUriProblem, } from './registry.js';
 export { previewPattern, redirectAllowed } from './redirects.js';
-export { githubPreviewPrs, prNumberFor, previewSourceProblem, readPr, } from './preview-source.js';
+export { githubPreviewPrs, prNumberFor, previewSourceProblem, previewRecord, readPr, } from './preview-source.js';
 export { memoryProviderStore } from './store.js';
 export { clientManagementRoutes, managementTokenAuth } from './management.js';

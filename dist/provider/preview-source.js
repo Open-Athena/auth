@@ -70,38 +70,77 @@ export function readPr(repo, n, body) {
         updatedAt,
     };
 }
+const PROTOCOL = 'cf-preview-v1';
+const WORKFLOW = 'github-actions[bot]';
+const SHA = /^[0-9a-f]{40}$/;
+/** The newest of `deployments` (GitHub's list, newest first) that records PR `n` of `repo` at `host`. */
+export function previewRecord(deployments, repo, n, host) {
+    if (!Array.isArray(deployments))
+        return null;
+    for (const d of deployments) {
+        const p = d?.payload;
+        if (d?.creator?.login !== WORKFLOW || !p || p.protocol !== PROTOCOL || p.pr !== n || p.hostname !== host)
+            continue;
+        if (typeof p.repository !== 'string' || p.repository.toLowerCase() !== repo.toLowerCase())
+            continue;
+        if (!Number.isSafeInteger(d.id))
+            continue;
+        return { id: d.id, sha: typeof p.verified_sha === 'string' && SHA.test(p.verified_sha) ? p.verified_sha : '', at: str(d.created_at) ?? '' };
+    }
+    return null;
+}
 /** `PreviewPrs` over GitHub's REST API, cached in this isolate's memory. */
 export function githubPreviewPrs({ token, ttlS = 60, fetch: f = fetch, now = Date.now, timeoutMs = 5000 } = {}) {
     const cache = new Map();
-    return async (source, n) => {
-        const key = `${source.repo}#${n}`;
+    const get = (path) => f(`https://api.github.com/repos/${path}`, {
+        headers: {
+            accept: 'application/vnd.github+json',
+            'x-github-api-version': '2022-11-28',
+            'user-agent': 'oa-auth-broker',
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+    });
+    const json = async (path) => {
+        const r = await get(path);
+        if (!r.ok)
+            throw new Error(`GitHub ${r.status}`);
+        return r.json();
+    };
+    /** The head's own records first; if none is this host's, the repo's newest 100 (a preview behind its head). */
+    async function deployment(pr, host) {
+        try {
+            const record = previewRecord(await json(`${pr.repo}/deployments?sha=${pr.head.sha}&per_page=100`), pr.repo, pr.number, host) ??
+                previewRecord(await json(`${pr.repo}/deployments?per_page=100`), pr.repo, pr.number, host);
+            if (!record)
+                return { status: 'unconfirmed' };
+            const [latest] = (await json(`${pr.repo}/deployments/${record.id}/statuses?per_page=1`));
+            return latest?.state === 'success' && record.sha ? { status: 'live', sha: record.sha, at: record.at } : { status: 'unconfirmed' };
+        }
+        catch {
+            return { status: 'unavailable' };
+        }
+    }
+    return async (source, n, host) => {
+        const key = `${source.repo}#${n}@${host}`;
         const hit = cache.get(key);
         if (hit && now() - hit.at < ttlS * 1000)
             return hit.lookup;
         let lookup;
         try {
-            const r = await f(`https://api.github.com/repos/${source.repo}/pulls/${n}`, {
-                headers: {
-                    accept: 'application/vnd.github+json',
-                    'x-github-api-version': '2022-11-28',
-                    'user-agent': 'oa-auth-broker',
-                    ...(token ? { authorization: `Bearer ${token}` } : {}),
-                },
-                signal: AbortSignal.timeout(timeoutMs),
-            });
-            if (r.status === 404)
-                lookup = { status: 'missing' };
-            else {
-                const pr = r.ok ? readPr(source.repo, n, await r.json()) : null;
-                lookup = pr ? { status: 'found', pr } : { status: 'unavailable' };
-            }
+            const r = await get(`${source.repo}/pulls/${n}`);
+            const pr = r.ok ? readPr(source.repo, n, await r.json()) : null;
+            lookup = r.status === 404 ? { status: 'missing' }
+                : pr ? { status: 'found', pr, deployment: pr.state === 'open' || pr.state === 'draft' ? await deployment(pr, host) : { status: 'unconfirmed' } }
+                    : { status: 'unavailable' };
         }
         catch {
             lookup = { status: 'unavailable' };
         }
-        // A stale answer is dropped even when GitHub fails now: the page then says it couldn't check.
+        // A stale answer is dropped even when GitHub fails now: the page then says it couldn't check. A PR found while
+        // its deployments couldn't be checked isn't kept either, so the next sign-in asks again.
         cache.delete(key);
-        if (lookup.status !== 'unavailable') {
+        if (lookup.status !== 'unavailable' && !(lookup.status === 'found' && lookup.deployment.status === 'unavailable')) {
             cache.set(key, { at: now(), lookup });
             if (cache.size > CACHE_MAX)
                 cache.delete(cache.keys().next().value);
