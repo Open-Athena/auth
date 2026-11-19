@@ -27,15 +27,28 @@ export interface PreviewPr {
   updatedAt: string
 }
 
+/**
+ * Whether the host serves this PR, by the records its preview workflow leaves on GitHub (disky's `cf-preview`: a
+ * deployment by `github-actions[bot]` whose payload is `protocol: 'cf-preview-v1'`, the repo, `pr`, `hostname` and
+ * `verified_sha`, the commit it read back from the live host). The newest such record for this PR and host decides.
+ */
+export type PreviewDeployment =
+  /** Its newest record's latest status is `success`: `sha` is the commit the workflow saw this host serve. */
+  | { status: 'live'; sha: string; at: string }
+  /** No record says this host serves this PR (none found, or the newest isn't `success`, e.g. retired). */
+  | { status: 'unconfirmed' }
+  /** GitHub couldn't be asked about deployments. */
+  | { status: 'unavailable' }
+
 export type PreviewPrLookup =
-  | { status: 'found'; pr: PreviewPr }
+  | { status: 'found'; pr: PreviewPr; deployment: PreviewDeployment }
   /** GitHub answered that there's no such PR. */
   | { status: 'missing' }
   /** GitHub couldn't be asked, or didn't answer usefully. */
   | { status: 'unavailable' }
 
-/** Looks up PR `n` of a preview client's source. */
-export type PreviewPrs = (source: PreviewSource, n: number) => Promise<PreviewPrLookup>
+/** Looks up PR `n` of a preview client's source, and whether `host` serves it. */
+export type PreviewPrs = (source: PreviewSource, n: number, host: string) => Promise<PreviewPrLookup>
 
 const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 const LABEL_PART = /^[a-z0-9-]*$/
@@ -112,35 +125,74 @@ export function readPr(repo: string, n: number, body: unknown): PreviewPr | null
   }
 }
 
+const PROTOCOL = 'cf-preview-v1'
+const WORKFLOW = 'github-actions[bot]'
+const SHA = /^[0-9a-f]{40}$/
+
+/** The newest of `deployments` (GitHub's list, newest first) that records PR `n` of `repo` at `host`. */
+export function previewRecord(deployments: unknown, repo: string, n: number, host: string): { id: number; sha: string; at: string } | null {
+  if (!Array.isArray(deployments)) return null
+  for (const d of deployments as Record<string, any>[]) {
+    const p = d?.payload
+    if (d?.creator?.login !== WORKFLOW || !p || p.protocol !== PROTOCOL || p.pr !== n || p.hostname !== host) continue
+    if (typeof p.repository !== 'string' || p.repository.toLowerCase() !== repo.toLowerCase()) continue
+    if (!Number.isSafeInteger(d.id)) continue
+    return { id: d.id, sha: typeof p.verified_sha === 'string' && SHA.test(p.verified_sha) ? p.verified_sha : '', at: str(d.created_at) ?? '' }
+  }
+  return null
+}
+
 /** `PreviewPrs` over GitHub's REST API, cached in this isolate's memory. */
 export function githubPreviewPrs({ token, ttlS = 60, fetch: f = fetch, now = Date.now, timeoutMs = 5000 }: GithubPreviewPrsOptions = {}): PreviewPrs {
   const cache = new Map<string, { at: number; lookup: PreviewPrLookup }>()
-  return async (source, n) => {
-    const key = `${source.repo}#${n}`
+  const get = (path: string) =>
+    f(`https://api.github.com/repos/${path}`, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'oa-auth-broker',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  const json = async (path: string): Promise<unknown> => {
+    const r = await get(path)
+    if (!r.ok) throw new Error(`GitHub ${r.status}`)
+    return r.json()
+  }
+
+  /** The head's own records first; if none is this host's, the repo's newest 100 (a preview behind its head). */
+  async function deployment(pr: PreviewPr, host: string): Promise<PreviewDeployment> {
+    try {
+      const record =
+        previewRecord(await json(`${pr.repo}/deployments?sha=${pr.head.sha}&per_page=100`), pr.repo, pr.number, host) ??
+        previewRecord(await json(`${pr.repo}/deployments?per_page=100`), pr.repo, pr.number, host)
+      if (!record) return { status: 'unconfirmed' }
+      const [latest] = (await json(`${pr.repo}/deployments/${record.id}/statuses?per_page=1`)) as { state?: unknown }[]
+      return latest?.state === 'success' && record.sha ? { status: 'live', sha: record.sha, at: record.at } : { status: 'unconfirmed' }
+    } catch {
+      return { status: 'unavailable' }
+    }
+  }
+
+  return async (source, n, host) => {
+    const key = `${source.repo}#${n}@${host}`
     const hit = cache.get(key)
     if (hit && now() - hit.at < ttlS * 1000) return hit.lookup
     let lookup: PreviewPrLookup
     try {
-      const r = await f(`https://api.github.com/repos/${source.repo}/pulls/${n}`, {
-        headers: {
-          accept: 'application/vnd.github+json',
-          'x-github-api-version': '2022-11-28',
-          'user-agent': 'oa-auth-broker',
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-        signal: AbortSignal.timeout(timeoutMs),
-      })
-      if (r.status === 404) lookup = { status: 'missing' }
-      else {
-        const pr = r.ok ? readPr(source.repo, n, await r.json()) : null
-        lookup = pr ? { status: 'found', pr } : { status: 'unavailable' }
-      }
+      const r = await get(`${source.repo}/pulls/${n}`)
+      const pr = r.ok ? readPr(source.repo, n, await r.json()) : null
+      lookup = r.status === 404 ? { status: 'missing' }
+        : pr ? { status: 'found', pr, deployment: pr.state === 'open' || pr.state === 'draft' ? await deployment(pr, host) : { status: 'unconfirmed' } }
+        : { status: 'unavailable' }
     } catch {
       lookup = { status: 'unavailable' }
     }
-    // A stale answer is dropped even when GitHub fails now: the page then says it couldn't check.
+    // A stale answer is dropped even when GitHub fails now: the page then says it couldn't check. A PR found while
+    // its deployments couldn't be checked isn't kept either, so the next sign-in asks again.
     cache.delete(key)
-    if (lookup.status !== 'unavailable') {
+    if (lookup.status !== 'unavailable' && !(lookup.status === 'found' && lookup.deployment.status === 'unavailable')) {
       cache.set(key, { at: now(), lookup })
       if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!)
     }

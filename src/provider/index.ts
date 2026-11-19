@@ -24,11 +24,13 @@ export {
   githubPreviewPrs,
   type GithubPreviewPrsOptions,
   prNumberFor,
+  type PreviewDeployment,
   type PreviewPr,
   type PreviewPrLookup,
   type PreviewPrs,
   type PreviewSource,
   previewSourceProblem,
+  previewRecord,
   readPr,
 } from './preview-source.js'
 export { type CodeRecord, memoryProviderStore, type ProviderStore } from './store.js'

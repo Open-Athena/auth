@@ -10,13 +10,23 @@ import { memoryGrantStore } from '../dist/testing/index.js'
 const ISSUER = 'https://login.test'
 const BRANCH = 'pr-1.proj.pages.dev'
 const AVATAR = 'https://avatars.githubusercontent.com/u/1?v=4'
-/** GitHub's answer for PR 1, as the broker's own lookup gets it. */
-const githubFetch = (async () => Response.json({
-  number: 1, title: 'R2 preview pilot', state: 'open', draft: false, merged_at: null, updated_at: '2026-11-18T20:14:03Z',
-  user: { login: 'ryan-williams', avatar_url: AVATAR },
-  head: { ref: 'rw/r2-preview-pilot', sha: 'abcdef1234567890', repo: { full_name: 'Open-Athena/disky' } },
-  base: { ref: 'r2' },
-})) as typeof fetch
+const SHA = 'abcdef1234567890abcdef1234567890abcdef12'
+/** GitHub, as the broker's own lookup asks it: PR 1, and the preview workflow's live record of it at this host. */
+const githubFetch = (async (url: string) => {
+  const path = url.replace('https://api.github.com/repos/Open-Athena/disky/', '')
+  if (path === 'pulls/1') return Response.json({
+    number: 1, title: 'R2 preview pilot', state: 'open', draft: false, merged_at: null, updated_at: '2026-11-18T20:14:03Z',
+    user: { login: 'ryan-williams', avatar_url: AVATAR },
+    head: { ref: 'rw/r2-preview-pilot', sha: SHA, repo: { full_name: 'Open-Athena/disky' } },
+    base: { ref: 'r2' },
+  })
+  if (path === `deployments?sha=${SHA}&per_page=100`) return Response.json([{
+    id: 77, creator: { login: 'github-actions[bot]' }, created_at: '2026-11-19T02:04:03Z',
+    payload: { protocol: 'cf-preview-v1', repository: 'Open-Athena/disky', pr: 1, hostname: BRANCH, verified_sha: SHA },
+  }])
+  if (path === 'deployments/77/statuses?per_page=1') return Response.json([{ state: 'success' }])
+  return new Response('{}', { status: 404 })
+}) as typeof fetch
 /** A 1×1 PNG, for the avatar. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 
@@ -84,6 +94,7 @@ test('one click on "Sign in to a preview?" posts with the real Origin and is sen
     'By ryan-williams',
     'Branch: rw/r2-preview-pilot → r2',
     'Head commit: abcdef1',
+    'Deployed here: the head commit, checked live by its preview workflow (2026-11-19 02:04 UTC).',
   ])
   await expect.poll(() => page.locator('.avatar').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
   expect([avatars, blocked]).toEqual([[AVATAR], []])

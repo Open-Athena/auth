@@ -736,6 +736,13 @@ describe('PR-preview clients', () => {
 
 describe('preview consent: the PR, from GitHub (`previewSource`)', () => {
   const SOURCE: PreviewSource = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' }
+  const SHA = 'abcdef1234567890abcdef1234567890abcdef12'
+  const OLD = '7403fe602763412d644ee31b897f8afb80986c62'
+  /** `cf-preview`'s record of PR 1 at the first branch host, `verified` as the commit it read back. */
+  const record = (verified: string) => ({
+    id: 77, creator: { login: 'github-actions[bot]' }, created_at: '2026-11-19T02:04:03Z',
+    payload: { protocol: 'cf-preview-v1', repository: 'Open-Athena/disky', pr: 1, hostname: PREVIEW_HOSTS[0], verified_sha: verified },
+  })
   /** GitHub's `pulls/{n}` answer for PR 1, with `over` on top. */
   const ghPr = (over: Record<string, unknown> = {}) => ({
     number: 1,
@@ -745,16 +752,24 @@ describe('preview consent: the PR, from GitHub (`previewSource`)', () => {
     merged_at: null,
     updated_at: '2026-11-18T20:14:03Z',
     user: { login: 'ryan-williams', avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4' },
-    head: { ref: 'rw/r2-preview-pilot', sha: 'abcdef1234567890', repo: { full_name: 'Open-Athena/disky' } },
+    head: { ref: 'rw/r2-preview-pilot', sha: SHA, repo: { full_name: 'Open-Athena/disky' } },
     base: { ref: 'r2' },
     ...over,
   })
-  /** A world whose GitHub answers PR 1 with `answer()` (a body, or a status), uncached; `asked` lists the URLs. */
-  async function setup(answer: () => unknown, o: { prs?: boolean } = {}) {
+  /**
+   * A world whose GitHub answers PR 1 with `answer()` (a body, or a status), uncached, and lists `deployments` (the
+   * repo's, newest first; none at the head), each `success`; `asked` lists the paths.
+   */
+  async function setup(answer: () => unknown, o: { prs?: boolean; deployments?: unknown[] } = {}) {
     const asked: string[] = []
     const fetch = (async (url: string) => {
-      asked.push(url)
-      const a = answer()
+      const path = url.replace('https://api.github.com/repos/Open-Athena/disky/', '')
+      asked.push(path)
+      const a = /^pulls\/\d+$/.test(path) ? answer()
+        : path === 'deployments?per_page=100' ? (o.deployments ?? [])
+        : path.startsWith('deployments?sha=') ? []
+        : path.endsWith('/statuses?per_page=1') ? [{ state: 'success' }]
+        : 599
       return typeof a === 'number' ? new Response('{}', { status: a }) : Response.json(a)
     }) as typeof globalThis.fetch
     const w = await world({ previewSource: SOURCE, ...(o.prs === false ? {} : { previewPrs: githubPreviewPrs({ fetch, ttlS: 0 }) }) })
@@ -779,11 +794,12 @@ describe('preview consent: the PR, from GitHub (`previewSource`)', () => {
   ]
   const HOST = PREVIEW_HOSTS[0]!
   const BRANCH = '<p>Branch: <a href="https://github.com/Open-Athena/disky/tree/rw/r2-preview-pilot"><code>rw/r2-preview-pilot</code></a> → <a href="https://github.com/Open-Athena/disky/tree/r2"><code>r2</code></a></p>'
-  const COMMIT = '<p>Head commit: <a href="https://github.com/Open-Athena/disky/pull/1/commits/abcdef1234567890"><code>abcdef1</code></a></p>'
+  const COMMIT = `<p>Head commit: <a href="https://github.com/Open-Athena/disky/pull/1/commits/${SHA}"><code>abcdef1</code></a></p>`
+  const UNCONFIRMED = '<p class="note">Deployment not confirmed: its preview workflow has no live record of this address.</p>'
   const AUTHOR = '<p>By <img class="avatar" src="https://avatars.githubusercontent.com/u/1?v=4" alt="" width="20" height="20"> <a href="https://github.com/ryan-williams">ryan-williams</a></p>'
 
   it("shows an open PR: repo and number, state, the author's title quoted as theirs, author, branches and head commit", async () => {
-    const { b, asked } = await setup(() => ghPr())
+    const { b, asked } = await setup(() => ghPr(), { deployments: [record(SHA)] })
     const { res } = await start(b, HOST)
     expect([res.status, await mainOf(res), res.headers.get('content-security-policy'), asked]).toEqual([
       200,
@@ -795,20 +811,33 @@ describe('preview consent: the PR, from GitHub (`previewSource`)', () => {
         AUTHOR,
         BRANCH,
         COMMIT,
+        '<p>Deployed here: the head commit, checked live by its preview workflow (2026-11-19 02:04 UTC).</p>',
         '</section>',
         ...outro,
       ].join('\n'),
       `default-src 'none'; style-src 'unsafe-inline'; img-src https://avatars.githubusercontent.com; form-action 'self' https://${HOST}; frame-ancestors 'none'; base-uri 'none'`,
-      ['https://api.github.com/repos/Open-Athena/disky/pulls/1'],
+      ['pulls/1', `deployments?sha=${SHA}&per_page=100`, 'deployments?per_page=100', 'deployments/77/statuses?per_page=1'],
+    ])
+  })
+
+  it("says when the preview isn't the PR's head, or nothing records it here", async () => {
+    let deployments: unknown[] = [record(OLD)]
+    const { b } = await setup(() => ghPr(), { get deployments() { return deployments } })
+    const behind = (await mainOf((await start(b, HOST)).res)).split('\n').at(-6)
+    deployments = []
+    const none = (await mainOf((await start(b, HOST)).res)).split('\n').at(-6)
+    expect([behind, none]).toEqual([
+      `<p class="warn">Deployed here: <a href="https://github.com/Open-Athena/disky/commit/${OLD}"><code>7403fe6</code></a> (2026-11-19 02:04 UTC), not the PR's head: the preview is behind it.</p>`,
+      UNCONFIRMED,
     ])
   })
 
   it('flags a fork (or a deleted one), says draft, cuts a long title, and drops an avatar not on GitHub', async () => {
     const title = `${'x'.repeat(130)}`
-    let pr: unknown = ghPr({ draft: true, title, head: { ref: 'feat', sha: 'abcdef1234567890', repo: { full_name: 'someone/disky' } }, user: { login: 'someone', avatar_url: 'https://evil.test/a.png' } })
+    let pr: unknown = ghPr({ draft: true, title, head: { ref: 'feat', sha: SHA, repo: { full_name: 'someone/disky' } }, user: { login: 'someone', avatar_url: 'https://evil.test/a.png' } })
     const { b } = await setup(() => pr)
     const fork = (await mainOf((await start(b, HOST)).res)).split('\n').slice(3, 10)
-    pr = ghPr({ head: { ref: 'feat', sha: 'abcdef1234567890', repo: null } })
+    pr = ghPr({ head: { ref: 'feat', sha: SHA, repo: null } })
     const deleted = (await mainOf((await start(b, HOST)).res)).split('\n').slice(3, 6)
     expect([fork, deleted]).toEqual([
       [

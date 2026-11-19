@@ -13,7 +13,7 @@ import type { Gate } from '../core/gate.js'
 import { generateToken, hashToken } from '../core/tokens.js'
 import { type KeySet, keySet, type SigningJwk } from './keys.js'
 import { isHostedAvatar, pictureResponse, pictureTickets } from './picture.js'
-import type { PreviewPr, PreviewPrs, PreviewSource } from './preview-source.js'
+import type { PreviewDeployment, PreviewPr, PreviewPrs, PreviewSource } from './preview-source.js'
 import { prNumberFor } from './preview-source.js'
 import { redirectAllowed } from './redirects.js'
 import type { ProviderStore } from './store.js'
@@ -188,7 +188,7 @@ type PreviewContext =
   /** The host's label isn't the source's pattern (`dev`, a deployment hash). */
   | { kind: 'not-pr' }
   | { kind: 'missing' | 'unavailable'; repo: string; n: number }
-  | { kind: 'pr'; pr: PreviewPr }
+  | { kind: 'pr'; pr: PreviewPr; deployment: PreviewDeployment }
 
 const gh = (path: string): string => `https://github.com/${path}`
 /** A branch's page: each path segment encoded, the slashes kept. */
@@ -228,10 +228,19 @@ ${fork}<p>Title, as its author wrote it: <q class="title">${esc(title)}</q></p>
 <p>By ${avatar}<a href="${esc(gh(pr.author.login))}">${esc(pr.author.login)}</a></p>
 <p>Branch: ${head} → <a href="${esc(treeUrl(pr.repo, pr.base.ref))}"><code>${esc(pr.base.ref)}</code></a></p>
 <p>Head commit: <a href="${esc(`${prUrl(pr)}/commits/${encodeURIComponent(pr.head.sha)}`)}"><code>${esc(pr.head.sha.slice(0, 7))}</code></a></p>
-</section>
+${deploymentHtml(pr, c.deployment)}</section>
 `
     }
   }
+}
+
+/** Whether this host serves the PR, per its preview workflow's GitHub record. */
+function deploymentHtml(pr: PreviewPr, d: PreviewDeployment): string {
+  if (d.status === 'unavailable') return '<p class="note">Couldn\'t check GitHub for its deployment.</p>\n'
+  if (d.status === 'unconfirmed') return '<p class="note">Deployment not confirmed: its preview workflow has no live record of this address.</p>\n'
+  const at = d.at ? ` (${esc(when(d.at))})` : ''
+  if (d.sha === pr.head.sha) return `<p>Deployed here: the head commit, checked live by its preview workflow${at}.</p>\n`
+  return `<p class="warn">Deployed here: <a href="${esc(gh(`${pr.repo}/commit/${d.sha}`))}"><code>${d.sha.slice(0, 7)}</code></a>${at}, not the PR's head: the preview is behind it.</p>\n`
 }
 
 /** A page of the preview flow: the broker's own, framed by nothing, posting only here or to the preview. */
@@ -247,7 +256,7 @@ main { max-width: 32rem; }
 .host { overflow-wrap: anywhere; }
 .muted { opacity: 0.7; font-size: 0.9em; }
 .pr { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 8px; padding: 0 1em; margin: 1em 0; overflow-wrap: anywhere; }
-.fork { font-weight: 600; color: #c2410c; }
+.fork, .warn { font-weight: 600; color: #c2410c; }
 .avatar { vertical-align: middle; border-radius: 50%; }
 button { font: inherit; padding: 0.5em 1.2em; margin-right: 0.5em; }
 </style></head>
@@ -316,8 +325,8 @@ export function oidcProviderRoutes(opts: ProviderOptions) {
     if (!source) return { kind: 'unsourced' }
     const n = prNumberFor(source.label, host)
     if (n === null) return { kind: 'not-pr' }
-    const lookup = opts.previewPrs ? await opts.previewPrs(source, n) : { status: 'unavailable' as const }
-    return lookup.status === 'found' ? { kind: 'pr', pr: lookup.pr } : { kind: lookup.status, repo: source.repo, n }
+    const lookup = opts.previewPrs ? await opts.previewPrs(source, n, host) : { status: 'unavailable' as const }
+    return lookup.status === 'found' ? { kind: 'pr', pr: lookup.pr, deployment: lookup.deployment } : { kind: lookup.status, repo: source.repo, n }
   }
 
   /** The one click a preview client needs: posts back to this same `/authorize` request. */

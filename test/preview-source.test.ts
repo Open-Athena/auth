@@ -1,7 +1,7 @@
 // A preview client's PR source (specs/done/preview-pr-context.md): its label template, its validation, and the
 // broker's own GitHub lookup.
 import { describe, expect, it } from 'vitest'
-import { githubPreviewPrs, prNumberFor, previewSourceProblem, readPr } from '../src/provider/preview-source.js'
+import { githubPreviewPrs, prNumberFor, previewRecord, previewSourceProblem, readPr } from '../src/provider/preview-source.js'
 
 const SOURCE = { provider: 'github', repo: 'Open-Athena/disky', label: 'pr-{n}' } as const
 
@@ -86,29 +86,75 @@ describe('readPr', () => {
   })
 })
 
+const HOST = 'pr-9.oa-r2-usage.pages.dev'
+const HEAD = 'a'.repeat(40)
+const OLD = 'b'.repeat(40)
+/** A deployment record as disky's `cf-preview` leaves one (`over` on top; `payload` merged). */
+const record = (id: number, over: Record<string, any> = {}) => ({
+  id,
+  environment: 'preview/r2',
+  creator: { login: 'github-actions[bot]' },
+  created_at: '2026-11-19T02:04:03Z',
+  ...over,
+  payload: { protocol: 'cf-preview-v1', repository: 'Open-Athena/disky', target: 'r2', pr: 9, hostname: HOST, sha: HEAD, verified_sha: HEAD, ...over.payload },
+})
+
+describe('previewRecord', () => {
+  it("takes the newest record of this PR at this host by the preview workflow, and nobody else's", () => {
+    const list = [
+      { id: 1, environment: 'r2-preview', creator: { login: 'someone' }, payload: {} },
+      record(2, { creator: { login: 'someone' } }),
+      record(3, { payload: { protocol: 'other' } }),
+      record(4, { payload: { pr: 10 } }),
+      record(5, { payload: { hostname: 'pr-9.elsewhere.pages.dev' } }),
+      record(6, { payload: { repository: 'someone/disky' } }),
+      record(7, { payload: { verified_sha: OLD } }),
+      record(8),
+    ]
+    expect([
+      previewRecord(list, 'Open-Athena/disky', 9, HOST),
+      previewRecord([record(9, { payload: { verified_sha: 'short' } })], 'open-athena/disky', 9, HOST),
+      previewRecord(list.slice(0, 6), 'Open-Athena/disky', 9, HOST),
+      previewRecord({ message: 'x' }, 'Open-Athena/disky', 9, HOST),
+    ]).toEqual([{ id: 7, sha: OLD, at: '2026-11-19T02:04:03Z' }, { id: 9, sha: '', at: '2026-11-19T02:04:03Z' }, null, null])
+  })
+})
+
 describe('githubPreviewPrs', () => {
-  function setup(token?: string) {
+  /** A fake GitHub: PR 9 (`pr`), the head's deployments, the repo's, and each record's latest status. */
+  function setup(o: { token?: string; pr?: Record<string, unknown> | number | Error; atHead?: unknown[]; all?: unknown[] | number; status?: string } = {}) {
     let clock = 0
-    const answers: (number | Error)[] = []
     const calls: [string, Record<string, string>][] = []
+    const answers: (Record<string, unknown> | number | Error)[] = []
+    const prBody = { number: 9, title: 't', state: 'open', updated_at: 'x', user: { login: 'u' }, head: { ref: 'h', sha: HEAD, repo: null }, base: { ref: 'b' } }
     const fetch = (async (url: string, init?: RequestInit) => {
       calls.push([url, Object.fromEntries(new Headers(init?.headers))])
-      const a = answers.shift() ?? 200
-      if (a instanceof Error) throw a
-      return a === 200 ? Response.json({ number: 9, title: 't', state: 'open', updated_at: 'x', user: { login: 'u' }, head: { ref: 'h', sha: 's', repo: null }, base: { ref: 'b' } }) : new Response('{}', { status: a })
+      const path = url.replace('https://api.github.com/repos/Open-Athena/disky/', '')
+      const answer = path === 'pulls/9' ? (answers.shift() ?? o.pr ?? prBody)
+        : path === `deployments?sha=${HEAD}&per_page=100` ? (o.atHead ?? [])
+        : path === 'deployments?per_page=100' ? (o.all ?? [])
+        : /^deployments\/\d+\/statuses\?per_page=1$/.test(path) ? [{ state: o.status ?? 'success' }]
+        : 599
+      if (answer instanceof Error) throw answer
+      return typeof answer === 'number' ? new Response('{}', { status: answer }) : Response.json(answer)
     }) as typeof globalThis.fetch
-    const prs = githubPreviewPrs({ fetch, now: () => clock, ...(token ? { token } : {}) })
-    return { prs, answers, calls, at: (s: number) => { clock = s * 1000 } }
+    const prs = githubPreviewPrs({ fetch, now: () => clock, ...(o.token ? { token: o.token } : {}) })
+    const paths = () => calls.map(([u]) => u.replace('https://api.github.com/repos/Open-Athena/disky/', ''))
+    return { prs, answers, calls, paths, at: (s: number) => { clock = s * 1000 } }
+  }
+  const deployment = async (t: ReturnType<typeof setup>) => {
+    const r = await t.prs(SOURCE, 9, HOST)
+    return r.status === 'found' ? r.deployment : r.status
   }
 
   it('asks GitHub with its own token, and reuses an answer for 60 s', async () => {
-    const t = setup('test-token')
-    const first = await t.prs(SOURCE, 9)
+    const t = setup({ token: 'test-token' })
+    const first = await t.prs(SOURCE, 9, HOST)
     t.at(59)
-    await t.prs(SOURCE, 9)
+    await t.prs(SOURCE, 9, HOST)
     t.at(60)
-    await t.prs(SOURCE, 9)
-    expect([first.status, t.calls]).toEqual([
+    await t.prs(SOURCE, 9, HOST)
+    expect([first.status, t.calls.filter(([u]) => u.endsWith('/pulls/9')), t.calls.length]).toEqual([
       'found',
       [0, 1].map(() => ['https://api.github.com/repos/Open-Athena/disky/pulls/9', {
         accept: 'application/vnd.github+json',
@@ -116,19 +162,52 @@ describe('githubPreviewPrs', () => {
         'user-agent': 'oa-auth-broker',
         'x-github-api-version': '2022-11-28',
       }]),
+      6,
     ])
   })
 
   it("caches a missing PR, but not a failure, and doesn't serve a stale answer when GitHub fails", async () => {
     const t = setup()
     t.answers.push(404, 500, new Error('network'), 403)
-    const results = [await t.prs(SOURCE, 9), await t.prs(SOURCE, 9)]
+    const results = [await t.prs(SOURCE, 9, HOST), await t.prs(SOURCE, 9, HOST)]
     t.at(60)
-    results.push(await t.prs(SOURCE, 9), await t.prs(SOURCE, 9), await t.prs(SOURCE, 9), await t.prs(SOURCE, 9))
-    expect([results.map(r => r.status), t.calls.length, t.calls[0]![1].authorization]).toEqual([
+    results.push(await t.prs(SOURCE, 9, HOST), await t.prs(SOURCE, 9, HOST), await t.prs(SOURCE, 9, HOST), await t.prs(SOURCE, 9, HOST))
+    expect([results.map(r => r.status), t.paths().filter(p => p === 'pulls/9').length, t.calls[0]![1].authorization]).toEqual([
       ['missing', 'missing', 'unavailable', 'unavailable', 'unavailable', 'found'],
       5,
       undefined,
+    ])
+  })
+
+  it("confirms the host serves the PR from its workflow's record: the head's own first, else the repo's newest; and says when it's behind", async () => {
+    const atHead = setup({ atHead: [record(7)] })
+    const behind = setup({ all: [record(5, { payload: { sha: OLD, verified_sha: OLD } })] })
+    expect([await deployment(atHead), atHead.paths(), await deployment(behind), behind.paths()]).toEqual([
+      { status: 'live', sha: HEAD, at: '2026-11-19T02:04:03Z' },
+      ['pulls/9', `deployments?sha=${HEAD}&per_page=100`, 'deployments/7/statuses?per_page=1'],
+      { status: 'live', sha: OLD, at: '2026-11-19T02:04:03Z' },
+      ['pulls/9', `deployments?sha=${HEAD}&per_page=100`, 'deployments?per_page=100', 'deployments/5/statuses?per_page=1'],
+    ])
+  })
+
+  it("doesn't confirm a retired record, no record, or one with no verified commit; and doesn't keep a deployment check that failed", async () => {
+    const failing = setup({ all: 500 })
+    const failed = [await deployment(failing), await deployment(failing)]
+    expect([
+      await deployment(setup({ atHead: [record(7)], status: 'inactive' })),
+      await deployment(setup()),
+      await deployment(setup({ atHead: [record(7, { payload: { verified_sha: undefined } })] })),
+      failed,
+      failing.paths().filter(p => p === 'pulls/9').length,
+      // A closed PR's deployments aren't asked about: it's refused anyway.
+      await deployment(setup({ pr: { number: 9, title: 't', state: 'closed', updated_at: 'x', user: { login: 'u' }, head: { ref: 'h', sha: HEAD, repo: null }, base: { ref: 'b' } } })),
+    ]).toEqual([
+      { status: 'unconfirmed' },
+      { status: 'unconfirmed' },
+      { status: 'unconfirmed' },
+      [{ status: 'unavailable' }, { status: 'unavailable' }],
+      2,
+      { status: 'unconfirmed' },
     ])
   })
 })
