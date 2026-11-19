@@ -258,6 +258,9 @@ export function oidcStart(opts: OidcOptions) {
     // `?prompt=none`: a silent attempt (a broker that already knows this
     // browser answers with a code, or with `login_required`, never a page).
     const silent = params.get('prompt') === 'none'
+    // `?prompt=consent`: ask again where the provider remembers a yes (the broker's PR-preview page).
+    const prompt = choose ? 'select_account' : silent ? 'none' : null
+    const prompts = [prompt, !silent && params.get('prompt') === 'consent' ? 'consent' : null].filter(Boolean).join(' ')
 
     const url = new URL(provider.authUrl)
     url.search = new URLSearchParams({
@@ -271,7 +274,7 @@ export function oidcStart(opts: OidcOptions) {
       code_challenge_method: 'S256',
       ...(hint ? { login_hint: hint } : {}),
       ...authParams,
-      ...(choose ? { prompt: 'select_account' } : silent ? { prompt: 'none' } : {}),
+      ...(prompts ? { prompt: prompts } : {}),
     }).toString()
 
     return new Response(null, {

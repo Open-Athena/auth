@@ -34,7 +34,8 @@ export interface ProviderClient {
    * patterns (one DNS label, `redirects.ts`), and since a preview is unreviewed
    * code, it never signs anyone in silently. The first sign-in per preview
    * host, account and client is one click on a page here naming the host,
-   * remembered for 7 days; `prompt=none` gets `interaction_required` until
+   * remembered for 7 days (`prompt=consent` asks again anyway, e.g. an app's
+   * `/auth/oa?prompt=consent`); `prompt=none` gets `interaction_required` until
    * then. Give it its own id (so its tokens' `aud` differs from the app's)
    * and its own secret, held only by the preview deployment.
    */
@@ -494,7 +495,8 @@ ${contextHtml(context)}<form method="post" action="${esc(`${url.pathname}${url.s
       const sub = await subOf(email)
       const held = await previewConsents(req, nowS)
       const mine = (c: PreviewConsent) => c.s === sub && c.c === client.id && c.h === host
-      if (!held.some(mine)) {
+      // `prompt=consent` asks again though the click is remembered (e.g. to see the PR before a new sign-in).
+      if (!held.some(mine) || prompts.has('consent')) {
         if (decision === 'deny') return fail('access_denied')
         if (decision !== 'allow') return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri, context)
         cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, x: nowS + PREVIEW_CONSENT_TTL_S }]))

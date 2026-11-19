@@ -674,6 +674,18 @@ describe('PR-preview clients', () => {
     ])
   })
 
+  it('`prompt=consent` asks again though the click is remembered; cancelling it keeps the earlier click', async () => {
+    const w = await world()
+    const b = w.browser()
+    await w.signInAtBroker(b, 'ada@openathena.ai')
+    await consent(b, (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home`)).res, 'allow')
+    const asked = await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=consent`)
+    const status = asked.res.status
+    const denied = (await consent(b, asked.res, 'deny')).hops.at(-1)!
+    const silently = (await b.follow(`https://${PREVIEW_HOSTS[0]}/auth/start?next=/home&prompt=none`)).hops.at(-1)!
+    expect([status, short(denied), short(silently)]).toEqual([200, `${PREVIEW_HOSTS[0]}/home?sso=access_denied`, `${PREVIEW_HOSTS[0]}/home`])
+  })
+
   it('cancel goes back to the app as access_denied, and remembers nothing', async () => {
     const w = await world()
     const b = w.browser()
