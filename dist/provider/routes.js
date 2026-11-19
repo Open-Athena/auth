@@ -29,9 +29,19 @@ export const SLACK_EMOJI_CLAIM = 'oa_slack_emoji';
 export const MAX_LOOKUP_EMAILS = 100;
 const enc = new TextEncoder();
 const sec = (ms) => Math.floor(ms / 1000);
-/** How long one click on the preview consent page lasts, and how many hosts a browser remembers. */
-const PREVIEW_CONSENT_TTL_S = 7 * 86400;
+/** How long one click on the preview consent page lasts by default, at most, and how many hosts a browser remembers. */
+export const PREVIEW_CONSENT_TTL_S = 7 * 86400;
+export const PREVIEW_CONSENT_MAX_TTL_S = 30 * 86400;
 const PREVIEW_CONSENT_MAX = 20;
+/** What's wrong with this `previewConsentTtlS`, or null. */
+export const previewConsentTtlProblem = (ttl) => Number.isSafeInteger(ttl) && ttl >= 0 && ttl <= PREVIEW_CONSENT_MAX_TTL_S
+    ? null
+    : `a whole number of seconds from 0 (every sign-in) to ${PREVIEW_CONSENT_MAX_TTL_S} (30 days)`;
+/** "for 7 days", "for 12 hours": a consent TTL as the page (and the admin dash) says it. */
+export function previewConsentLasting(ttlS) {
+    const [n, unit] = ttlS % 86400 === 0 ? [ttlS / 86400, 'day'] : ttlS % 3600 === 0 ? [ttlS / 3600, 'hour'] : [Math.ceil(ttlS / 60), 'minute'];
+    return `for ${n} ${unit}${n === 1 ? '' : 's'}`;
+}
 const esc = (s) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body) + '\n', {
     status,
@@ -166,6 +176,11 @@ export function oidcProviderRoutes(opts) {
     const clients = new Map(opts.clients.map(c => [c.id, c]));
     if (clients.size !== opts.clients.length)
         throw new Error('duplicate client id');
+    for (const c of opts.clients) {
+        const problem = c.previewConsentTtlS === undefined ? null : previewConsentTtlProblem(c.previewConsentTtlS);
+        if (problem)
+            throw new Error(`${c.id}: previewConsentTtlS: ${problem}`);
+    }
     const clientOf = async (id) => clients.get(id) ?? (id && opts.lookupClient ? await opts.lookupClient(id) : null);
     let keys = null;
     const ks = () => (keys ??= keySet(opts.keys));
@@ -184,7 +199,7 @@ export function oidcProviderRoutes(opts) {
             return [];
         try {
             const list = JSON.parse(b64uDecodeString(body));
-            return Array.isArray(list) ? list.filter(c => typeof c?.x === 'number' && c.x > nowS) : [];
+            return Array.isArray(list) ? list.filter(c => typeof c?.t === 'number' && c.t + PREVIEW_CONSENT_MAX_TTL_S > nowS) : [];
         }
         catch {
             return [];
@@ -193,7 +208,7 @@ export function oidcProviderRoutes(opts) {
     async function previewConsentCookie(list) {
         const body = b64uEncode(enc.encode(JSON.stringify(list.slice(-PREVIEW_CONSENT_MAX))));
         const value = `${body}.${await hmac(subjectSecret, `preview-consent:${body}`)}`;
-        return `${consentCookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${PREVIEW_CONSENT_TTL_S}${secure ? '; Secure' : ''}`;
+        return `${consentCookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${PREVIEW_CONSENT_MAX_TTL_S}${secure ? '; Secure' : ''}`;
     }
     /** What a preview client's host is, from its admin-set source: shown on the consent page. */
     async function previewContext(client, host) {
@@ -207,7 +222,7 @@ export function oidcProviderRoutes(opts) {
         return lookup.status === 'found' ? { kind: 'pr', pr: lookup.pr, deployment: lookup.deployment } : { kind: lookup.status, repo: source.repo, n };
     }
     /** The one click a preview client needs: posts back to this same `/authorize` request. */
-    function previewConsentPage(url, client, email, redirectUri, context) {
+    function previewConsentPage(url, client, email, redirectUri, context, ttlS) {
         const target = new URL(redirectUri);
         const app = client.name ?? client.id;
         return previewPage(target, 200, 'Sign in to a preview?', `<h1>Sign in to a preview?</h1>
@@ -216,7 +231,7 @@ export function oidcProviderRoutes(opts) {
 ${contextHtml(context)}<form method="post" action="${esc(`${url.pathname}${url.search}`)}">
 <button name="decision" value="allow">Continue</button><button name="decision" value="deny">Cancel</button>
 </form>
-<p class="muted">You won't be asked again for this address for 7 days.</p>`, context.kind === 'pr' && context.pr.author.avatarUrl !== null);
+<p class="muted">${ttlS ? `You won't be asked again for this address ${previewConsentLasting(ttlS)}.` : "You'll be asked each time you sign in to this preview."}</p>`, context.kind === 'pr' && context.pr.author.avatarUrl !== null);
     }
     /** A preview whose PR is closed or merged: it shouldn't still be serving, so it signs no one in. */
     function retiredPreviewPage(redirectUri, pr) {
@@ -378,15 +393,19 @@ ${contextHtml(context)}<form method="post" action="${esc(`${url.pathname}${url.s
                 return decision === null && prompts.has('none') ? fail('access_denied') : retiredPreviewPage(redirectUri, context.pr);
             }
             const sub = await subOf(email);
+            const ttlS = client.previewConsentTtlS ?? PREVIEW_CONSENT_TTL_S;
             const held = await previewConsents(req, nowS);
             const mine = (c) => c.s === sub && c.c === client.id && c.h === host;
+            const current = (c) => mine(c) && c.t + ttlS > nowS;
             // `prompt=consent` asks again though the click is remembered (e.g. to see the PR before a new sign-in).
-            if (!held.some(mine) || prompts.has('consent')) {
+            if (!held.some(current) || prompts.has('consent')) {
                 if (decision === 'deny')
                     return fail('access_denied');
                 if (decision !== 'allow')
-                    return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri, context);
-                cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, x: nowS + PREVIEW_CONSENT_TTL_S }]));
+                    return prompts.has('none') ? fail('interaction_required') : previewConsentPage(url, client, email, redirectUri, context, ttlS);
+                // With a TTL of 0 there's nothing to remember.
+                if (ttlS)
+                    cookies.push(await previewConsentCookie([...held.filter(c => !mine(c)), { s: sub, c: client.id, h: host, t: nowS }]));
             }
         }
         const code = generateToken();

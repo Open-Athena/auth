@@ -6,7 +6,7 @@
  * `@open-athena/auth/oidc` and `brokerProvider(issuer)`.
  */
 export { generateSigningKey, keySet } from './keys.js';
-export { brokerProvider, hashClientSecret, oidcProviderRoutes, SLACK_EMOJI_CLAIM } from './routes.js';
+export { brokerProvider, hashClientSecret, oidcProviderRoutes, PREVIEW_CONSENT_MAX_TTL_S, PREVIEW_CONSENT_TTL_S, previewConsentLasting, previewConsentTtlProblem, SLACK_EMOJI_CLAIM } from './routes.js';
 export { clientIdProblem, clientLookup, mintClientSecret, redirectUriProblem, } from './registry.js';
 export { previewPattern, redirectAllowed } from './redirects.js';
 export { githubPreviewPrs, prNumberFor, previewSourceProblem, previewRecord, readPr, } from './preview-source.js';
