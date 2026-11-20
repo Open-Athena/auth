@@ -11,6 +11,8 @@ export interface RegisteredClient {
     preview: boolean;
     /** A preview client's PR source (`ProviderClient.previewSource`), or null. Admin-set, after creation too. */
     previewSource: PreviewSource | null;
+    /** A preview client's consent TTL (`ProviderClient.previewConsentTtlS`), or null for the default. Admin-set. */
+    previewConsentTtlS: number | null;
     /** Epoch s, or null while active. */
     disabledAt: number | null;
     createdAt: number;
@@ -59,6 +61,8 @@ export interface ClientRegistry {
     setDisabledIfChanged?(id: string, disabled: boolean, actor: string): Promise<boolean>;
     /** Set or clear a preview client's PR source, logged as an `update` (old → new); false if it isn't a preview client. */
     setPreviewSource?(id: string, source: PreviewSource | null, actor: string): Promise<boolean>;
+    /** Set (or, with null, clear to the default) a preview client's consent TTL, logged as an `update`; false if it isn't a preview client. */
+    setPreviewConsentTtl?(id: string, ttlS: number | null, actor: string): Promise<boolean>;
     /** Newest first. */
     events(limit?: number): Promise<ClientEvent[]>;
 }
